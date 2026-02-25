@@ -26,22 +26,22 @@ class ProductProvider extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
-    _unsubscribeSafely();
+    _safeUnsubscribe();
     super.dispose();
+  }
+
+  Future<void> _safeUnsubscribe() async {
+    try {
+      await PBService.pb.collection(_collectionName).unsubscribe('*');
+    } catch (e) {
+      debugPrint("구독 해제 세션 종료 감지: $e");
+    }
   }
 
   @override
   void notifyListeners() {
     if (!_isDisposed) {
       super.notifyListeners();
-    }
-  }
-
-  Future<void> _unsubscribeSafely() async {
-    try {
-      await PBService.pb.collection(_collectionName).unsubscribe('*');
-    } catch (e) {
-      debugPrint("구독 해제 세션 종료 감지 (무시): $e");
     }
   }
 
@@ -69,6 +69,7 @@ class ProductProvider extends ChangeNotifier {
     });
   }
 
+  /// PocketBase의 quantity 필수 제약 조건 해결 및 벌크 등록 로직
   Future<bool> handleSave({
     required ProductModel? p,
     required Map<String, dynamic> data,
@@ -90,12 +91,16 @@ class ProductProvider extends ChangeNotifier {
       final int bulkCount = body.remove('bulk_count') ?? 1;
 
       if (p == null) {
+        // 신규 등록: 벌크 생성
         for (int i = 0; i < bulkCount; i++) {
           if (_isDisposed) break;
           final Map<String, dynamic> singleBody = Map<String, dynamic>.from(body);
+
           if (bulkCount > 1) {
-            singleBody['tag_id'] = "${body['tag_id']}_${DateTime.now().millisecondsSinceEpoch}_$i";
+            singleBody['tag_id'] = "${body['tag_id']}_$i";
           }
+          singleBody['quantity'] = 1;
+
           List<http.MultipartFile> files = [];
           if (fileBytes != null && fileName != null) {
             files.add(http.MultipartFile.fromBytes('image', fileBytes, filename: fileName));
@@ -103,6 +108,11 @@ class ProductProvider extends ChangeNotifier {
           await PBService.pb.collection(_collectionName).create(body: singleBody, files: files);
         }
       } else {
+        // 수정 모드
+        if (!body.containsKey('quantity')) {
+          body['quantity'] = 1;
+        }
+
         if (imageXFile != null) {
           final sameProducts = _items.where((item) =>
           item.name == p.name && (item.spec ?? "") == (p.spec ?? "")
@@ -116,7 +126,7 @@ class ProductProvider extends ChangeNotifier {
             }
             await PBService.pb.collection(_collectionName).update(
               item.id,
-              body: item.id == p.id ? body : {'name': body['name'], 'spec': body['spec']},
+              body: item.id == p.id ? body : {'name': body['name'], 'spec': body['spec'], 'quantity': 1},
               files: files,
             );
           }
@@ -126,7 +136,7 @@ class ProductProvider extends ChangeNotifier {
       }
       return true;
     } catch (e) {
-      debugPrint("저장 에러: $e");
+      debugPrint("저장 에러 상세: $e");
       return false;
     } finally {
       if (!_isDisposed) {
@@ -142,7 +152,6 @@ class ProductProvider extends ChangeNotifier {
       await PBService.pb.collection(_collectionName).delete(id);
       return true;
     } catch (e) {
-      debugPrint("삭제 에러: $id, $e");
       return false;
     }
   }
@@ -180,7 +189,7 @@ class _ProductPageState extends State<ProductPage> {
   static const String _fontFamily = 'Pretendard';
   static const List<String> _kStatusOptions = ['정상', '검수필요', '부족', '수리중', '폐기', '알 수 없음'];
 
-  // 그리드 가로/세로 상수
+  // 그리드 상수
   static const double _rowHeight = 56.0;
   static const double _colImgWidth = 60.0;
   static const double _colQtyWidth = 100.0;
@@ -235,6 +244,7 @@ class _ProductPageState extends State<ProductPage> {
     return "${widget.baseUrl}/api/files/products/${p.id}/${p.image}";
   }
 
+  /// [수정] 썸네일 이미지 위젯: 이미지 없는 경우 기본 배경을 카메라 아이콘으로 통일
   Widget _buildThumbnail(ProductModel p) {
     final url = _getImageUrl(p);
     return Container(
@@ -242,13 +252,13 @@ class _ProductPageState extends State<ProductPage> {
       height: 40,
       padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: Colors.grey[100],
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey.withValues(alpha: 0.15)),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
       ),
       clipBehavior: Clip.antiAlias,
       child: url.isEmpty
-          ? const Icon(Icons.inventory_2, size: 14, color: Colors.grey)
+          ? const Icon(Icons.camera_alt_outlined, size: 16, color: Colors.grey)
           : Image.network(
         url,
         fit: BoxFit.contain,
@@ -777,7 +787,7 @@ class _ProductPageState extends State<ProductPage> {
             : const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add_a_photo, size: 30, color: Colors.grey),
+            Icon(Icons.camera_alt_outlined, size: 30, color: Colors.grey),
             SizedBox(height: 8),
             Text("사진 등록", style: TextStyle(fontFamily: _fontFamily, color: Colors.grey, fontSize: 11)),
           ],
