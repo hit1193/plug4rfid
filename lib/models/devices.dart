@@ -1,36 +1,69 @@
 import 'package:pocketbase/pocketbase.dart';
 
-/// [모델] 장치 정보 클래스
-/// RFID 리더, 프린터, 바코드 스캐너 등 하드웨어 장치의 정보를 담습니다.
-class Device {
+/// [Model] 장치 정보 클래스 (순수 데이터 구조체)
+/// C++Builder의 struct 혹은 단순 class와 같습니다.
+class DeviceModel {
   final String id;
-  final String name;
-  final String model;
-  final String ipAddress;
-  final String status;     // 'Online', 'Offline'
-  final String commMethod; // 'TCP/IP', 'COM', 'Bluetooth'
-  final String type;       // 'RFID', 'Printer', 'Barcode-Scanner', 'Other' [추가]
+  final String collectionId;
+  final String name;          // 장치 표시명
+  final String model;         // 제조사 및 모델명
+  final String commMethod;    // 통신 방식 (TCP/IP 등)
+  final String ipAddress;     // IP 주소
+  final int port;             // 통신 포트
+  final String status;        // 현재 상태 (Online, Offline, Error)
+  final bool isActive;        // 장치 활성화 여부
+  final String clientId;      // Host Serial ID
+  final String? image;        // 장치 사진 파일명
+  final double posX;          // 도면 내 X 좌표 (0.0~1.0)
+  final double posY;          // 도면 내 Y 좌표 (0.0~1.0)
+  final Map<String, dynamic> settings;
+  final DateTime created;
+  final DateTime updated;
 
-  Device({
+  DeviceModel({
     required this.id,
+    this.collectionId = 'devices',
     required this.name,
     required this.model,
-    required this.ipAddress,
-    required this.status,
     required this.commMethod,
-    required this.type,
+    required this.clientId,
+    this.ipAddress = '',
+    this.port = 8080,
+    this.status = 'Offline',
+    this.isActive = true,
+    this.image,
+    this.posX = 0.0,
+    this.posY = 0.0,
+    this.settings = const {},
+    required this.created,
+    required this.updated,
   });
 
-  /// PocketBase 레코드를 Device 객체로 변환하는 팩토리 생성자
-  factory Device.fromRecord(RecordModel record) {
-    return Device(
+  /// DB 레코드로부터 객체 생성 (Field Mapping)
+  factory DeviceModel.fromRecord(RecordModel record) {
+    return DeviceModel(
       id: record.id,
+      collectionId: record.collectionId,
       name: record.getStringValue('name'),
       model: record.getStringValue('model'),
+      commMethod: record.getStringValue('comm_method', 'TCP/IP'),
+      clientId: record.getStringValue('client_id'),
       ipAddress: record.getStringValue('ip_address'),
-      status: record.getStringValue('status'),
-      commMethod: record.getStringValue('comm_method'),
-      type: record.getStringValue('type'), // [추가] DB 필드명: type
+      port: record.getIntValue('port', 8080),
+      status: record.getStringValue('status', 'Offline'),
+      isActive: record.getBoolValue('is_active', true),
+      image: record.getStringValue('image'),
+      posX: record.getDoubleValue('pos_x', 0.0),
+      posY: record.getDoubleValue('pos_y', 0.0),
+      settings: record.data['settings'] is Map<String, dynamic> ? record.data['settings'] : {},
+      created: DateTime.parse(record.created),
+      updated: DateTime.parse(record.updated),
     );
+  }
+
+  /// 이미지 URL 생성 도우미
+  String? getImageUrl(String baseUrl, {String thumb = ''}) {
+    if (image == null || image!.isEmpty) return null;
+    return "$baseUrl/api/files/$collectionId/$id/$image${thumb.isNotEmpty ? '?thumb=$thumb' : ''}";
   }
 }
