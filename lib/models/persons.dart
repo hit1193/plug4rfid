@@ -19,6 +19,7 @@ class Person {
   final String? authId;      // PocketBase 'users' 컬렉션과의 연결 ID (Relation: auth_id)
   final String role;         // 권한 (Admin, Operator, Viewer 등)
   final bool isActive;       // 재직 여부 또는 태그 활성화 상태 (is_active)
+  final String remarks;      // 비고/메모 필드
 
   final Map<String, dynamic> metadata; // 기타 확장 정보 (JSON)
   final DateTime created;
@@ -37,6 +38,7 @@ class Person {
     this.authId,
     this.role = 'Operator',
     this.isActive = true,
+    this.remarks = '',
     this.metadata = const {},
     required this.created,
     required this.updated,
@@ -51,7 +53,7 @@ class Person {
       id: record.id,
       collectionId: record.collectionId,
       code: record.getStringValue('code'),
-      tagId: record.getStringValue('tag_id'),
+      tagId: record.getStringValue('tag_id'), // [수정] tag_id -> tagId (기존 변수명 준수)
       name: record.getStringValue('name'),
       image: record.getStringValue('image'),
       department: record.getStringValue('department', 'Unknown'),
@@ -60,6 +62,7 @@ class Person {
       authId: record.getStringValue('auth_id'),
       role: record.getStringValue('role', 'Operator'),
       isActive: record.getBoolValue('is_active', true),
+      remarks: record.getStringValue('remarks'),
       metadata: record.data['metadata'] is Map<String, dynamic>
           ? record.data['metadata'] as Map<String, dynamic>
           : {},
@@ -80,6 +83,7 @@ class Person {
       'auth_id': authId,
       'role': role,
       'is_active': isActive,
+      'remarks': remarks,
       'metadata': metadata,
     };
   }
@@ -96,6 +100,7 @@ class Person {
     String? authId,
     String? role,
     bool? isActive,
+    String? remarks,
     Map<String, dynamic>? metadata,
   }) {
     return Person(
@@ -111,6 +116,7 @@ class Person {
       authId: authId ?? this.authId,
       role: role ?? this.role,
       isActive: isActive ?? this.isActive,
+      remarks: remarks ?? this.remarks,
       metadata: metadata ?? this.metadata,
       created: created,
       updated: updated,
