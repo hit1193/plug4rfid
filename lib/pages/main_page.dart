@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:provider/provider.dart';
 import 'dart:io';
 
-// 각 페이지 위젯들 (파일이 존재해야 컴파일됩니다)
+// 각 페이지 위젯
 import 'kiosk_view.dart';
 import 'person_page.dart';
 import 'device_page.dart';
 import 'product_page.dart';
 import 'device_map_page.dart';
+
+// 데이터 모듈 (Providers)
+import '../providers/person_provider.dart';
+import '../providers/product_provider.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -18,15 +23,13 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  // [중요] 초기값을 false로 설정해야 아이콘이 있는 대시보드가 먼저 뜹니다.
-  // 스크린샷의 화면은 이 값이 true일 때 나오는 'KioskView'입니다.
   bool _isKioskMode = false;
   int _selectedIndex = 0;
   final String _pbBaseUrl = "http://127.0.0.1:8090";
 
   @override
   Widget build(BuildContext context) {
-    // 1. 키오스크 모드 (제어 아이콘이 없는 현장 대기 화면)
+    // 1. 키오스크 모드 (현장 전용 대기 화면)
     if (_isKioskMode) {
       return Scaffold(
         body: KioskView(
@@ -35,47 +38,54 @@ class _MainPageState extends State<MainPage> {
       );
     }
 
-    // 2. 관리자 모드 (상단에 제어 아이콘이 있는 대시보드)
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        bool isDesktop = constraints.maxWidth > 1000;
-        bool isMobile = constraints.maxWidth <= 650;
+    // 2. 관리자 대시보드 모드
+    return MultiProvider(
+      providers: [
+        // C++Builder의 전역 DataModule처럼 여기서 인스턴스를 유지합니다.
+        ChangeNotifierProvider(create: (_) => PersonProvider()),
+        ChangeNotifierProvider(create: (_) => ProductProvider()),
+      ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          bool isDesktop = constraints.maxWidth > 1000;
+          bool isMobile = constraints.maxWidth <= 650;
 
-        return Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.surface,
-          body: Row(
-            children: [
-              if (!isMobile) _buildModernNavRail(isDesktop),
-              Expanded(
-                child: Column(
-                  children: [
-                    // 이 영역이 'DragToMoveArea'이며, 우측에 최소/최대/닫기 아이콘이 배치됩니다.
-                    DragToMoveArea(child: _buildHeader()),
-                    Expanded(
-                      child: Container(
-                        margin: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.03),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+          return Scaffold(
+            backgroundColor: Theme.of(context).colorScheme.surface,
+            body: Row(
+              children: [
+                if (!isMobile) _buildModernNavRail(isDesktop),
+                Expanded(
+                  child: Column(
+                    children: [
+                      // Windows 전용 타이틀바 드래그 영역 및 헤더
+                      DragToMoveArea(child: _buildHeader()),
+                      Expanded(
+                        child: Container(
+                          margin: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: _buildBody(isMobile),
                         ),
-                        clipBehavior: Clip.antiAlias,
-                        child: _buildBody(isMobile),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -136,7 +146,6 @@ class _MainPageState extends State<MainPage> {
               _buildStatusBadge(),
             ],
           ),
-          // 이 부분이 윈도우 우측 상단 버튼들입니다.
           if (Platform.isWindows)
             Row(
               children: [

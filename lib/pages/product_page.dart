@@ -1,184 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
 import 'dart:typed_data';
+import 'dart:io';
+import 'package:excel/excel.dart' as excel_pkg;
+import 'package:file_picker/file_picker.dart';
+
 import '../models/products.dart';
-import '../services/pb_service.dart';
+import '../providers/product_provider.dart';
 
-/// [Logic] 물품 관리를 위한 상태 관리 클래스 (C++의 DataModule 역할)
-class ProductProvider extends ChangeNotifier {
-  final String _collectionName = 'products';
-  List<ProductModel> _items = [];
-  bool _isLoading = false;
-  bool _isSaving = false;
-  bool _isDisposed = false;
+/// 디자인 상수
+const String _fontPretendard = 'Pretendard';
+const Color _primaryColor = Color(0xFF6366F1);
+const Color _surfaceColor = Color(0xFFF8FAFC);
+const Color _borderColor = Color(0xFFE2E8F0);
 
-  List<ProductModel> get items => _items;
-  bool get isLoading => _isLoading;
-  bool get isSaving => _isSaving;
-
-  ProductProvider() {
-    fetchData();
-    _subscribe();
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _safeUnsubscribe();
-    super.dispose();
-  }
-
-  Future<void> _safeUnsubscribe() async {
-    try {
-      await PBService.pb.collection(_collectionName).unsubscribe('*');
-    } catch (e) {
-      debugPrint("구독 해제 세션 종료 감지: $e");
-    }
-  }
-
-  @override
-  void notifyListeners() {
-    if (!_isDisposed) {
-      super.notifyListeners();
-    }
-  }
-
-  Future<void> fetchData() async {
-    if (_isDisposed) return;
-    _isLoading = true;
-    notifyListeners();
-    try {
-      final records = await PBService.pb.collection(_collectionName).getFullList(sort: '-created');
-      if (_isDisposed) return;
-      _items = records.map((r) => ProductModel.fromJson(r.toJson())).toList();
-    } catch (e) {
-      debugPrint("물품 로드 에러: $e");
-    } finally {
-      if (!_isDisposed) {
-        _isLoading = false;
-        notifyListeners();
-      }
-    }
-  }
-
-  void _subscribe() {
-    PBService.pb.collection(_collectionName).subscribe('*', (e) {
-      if (!_isDisposed) fetchData();
-    });
-  }
-
-  /// PocketBase의 quantity 필수 제약 조건 해결 및 벌크 등록 로직
-  Future<bool> handleSave({
-    required ProductModel? p,
-    required Map<String, dynamic> data,
-    XFile? imageXFile,
-  }) async {
-    if (_isDisposed) return false;
-    _isSaving = true;
-    notifyListeners();
-
-    try {
-      Uint8List? fileBytes;
-      String? fileName;
-      if (imageXFile != null) {
-        fileBytes = await imageXFile.readAsBytes();
-        fileName = imageXFile.name;
-      }
-
-      final Map<String, dynamic> body = Map<String, dynamic>.from(data);
-      final int bulkCount = body.remove('bulk_count') ?? 1;
-
-      if (p == null) {
-        // 신규 등록: 벌크 생성
-        for (int i = 0; i < bulkCount; i++) {
-          if (_isDisposed) break;
-          final Map<String, dynamic> singleBody = Map<String, dynamic>.from(body);
-
-          if (bulkCount > 1) {
-            singleBody['tag_id'] = "${body['tag_id']}_$i";
-          }
-          singleBody['quantity'] = 1;
-
-          List<http.MultipartFile> files = [];
-          if (fileBytes != null && fileName != null) {
-            files.add(http.MultipartFile.fromBytes('image', fileBytes, filename: fileName));
-          }
-          await PBService.pb.collection(_collectionName).create(body: singleBody, files: files);
-        }
-      } else {
-        // 수정 모드
-        if (!body.containsKey('quantity')) {
-          body['quantity'] = 1;
-        }
-
-        if (imageXFile != null) {
-          final sameProducts = _items.where((item) =>
-          item.name == p.name && (item.spec ?? "") == (p.spec ?? "")
-          ).toList();
-
-          for (var item in sameProducts) {
-            if (_isDisposed) break;
-            List<http.MultipartFile> files = [];
-            if (fileBytes != null && fileName != null) {
-              files.add(http.MultipartFile.fromBytes('image', fileBytes, filename: fileName));
-            }
-            await PBService.pb.collection(_collectionName).update(
-              item.id,
-              body: item.id == p.id ? body : {'name': body['name'], 'spec': body['spec'], 'quantity': 1},
-              files: files,
-            );
-          }
-        } else {
-          await PBService.pb.collection(_collectionName).update(p.id, body: body);
-        }
-      }
-      return true;
-    } catch (e) {
-      debugPrint("저장 에러 상세: $e");
-      return false;
-    } finally {
-      if (!_isDisposed) {
-        _isSaving = false;
-        notifyListeners();
-      }
-    }
-  }
-
-  Future<bool> deleteProduct(String id) async {
-    if (_isDisposed) return false;
-    try {
-      await PBService.pb.collection(_collectionName).delete(id);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<void> deleteBatch(List<ProductModel> itemsToDelete) async {
-    if (_isDisposed) return;
-    for (var item in itemsToDelete) {
-      if (_isDisposed) break;
-      await deleteProduct(item.id);
-    }
-    fetchData();
-  }
-}
-
-/// [UI] 물품 관리 페이지
 class ProductPage extends StatefulWidget {
   final String searchQuery;
   final bool isMobile;
   final String baseUrl;
-  final Function(ProductModel)? onEdit;
 
   const ProductPage({
     super.key,
     required this.searchQuery,
     required this.isMobile,
     required this.baseUrl,
-    this.onEdit,
   });
 
   @override
@@ -186,22 +33,12 @@ class ProductPage extends StatefulWidget {
 }
 
 class _ProductPageState extends State<ProductPage> {
-  static const String _fontFamily = 'Pretendard';
-  static const List<String> _kStatusOptions = ['정상', '검수필요', '부족', '수리중', '폐기', '알 수 없음'];
-
-  // 그리드 상수
-  static const double _rowHeight = 56.0;
-  static const double _colImgWidth = 60.0;
-  static const double _colQtyWidth = 100.0;
-  static const double _colActionWidth = 100.0;
-
-  static const double _detailColImgWidth = 50.0;
-  static const double _detailColStatusWidth = 80.0;
-  static const double _detailColActionWidth = 90.0;
-
   final TextEditingController _searchController = TextEditingController();
   String _currentQuery = "";
+
+  // 집계 모드: 'item'(품명), 'location'(위치), 'category'(분류)
   String _groupByMode = 'item';
+  String? _selectedGroupKey;
 
   @override
   void initState() {
@@ -216,22 +53,17 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
-  bool _isMatch(String? target, String query) {
-    if (target == null || target.isEmpty) return "알 수 없음".contains(query);
-    if (query.isEmpty) return true;
-    return target.toLowerCase().contains(query.toLowerCase());
-  }
-
+  /// 데이터 그룹화 (Aggregation)
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
-    Map<String, List<ProductModel>> grouped = {};
+    final Map<String, List<ProductModel>> grouped = {};
     for (var item in items) {
       String key = "";
       if (_groupByMode == 'item') {
-        key = (item.spec ?? "").isEmpty ? item.name : "${item.name} (${item.spec})";
+        key = item.name;
       } else if (_groupByMode == 'location') {
-        key = (item.location ?? "").isEmpty ? "위치 알 수 없음" : item.location!;
+        key = item.location ?? "위치 미지정";
       } else {
-        key = (item.category ?? "").isEmpty ? "분류 알 수 없음" : item.category!;
+        key = item.category ?? "분류 미지정";
       }
       if (!grouped.containsKey(key)) grouped[key] = [];
       grouped[key]!.add(item);
@@ -239,611 +71,546 @@ class _ProductPageState extends State<ProductPage> {
     return grouped;
   }
 
-  String _getImageUrl(ProductModel p) {
-    if (p.image == null || p.image!.isEmpty) return "";
-    return "${widget.baseUrl}/api/files/products/${p.id}/${p.image}";
+  /// RFID 인식 시 자동 반응 로직
+  void _checkRfidStatus(ProductProvider provider) {
+    if (provider.lastScannedTag.isNotEmpty) {
+      final tag = provider.lastScannedTag;
+      provider.clearLastScannedTag();
+
+      final found = provider.findProductByTag(tag);
+      if (found != null) {
+        setState(() => _selectedGroupKey = _getGroupKeyOf(found));
+        _showForm(context, provider, found);
+      } else {
+        _showForm(context, provider, null, initialTag: tag);
+      }
+    }
   }
 
-  /// [수정] 썸네일 이미지 위젯: 이미지 없는 경우 기본 배경을 카메라 아이콘으로 통일
-  Widget _buildThumbnail(ProductModel p) {
-    final url = _getImageUrl(p);
-    return Container(
-      width: 40,
-      height: 40,
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: url.isEmpty
-          ? const Icon(Icons.camera_alt_outlined, size: 16, color: Colors.grey)
-          : Image.network(
-        url,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) => const Icon(Icons.error_outline, size: 14),
-      ),
-    );
+  String _getGroupKeyOf(ProductModel p) {
+    if (_groupByMode == 'item') return p.name;
+    if (_groupByMode == 'location') return p.location ?? "위치 미지정";
+    return p.category ?? "분류 미지정";
   }
 
   @override
   Widget build(BuildContext context) {
-    const defaultTextStyle = TextStyle(fontFamily: _fontFamily);
+    final provider = context.watch<ProductProvider>();
 
-    return ChangeNotifierProvider(
-      create: (_) => ProductProvider(),
-      child: Consumer<ProductProvider>(
-        builder: (context, provider, child) {
-          final filteredRaw = provider.items.where((p) =>
-          _isMatch(p.name, _currentQuery) ||
-              _isMatch(p.tagId, _currentQuery) ||
-              _isMatch(p.location, _currentQuery)
-          ).toList();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkRfidStatus(provider));
 
-          final groupedMap = _getGroupedData(filteredRaw);
-          final groupKeys = groupedMap.keys.toList();
+    final filteredRaw = provider.items.where((p) {
+      final query = _currentQuery.toLowerCase();
+      return p.name.toLowerCase().contains(query) || p.tagId.toLowerCase().contains(query);
+    }).toList();
 
-          return Scaffold(
-            backgroundColor: Colors.transparent,
-            body: DefaultTextStyle(
-              style: defaultTextStyle.copyWith(color: Colors.black),
-              child: Column(
-                children: [
-                  _buildSearchBar(),
-                  _buildToggleRow(),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(color: Colors.indigo.withValues(alpha: 0.3), width: 1.5),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 15,
-                              offset: const Offset(0, 5),
-                            )
-                          ],
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            _buildHeader(),
-                            const Divider(height: 1, thickness: 1.2, color: Color(0xFFE0E0E0)),
-                            Expanded(
-                              child: provider.isLoading
-                                  ? const Center(child: CircularProgressIndicator())
-                                  : _buildListView(groupKeys, groupedMap, provider),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            floatingActionButton: FloatingActionButton(
-              onPressed: () => _showForm(context, provider, null),
-              backgroundColor: Colors.indigo,
-              child: const Icon(Icons.add, color: Colors.white),
-            ),
-          );
-        },
-      ),
-    );
-  }
+    final groupedMap = _getGroupedData(filteredRaw);
+    final groupKeys = groupedMap.keys.toList()..sort();
 
-  Widget _buildSearchBar() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(26, 15, 26, 5),
-      child: TextField(
-        controller: _searchController,
-        style: const TextStyle(fontFamily: _fontFamily),
-        onChanged: (val) => setState(() => _currentQuery = val),
-        decoration: InputDecoration(
-          labelText: '물품 검색',
-          labelStyle: const TextStyle(fontFamily: _fontFamily),
-          prefixIcon: const Icon(Icons.search),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildToggleRow() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 8),
-      child: Row(
-        children: ['item', 'location', 'category'].map((mode) => Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: ActionChip(
-              label: Center(
-                  child: Text(
-                    mode == 'item' ? '품목별' : (mode == 'location' ? '위치별' : '분류별'),
-                    style: const TextStyle(fontFamily: _fontFamily),
-                  )
-              ),
-              onPressed: () => setState(() => _groupByMode = mode),
-              backgroundColor: _groupByMode == mode ? Colors.indigo : Colors.white,
-              labelStyle: TextStyle(
-                fontFamily: _fontFamily,
-                color: _groupByMode == mode ? Colors.white : Colors.black87,
-                fontWeight: _groupByMode == mode ? FontWeight.bold : FontWeight.normal,
-              ),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-          ),
-        )).toList(),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    const headerStyle = TextStyle(
-        fontFamily: _fontFamily,
-        fontWeight: FontWeight.bold,
-        fontSize: 14,
-        color: Colors.black87
-    );
-    return Container(
-      height: _rowHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      color: Colors.indigo.withValues(alpha: 0.07),
-      child: const Row(children: [
-        SizedBox(width: _colImgWidth, child: Text('이미지', style: headerStyle)),
-        Expanded(child: Text('품명 / 정보', style: headerStyle)),
-        SizedBox(width: _colQtyWidth, child: Text('보유수량', textAlign: TextAlign.center, style: headerStyle)),
-        SizedBox(width: _colActionWidth, child: Text('작업', textAlign: TextAlign.center, style: headerStyle)),
-      ]),
-    );
-  }
-
-  Widget _buildListView(List<String> keys, Map<String, List<ProductModel>> map, ProductProvider pvd) {
-    if (keys.isEmpty) return const Center(child: Text("검색 결과가 없습니다.", style: TextStyle(fontFamily: _fontFamily)));
-
-    return ListView.separated(
-      itemCount: keys.length,
-      separatorBuilder: (c, i) => const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
-      itemBuilder: (context, index) {
-        final key = keys[index];
-        final items = map[key]!;
-        final representativeItem = items.first;
-
-        return InkWell(
-          onTap: () => _showDetailGrid(context, pvd, key),
-          child: Container(
-            height: _rowHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                SizedBox(width: _colImgWidth, child: Align(alignment: Alignment.centerLeft, child: _buildThumbnail(representativeItem))),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(key, style: const TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.w600, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(
-                          _groupByMode == 'item' ? (representativeItem.category ?? "분류 없음") : "${items.length}개의 품목",
-                          style: const TextStyle(fontFamily: _fontFamily, fontSize: 12, color: Colors.black54)
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                    width: _colQtyWidth,
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(color: Colors.indigo.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
-                        child: Text(
-                            '${items.length}',
-                            style: const TextStyle(fontFamily: _fontFamily, color: Colors.indigo, fontWeight: FontWeight.bold)
-                        ),
-                      ),
-                    )
-                ),
-                SizedBox(
-                    width: _colActionWidth,
-                    child: Center(
-                      child: IconButton(
-                        icon: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent, size: 22),
-                        onPressed: () => _confirmBatchDelete(context, pvd, key, items),
-                      ),
-                    )
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showDetailGrid(BuildContext context, ProductProvider provider, String groupKey) {
-    showDialog(
-      context: context,
-      builder: (ctx) => ChangeNotifierProvider.value(
-        value: provider,
-        child: Consumer<ProductProvider>(
-            builder: (context, pvd, _) {
-              final items = pvd.items.where((p) {
-                if (_groupByMode == 'item') return ((p.spec ?? "").isEmpty ? p.name : "${p.name} (${p.spec})") == groupKey;
-                if (_groupByMode == 'location') return (p.location ?? "위치 알 수 없음") == groupKey;
-                return (p.category ?? "분류 알 수 없음") == groupKey;
-              }).toList();
-
-              const detailHeaderStyle = TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87);
-
-              return AlertDialog(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                title: Text(groupKey, style: const TextStyle(fontFamily: _fontFamily, fontSize: 18, fontWeight: FontWeight.bold)),
-                content: Container(
-                  width: 650,
-                  height: 500,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.indigo.withValues(alpha: 0.25), width: 1.2),
-                    color: Colors.white,
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      Container(
-                        height: _rowHeight,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        color: Colors.grey[100],
-                        child: const Row(
-                          children: [
-                            SizedBox(width: _detailColImgWidth, child: Text("이미지", style: detailHeaderStyle)),
-                            SizedBox(width: 10),
-                            Expanded(child: Text("태그 ID (EPC)", style: detailHeaderStyle)),
-                            SizedBox(width: _detailColStatusWidth, child: Text("상태", textAlign: TextAlign.center, style: detailHeaderStyle)),
-                            SizedBox(width: _detailColActionWidth, child: Text("작업", textAlign: TextAlign.center, style: detailHeaderStyle)),
-                          ],
-                        ),
-                      ),
-                      const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
-                      Expanded(
-                        child: ListView.separated(
-                          itemCount: items.length,
-                          separatorBuilder: (c, i) => const Divider(height: 1, thickness: 1, color: Color(0xFFEEEEEE)),
-                          itemBuilder: (c, i) => InkWell(
-                            onTap: () => _showForm(context, pvd, items[i]),
-                            child: Container(
-                              height: _rowHeight,
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                              child: Row(
-                                children: [
-                                  SizedBox(width: _detailColImgWidth, child: Center(child: _buildThumbnail(items[i]))),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                            items[i].tagId,
-                                            style: const TextStyle(fontFamily: 'monospace', fontSize: 13, fontWeight: FontWeight.w500),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis
-                                        ),
-                                        Text(
-                                            items[i].name,
-                                            style: const TextStyle(fontFamily: _fontFamily, fontSize: 11, color: Colors.grey),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  SizedBox(width: _detailColStatusWidth, child: Center(
-                                    child: Text(
-                                        _kStatusOptions[indexToStatus(items[i].status)],
-                                        style: TextStyle(fontFamily: _fontFamily, color: _getStatusColor(items[i].status), fontSize: 12, fontWeight: FontWeight.bold)
-                                    ),
-                                  )),
-                                  SizedBox(width: _detailColActionWidth, child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit_note, size: 22, color: Colors.blueGrey),
-                                        onPressed: () => _showForm(context, pvd, items[i]),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_outline, size: 22, color: Colors.redAccent),
-                                        onPressed: () => _confirmDelete(context, pvd, items[i]),
-                                      ),
-                                    ],
-                                  )),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text("닫기", style: TextStyle(fontFamily: _fontFamily))
-                  )
-                ],
-              );
-            }
-        ),
-      ),
-    );
-  }
-
-  int indexToStatus(String? s) => _kStatusOptions.contains(s) ? _kStatusOptions.indexOf(s!) : 5;
-
-  Color _getStatusColor(String? status) {
-    switch (status) {
-      case '정상': return Colors.green;
-      case '검수필요': return Colors.orange;
-      case '부족': return Colors.red;
-      case '수리중': return Colors.blue;
-      case '폐기': return Colors.grey;
-      default: return Colors.black54;
-    }
-  }
-
-  Future<void> _confirmDelete(BuildContext context, ProductProvider pvd, ProductModel p) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("데이터 삭제", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)),
-        content: Text("태그 [${p.tagId}] 정보를 삭제하시겠습니까?", style: const TextStyle(fontFamily: _fontFamily)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("취소", style: TextStyle(fontFamily: _fontFamily))),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text("삭제", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-    if (result == true) await pvd.deleteProduct(p.id);
-  }
-
-  Future<void> _confirmBatchDelete(BuildContext context, ProductProvider pvd, String title, List<ProductModel> items) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("그룹 일괄 삭제", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)),
-        content: Text("[$title] 그룹의 모든 항목(${items.length}개)을 삭제하시겠습니까?", style: const TextStyle(fontFamily: _fontFamily)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("취소", style: TextStyle(fontFamily: _fontFamily))),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), style: TextButton.styleFrom(foregroundColor: Colors.red), child: const Text("전체 삭제", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold))),
-        ],
-      ),
-    );
-    if (result == true) await pvd.deleteBatch(items);
-  }
-
-  Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p) async {
-    final nameC = TextEditingController(text: p?.name ?? "");
-    final tagC = TextEditingController(text: p?.tagId ?? "");
-    final qtyC = TextEditingController(text: "1");
-    final locC = TextEditingController(text: p?.location ?? "");
-    final specC = TextEditingController(text: p?.spec ?? "");
-    final catC = TextEditingController(text: p?.category ?? "");
-    String sV = (p?.status == null || p!.status.trim().isEmpty) ? '알 수 없음' : p.status;
-    if (!_kStatusOptions.contains(sV)) sV = '알 수 없음';
-
-    XFile? pickedFile;
-    Uint8List? previewBytes;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => ListenableProvider.value(
-        value: provider,
-        child: Consumer<ProductProvider>(
-          builder: (context, pvd, _) => StatefulBuilder(
-            builder: (context, setDialogState) {
-              bool useHorizontal = MediaQuery.of(context).size.width > 600;
-              final dynamicLabelStyle = TextStyle(fontSize: 12, color: Colors.black45, fontFamily: _fontFamily);
-
-              return AlertDialog(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                title: Text(
-                    p == null ? '신규 등록' : '정보 수정',
-                    style: const TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)
-                ),
-                content: SizedBox(
-                  width: useHorizontal ? 600 : null,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (useHorizontal)
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _buildImagePicker(p, previewBytes, setDialogState, (file, bytes) {
-                                pickedFile = file; previewBytes = bytes;
-                              }),
-                              const SizedBox(width: 20),
-                              Expanded(child: _buildInputs(nameC, sV, catC, locC, specC, tagC, qtyC, p, dynamicLabelStyle, (val) => sV = val)),
-                            ],
-                          )
-                        else ...[
-                          _buildImagePicker(p, previewBytes, setDialogState, (file, bytes) {
-                            pickedFile = file; previewBytes = bytes;
-                          }),
-                          const SizedBox(height: 20),
-                          _buildInputs(nameC, sV, catC, locC, specC, tagC, qtyC, p, dynamicLabelStyle, (val) => sV = val),
-                        ],
-                        const SizedBox(height: 15),
-                        const Text(
-                            "※ 이미지 변경 시 동일 품목(품명/규격 일치)의 모든 데이터에 반영됩니다.",
-                            style: TextStyle(fontFamily: _fontFamily, fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w500)
-                        ),
-                        if (pvd.isSaving) const Padding(padding: EdgeInsets.only(top: 15), child: LinearProgressIndicator()),
-                      ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  Row(
-                    children: [
-                      if (p != null)
-                        TextButton(
-                          onPressed: () async {
-                            final result = await showDialog<bool>(
-                              context: context,
-                              builder: (c) => AlertDialog(
-                                title: const Text("삭제 확인", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)),
-                                content: const Text("정말 삭제하시겠습니까?", style: TextStyle(fontFamily: _fontFamily)),
-                                actions: [
-                                  TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("취소", style: TextStyle(fontFamily: _fontFamily))),
-                                  TextButton(onPressed: () => Navigator.pop(c, true), child: const Text("삭제", style: TextStyle(fontFamily: _fontFamily, color: Colors.red))),
-                                ],
-                              ),
-                            );
-                            if (result == true) {
-                              if (await pvd.deleteProduct(p.id)) {
-                                if (ctx.mounted) Navigator.of(ctx).pop();
-                              }
-                            }
-                          },
-                          style: TextButton.styleFrom(foregroundColor: Colors.red),
-                          child: const Text("삭제", style: TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)),
-                        ),
-                      const Spacer(),
-                      TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(),
-                          child: const Text("취소", style: TextStyle(fontFamily: _fontFamily))
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        onPressed: pvd.isSaving ? null : () async {
-                          if (nameC.text.isEmpty) return;
-                          final nav = Navigator.of(ctx);
-                          final d = {
-                            'name': nameC.text.trim(),
-                            'tag_id': tagC.text.trim(),
-                            'bulk_count': int.tryParse(qtyC.text) ?? 1,
-                            'location': locC.text.trim(),
-                            'spec': specC.text.trim(),
-                            'category': catC.text.trim(),
-                            'status': sV == '알 수 없음' ? '' : sV
-                          };
-                          if (await pvd.handleSave(p: p, data: d, imageXFile: pickedFile)) {
-                            if (ctx.mounted) nav.pop();
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.indigo,
-                            foregroundColor: Colors.white,
-                            textStyle: const TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold)
-                        ),
-                        child: const Text("저장"),
-                      ),
-                    ],
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImagePicker(ProductModel? p, Uint8List? preview, Function setDS, Function onP) {
-    return GestureDetector(
-      onTap: () async {
-        final picker = ImagePicker();
-        final image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-        if (image != null) {
-          final bytes = await image.readAsBytes();
-          setDS(() => onP(image, bytes));
-        }
-      },
-      child: Container(
-        width: 150, height: 150,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-            color: Colors.grey[50],
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: Colors.grey[300]!)
-        ),
-        child: preview != null
-            ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.memory(preview, fit: BoxFit.contain))
-            : (p != null && p.image != null && p.image!.isNotEmpty)
-            ? ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: Image.network(_getImageUrl(p), fit: BoxFit.contain)
-        )
-            : const Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: DefaultTextStyle(
+        style: const TextStyle(fontFamily: _fontPretendard, color: Colors.black),
+        child: Column(
           children: [
-            Icon(Icons.camera_alt_outlined, size: 30, color: Colors.grey),
-            SizedBox(height: 8),
-            Text("사진 등록", style: TextStyle(fontFamily: _fontFamily, color: Colors.grey, fontSize: 11)),
+            // [개선] 진행바를 최상단에 배치하여 시인성 확보 (crHourGlass 효과)
+            if (provider.isParsing || provider.isSaving)
+              const LinearProgressIndicator(minHeight: 3, backgroundColor: Colors.transparent, color: _primaryColor),
+
+            Expanded(
+              child: LayoutBuilder(builder: (context, constraints) {
+                if (constraints.maxWidth > 950 && !widget.isMobile) {
+                  return _buildSplitLayout(provider, groupedMap, groupKeys);
+                }
+                return _buildMobileLayout(provider, groupedMap, groupKeys);
+              }),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInputs(TextEditingController n, String s, TextEditingController c, TextEditingController l, TextEditingController sp, TextEditingController t, TextEditingController q, ProductModel? p, TextStyle style, Function onS) {
-    return Column(
+  // --- [레이아웃] 1. 데스크톱/태블릿 Split View ---
+  Widget _buildSplitLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys) {
+    final selectedItems = _selectedGroupKey != null ? groupedMap[_selectedGroupKey] : null;
+
+    return Row(
       children: [
-        _buildTextField('품명', n, style),
-        DropdownButtonFormField<String>(
-          value: s,
-          style: const TextStyle(fontFamily: _fontFamily, color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16),
-          decoration: InputDecoration(
-            labelText: '상태',
-            labelStyle: style,
-            border: const OutlineInputBorder(),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            isDense: true,
+        SizedBox(
+          width: 420,
+          child: Column(
+            children: [
+              _buildHeader(provider, provider.items, isSplit: true),
+              _buildGroupByToggle(),
+              Expanded(
+                child: RepaintBoundary(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    itemCount: groupKeys.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (ctx, idx) {
+                      final key = groupKeys[idx];
+                      final items = groupedMap[key]!;
+                      final isSelected = _selectedGroupKey == key;
+                      return _buildGroupTile(provider, key, items, isSelected, () => setState(() => _selectedGroupKey = key));
+                    },
+                  ),
+                ),
+              ),
+            ],
           ),
-          items: _kStatusOptions.map((v) => DropdownMenuItem(
-              value: v,
-              child: Text(v, style: const TextStyle(fontFamily: _fontFamily, fontWeight: FontWeight.bold, fontSize: 16))
-          )).toList(),
-          onChanged: (v) { if (v != null) onS(v); },
         ),
-        const SizedBox(height: 12),
-        _buildTextField('분류', c, style),
-        _buildTextField('보관위치', l, style),
-        _buildTextField('규격', sp, style),
-        _buildTextField('EPC (태그 ID)', t, style, readOnly: p != null),
-        if (p == null) _buildTextField('초기 등록 수량', q, style, isNum: true),
+        const VerticalDivider(width: 1, thickness: 1, color: _borderColor),
+        Expanded(
+          child: Container(
+            color: _surfaceColor,
+            child: RepaintBoundary(
+              child: (_selectedGroupKey == null || selectedItems == null)
+                  ? _buildEmptyState("상세 정보를 확인하려면 목록에서 그룹을 선택하세요")
+                  : _buildGroupDetailList(provider, _selectedGroupKey!, selectedItems),
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildTextField(String label, TextEditingController c, TextStyle s, {bool readOnly = false, bool isNum = false}) {
+  // --- [레이아웃] 2. 모바일용 리스트 ---
+  Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys) {
+    return Column(
+      children: [
+        _buildHeader(provider, provider.items, isSplit: false),
+        _buildGroupByToggle(),
+        Expanded(
+          child: RepaintBoundary(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              itemCount: groupKeys.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (ctx, idx) {
+                final key = groupKeys[idx];
+                final items = groupedMap[key]!;
+                return _buildGroupTile(provider, key, items, false, () {
+                  _showMobileGroupDetail(provider, key, items);
+                });
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGroupByToggle() {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: TextField(
-        controller: c,
-        readOnly: readOnly,
-        style: const TextStyle(fontFamily: _fontFamily, fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black),
-        keyboardType: isNum ? TextInputType.number : TextInputType.text,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: s.copyWith(fontFamily: _fontFamily),
-          border: const OutlineInputBorder(),
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          fillColor: readOnly ? Colors.grey[50] : null,
-          filled: readOnly,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: Row(
+        children: [
+          _toggleBtn('item', '품목별'),
+          const SizedBox(width: 8),
+          _toggleBtn('location', '위치별'),
+          const SizedBox(width: 8),
+          _toggleBtn('category', '분류별'),
+        ],
+      ),
+    );
+  }
+
+  Widget _toggleBtn(String mode, String label) {
+    final isSelected = _groupByMode == mode;
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: isSelected,
+      onSelected: (val) { if (val) setState(() { _groupByMode = mode; _selectedGroupKey = null; }); },
+      selectedColor: _primaryColor,
+      backgroundColor: _surfaceColor,
+      showCheckmark: false,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide.none),
+    );
+  }
+
+  Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, VoidCallback onTap) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: isSelected ? _primaryColor.withValues(alpha: 0.08) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: isSelected ? _primaryColor : _borderColor),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: _buildThumbnail(items.first, size: 40),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15), maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text('자산 수량: ${items.length}개', style: const TextStyle(fontSize: 12, color: Colors.blueGrey)),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.delete_sweep_outlined, size: 20, color: Colors.redAccent),
+              onPressed: () => _confirmBatchDelete(context, provider, items),
+            ),
+            const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+          ],
         ),
       ),
     );
+  }
+
+  Widget _buildGroupDetailList(ProductProvider provider, String groupName, List<ProductModel> items) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          child: Text('$groupName (${items.length})', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: items.length,
+            itemBuilder: (ctx, idx) {
+              final p = items[idx];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: _borderColor)),
+                child: ListTile(
+                  onTap: () => _showForm(context, provider, p),
+                  leading: _buildThumbnail(p, size: 44),
+                  title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('TAG: ${p.tagId}', style: const TextStyle(fontSize: 12, color: Colors.blueGrey)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildBadge(p.status),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
+                        onPressed: () => _confirmIndividualDelete(context, provider, p),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThumbnail(ProductModel p, {double size = 50}) {
+    final url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: _borderColor)),
+      clipBehavior: Clip.antiAlias,
+      child: url != null
+          ? Image.network(url, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined))
+          : Icon(Icons.camera_alt_outlined, color: Colors.grey.withValues(alpha: 0.5), size: size * 0.5),
+    );
+  }
+
+  Widget _buildBadge(String status) {
+    Color c = status == '정상' ? Colors.green : Colors.orange;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(color: c.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+      child: Text(status, style: TextStyle(color: c, fontWeight: FontWeight.bold, fontSize: 11)),
+    );
+  }
+
+  Widget _buildEmptyState(String msg) {
+    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      const Icon(Icons.inventory_2_outlined, size: 64, color: _borderColor),
+      const SizedBox(height: 16),
+      Text(msg, style: TextStyle(color: Colors.grey.withValues(alpha: 0.8))),
+    ]));
+  }
+
+  Widget _buildHeader(ProductProvider provider, List<ProductModel> filtered, {required bool isSplit}) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('자산 통합 관리', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF1E293B))),
+              Row(
+                children: [
+                  _headerIcon(Icons.refresh, "새로고침", () => provider.fetchData(), color: _primaryColor),
+
+                  // [핵심 수정] 업로드 로직에 즉각 피드백 및 에러 처리 추가
+                  _headerIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () async {
+                    if (provider.isParsing) return; // 중복 클릭 방지
+
+                    final messenger = ScaffoldMessenger.of(context);
+                    // 시작 안내
+                    messenger.showSnackBar(const SnackBar(content: Text('엑셀 파일을 선택해주세요...'), duration: Duration(seconds: 1)));
+
+                    try {
+                      final result = await provider.batchImportFromExcel();
+
+                      if (!context.mounted) return;
+
+                      if (result['total']! > 0) {
+                        messenger.hideCurrentSnackBar();
+                        messenger.showSnackBar(SnackBar(
+                          content: Text('업로드 완료: 총 ${result['total']}건 중 ${result['success']}건 성공'),
+                          backgroundColor: Colors.green,
+                        ));
+                      } else {
+                        // 결과가 0인 경우 (취소했거나 파일이 비어있는 경우)
+                        messenger.hideCurrentSnackBar();
+                        messenger.showSnackBar(const SnackBar(content: Text('업로드할 데이터가 없거나 취소되었습니다.')));
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        messenger.showSnackBar(SnackBar(content: Text('에러 발생: $e'), backgroundColor: Colors.red));
+                      }
+                    }
+                  }, color: Colors.indigo),
+
+                  _headerIcon(FontAwesomeIcons.fileArrowDown, "엑셀 다운로드", () => _exportToExcel(context, filtered), color: Colors.green),
+                  _headerIcon(Icons.delete_sweep_outlined, "전체 초기화", () => _showResetDialog(provider), color: Colors.redAccent),
+                  if (!isSplit) ...[const SizedBox(width: 8), _circleAction(Icons.add, () => _showForm(context, provider, null), color: _primaryColor)],
+                ],
+              )
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 44,
+            child: TextField(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _currentQuery = v),
+              decoration: InputDecoration(
+                hintText: '품명 또는 TAG ID 검색...',
+                prefixIcon: const Icon(Icons.search, size: 18),
+                filled: true,
+                fillColor: _surfaceColor,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerIcon(IconData icon, String tip, VoidCallback onTap, {required Color color}) {
+    return IconButton(onPressed: onTap, tooltip: tip, icon: FaIcon(icon, size: 18, color: color));
+  }
+
+  Widget _circleAction(IconData icon, VoidCallback onTap, {Color? color}) {
+    return Container(
+      margin: const EdgeInsets.only(left: 4),
+      decoration: BoxDecoration(color: color?.withValues(alpha: 0.1) ?? _surfaceColor, shape: BoxShape.circle),
+      child: IconButton(icon: Icon(icon, size: 20, color: color ?? Colors.blueGrey), onPressed: onTap),
+    );
+  }
+
+  // --- 비동기 Context 안전하게 처리된 폼 ---
+  Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p, {String? initialTag}) async {
+    final nav = Navigator.of(context);
+
+    final nameC = TextEditingController(text: p?.name ?? "");
+    final tagC = TextEditingController(text: initialTag ?? p?.tagId ?? "");
+    final locC = TextEditingController(text: p?.location ?? "");
+    final specC = TextEditingController(text: p?.spec ?? "");
+    final catC = TextEditingController(text: p?.category ?? "");
+    final remC = TextEditingController(text: p?.remarks ?? "");
+
+    final Map<String, TextEditingController> dynamicControllers = {};
+    if (p != null) {
+      p.metadata.forEach((key, value) {
+        if (!['name', 'tag_id', 'location', 'spec', 'category', 'remarks'].contains(key)) {
+          dynamicControllers[key] = TextEditingController(text: value.toString());
+        }
+      });
+    }
+
+    XFile? file;
+    Uint8List? preview;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(builder: (dialogCtx, setS) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(p == null ? '신규 등록' : '정보 수정', style: const TextStyle(fontWeight: FontWeight.bold)),
+        content: SizedBox(
+          width: 550,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildFormImagePicker(p, preview, (f, b) => setS(() { file = f; preview = b; })),
+                const SizedBox(height: 24),
+                _fld('품명 (필수)', nameC),
+                _fld('RFID TAG ID', tagC),
+                Row(children: [Expanded(child: _fld('분류', catC)), const SizedBox(width: 10), Expanded(child: _fld('위치', locC))]),
+                _fld('규격 / 모델명', specC),
+
+                if (dynamicControllers.isNotEmpty) ...[
+                  const Divider(height: 32),
+                  const Text("추가 속성 (가변 항목)", style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    children: dynamicControllers.entries.map((e) => SizedBox(width: 240, child: _fld(e.key, e.value))).toList(),
+                  ),
+                ],
+                _fld('비고', remC, maxLines: 2),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text("취소")),
+          ElevatedButton(
+              onPressed: provider.isSaving ? null : () async {
+                if (nameC.text.isEmpty) return;
+                final success = await provider.handleSave(p: p, data: {
+                  'name': nameC.text.trim(), 'tag_id': tagC.text.trim(),
+                  'location': locC.text.trim(), 'spec': specC.text.trim(),
+                  'category': catC.text.trim(), 'remarks': remC.text.trim(),
+                  'quantity': 1, 'status': '정상',
+                  'metadata': dynamicControllers.map((k, v) => MapEntry(k, v.text.trim())),
+                }, imageXFile: file);
+
+                if (success && dialogCtx.mounted) {
+                  nav.pop();
+                }
+              },
+              child: Text(provider.isSaving ? "처리 중..." : "저장")
+          )
+        ],
+      )),
+    );
+  }
+
+  Widget _buildFormImagePicker(ProductModel? p, Uint8List? preview, Function(XFile, Uint8List) onPicked) {
+    return GestureDetector(
+      onTap: () async {
+        final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
+        if (img != null) {
+          final bytes = await img.readAsBytes();
+          onPicked(img, bytes);
+        }
+      },
+      child: Container(
+        width: 120, height: 120,
+        decoration: BoxDecoration(color: _surfaceColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: _borderColor)),
+        child: preview != null ? Image.memory(preview, fit: BoxFit.contain) : _buildThumbnail(p ?? ProductModel(name: '', tagId: ''), size: 120),
+      ),
+    );
+  }
+
+  Widget _fld(String l, TextEditingController c, {int maxLines = 1}) => Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+          controller: c, maxLines: maxLines, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          decoration: InputDecoration(
+            labelText: l, labelStyle: const TextStyle(fontSize: 12, color: _primaryColor, fontWeight: FontWeight.normal),
+            border: const OutlineInputBorder(), isDense: true, filled: true, fillColor: Colors.white,
+          )
+      )
+  );
+
+  void _confirmIndividualDelete(BuildContext context, ProductProvider provider, ProductModel p) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('삭제 확인'), content: Text('${p.name} 물품을 삭제하시겠습니까?'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+        ElevatedButton(
+            onPressed: () async {
+              final nav = Navigator.of(ctx);
+              await provider.deleteProduct(p.id);
+              if (ctx.mounted) nav.pop();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('삭제')
+        ),
+      ],
+    ));
+  }
+
+  void _confirmBatchDelete(BuildContext context, ProductProvider provider, List<ProductModel> items) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('그룹 삭제'), content: Text('해당 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+        ElevatedButton(
+            onPressed: () async {
+              final nav = Navigator.of(ctx);
+              for (var i in items) { await provider.deleteProduct(i.id); }
+              if (ctx.mounted) {
+                setState(() { _selectedGroupKey = null; });
+                nav.pop();
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('그룹 삭제')
+        ),
+      ],
+    ));
+  }
+
+  void _showResetDialog(ProductProvider provider) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('전체 초기화', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+      content: const Text('서버의 모든 물품 데이터를 삭제합니다. 이 작업은 되돌릴 수 없습니다.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
+        ElevatedButton(
+            onPressed: () async {
+              final nav = Navigator.of(ctx);
+              await provider.resetAllProducts();
+              if (ctx.mounted) nav.pop();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('전체 삭제')
+        )
+      ],
+    ));
+  }
+
+  void _showMobileGroupDetail(ProductProvider provider, String groupName, List<ProductModel> items) {
+    showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (ctx) => Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      child: _buildGroupDetailList(provider, groupName, items),
+    ));
+  }
+
+  Future<void> _exportToExcel(BuildContext context, List<ProductModel> list) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      final excel = excel_pkg.Excel.createExcel();
+      final sheet = excel['물품리스트'];
+      excel.rename('Sheet1', '물품리스트');
+      sheet.appendRow([excel_pkg.TextCellValue('품명'), excel_pkg.TextCellValue('태그ID'), excel_pkg.TextCellValue('분류'), excel_pkg.TextCellValue('위치'), excel_pkg.TextCellValue('규격'), excel_pkg.TextCellValue('비고')]);
+      for (var item in list) {
+        sheet.appendRow([excel_pkg.TextCellValue(item.name), excel_pkg.TextCellValue(item.tagId), excel_pkg.TextCellValue(item.category ?? ""), excel_pkg.TextCellValue(item.location ?? ""), excel_pkg.TextCellValue(item.spec ?? ""), excel_pkg.TextCellValue(item.remarks ?? "")]);
+      }
+
+      final String? path = await FilePicker.platform.saveFile(
+          fileName: '물품관리_${DateTime.now().millisecondsSinceEpoch}.xlsx',
+          type: FileType.custom,
+          allowedExtensions: ['xlsx']
+      );
+
+      if (path != null) {
+        await File(path).writeAsBytes(excel.encode()!);
+        messenger.showSnackBar(const SnackBar(content: Text('엑셀 파일이 저장되었습니다.')));
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('저장 실패: $e')));
+    }
   }
 }
