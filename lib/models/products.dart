@@ -1,27 +1,39 @@
-import 'package:pocketbase/pocketbase.dart';
+import 'package:intl/intl.dart';
 
 /// FA/RFID 시스템 환경에 최적화된 물품 정보 모델
 class ProductModel {
-  final String id;           // PocketBase 고유 ID
-  final String collectionId; // 컬렉션 ID (이미지 URL 생성용)
+  final String id;
+  final String collectionId;
 
-  // [핵심 필드]
-  final String name;         // 품명
-  final String tagId;        // RFID 태그 ID (EPC)
-  final int quantity;        // 현재 수량
+  // [기본 항목]
+  final String name;
+  final String tagId;
+  final int quantity;
+  final int safetyStock;
 
-  // [확장 필드]
-  final String? location;    // 보관 위치
-  final String? spec;        // 규격/모델명
-  final String? category;    // 분류
-  final String status;       // 상태 (정상, 부족, 검수필요 등)
-  final String? remarks;     // 비고 (추가된 필드)
+  // [확장 항목]
+  final String? location;
+  final String? spec;
+  final String? category;
+  final String status;
+  final String? remarks;
+  final String? unit;
+  final String? serialNumber;
+  final String? manufacturer;
 
   // [시스템 필드]
-  final DateTime? lastSeen;  // 최종 RFID 스캔 일시
-  final Map<String, dynamic> metadata; // 기타 비정형 데이터
-  final String? image;       // 사진 파일명
-  final DateTime created;    // 등록일
+  final DateTime? lastSeen;
+
+  /// [핵심] 변경 이력 및 사용자 정의 데이터가 저장되는 필드
+  /// 이력은 metadata['history'] 에 List 형태로 저장됩니다.
+  final Map<String, dynamic> metadata;
+
+  final String? image;
+  final String? created;
+  final String? updated;
+
+  // [매핑 정보] 엑셀 임포트 시 실제로 어떤 키가 사용되었는지 저장
+  final Map<String, String> originKeyMap;
 
   ProductModel({
     this.id = '',
@@ -29,76 +41,145 @@ class ProductModel {
     required this.name,
     required this.tagId,
     this.quantity = 0,
+    this.safetyStock = 5,
     this.location,
     this.spec,
     this.category,
     this.status = '정상',
     this.remarks,
+    this.unit = 'ea',
+    this.serialNumber,
+    this.manufacturer,
     this.lastSeen,
     this.metadata = const {},
     this.image,
-    DateTime? created,
-  }) : created = created ?? DateTime.now();
+    this.created,
+    this.updated,
+    this.originKeyMap = const {},
+  });
 
-  /// JSON 데이터를 모델로 변환 (C++의 FieldByName과 유사)
+  /// [보탬] 변경 이력만 따로 뽑아주는 Getter (UI에서 리스트로 뿌릴 때 사용)
+  List<Map<String, dynamic>> get history {
+    if (metadata.containsKey('history') && metadata['history'] is List) {
+      return List<Map<String, dynamic>>.from(metadata['history']);
+    }
+    return [];
+  }
+
+  /// 시스템이 기본적으로 알고 있는 별칭들
+  static const Map<String, List<String>> _aliasDefinition = {
+    'name': ['품명', '제품명', '자산명', 'Item Name'],
+    'tag_id': ['태그ID', 'RFID', 'EPC', 'Barcode'],
+    'location': ['위치', '보관위치', '창고', 'Shelf'],
+    'spec': ['규격', '모델명', '사양', 'Spec'],
+    'manufacturer': ['제조사', '메이커', '공급사', 'Brand', 'Maker'],
+    'serial_number': ['S/N', '시리얼', '제조번호'],
+    'unit': ['단위', 'Unit'],
+    'quantity': ['수량', '재고', 'Qty'],
+    'safety_stock': ['안전재고', '기준재고', 'Min Stock'],
+  };
+
   factory ProductModel.fromJson(Map<String, dynamic> json) {
+    final Map<String, dynamic> meta = Map<String, dynamic>.from(json['metadata'] ?? json);
+    final Map<String, String> usedKeys = {};
+
+    String? findValue(String systemKey) {
+      final aliases = _aliasDefinition[systemKey] ?? [];
+      if (json.containsKey(systemKey)) {
+        usedKeys[systemKey] = systemKey;
+        return json[systemKey]?.toString();
+      }
+      for (var alias in aliases) {
+        if (meta.containsKey(alias)) {
+          usedKeys[systemKey] = alias;
+          return meta[alias]?.toString();
+        }
+      }
+      return null;
+    }
+
     return ProductModel(
       id: json['id'] ?? '',
       collectionId: json['collectionId'] ?? 'products',
-      name: json['name'] ?? '',
-      tagId: json['tag_id'] ?? '',
-      quantity: (json['quantity'] is num) ? (json['quantity'] as num).toInt() : 0,
-      location: json['location'],
-      spec: json['spec'],
-      category: json['category'],
-      status: json['status'] ?? '정상',
-      remarks: json['remarks'], // PocketBase의 remarks 필드 매핑
+      name: findValue('name') ?? '',
+      tagId: findValue('tag_id') ?? '',
+      quantity: int.tryParse(findValue('quantity') ?? '') ?? (json['quantity'] ?? 0),
+      safetyStock: int.tryParse(findValue('safety_stock') ?? '') ?? (json['safety_stock'] ?? 5),
+      location: findValue('location'),
+      spec: findValue('spec'),
+      category: findValue('category'),
+      status: findValue('status') ?? '정상',
+      remarks: findValue('remarks'),
+      unit: findValue('unit') ?? 'ea',
+      serialNumber: findValue('serial_number'),
+      manufacturer: findValue('manufacturer'),
       lastSeen: json['last_seen'] != null ? DateTime.tryParse(json['last_seen']) : null,
-      metadata: json['metadata'] is Map ? Map<String, dynamic>.from(json['metadata']) : {},
+      metadata: meta,
+      originKeyMap: usedKeys,
       image: json['image'],
-      created: json['created'] != null ? DateTime.parse(json['created']) : DateTime.now(),
+      created: json['created'],
+      updated: json['updated'],
     );
   }
 
-  /// [핵심] UI에서 컬럼 이름으로 값을 동적으로 가져오기 위한 헬퍼
+  Map<String, dynamic> toJson() {
+    final Map<String, dynamic> syncedMeta = Map<String, dynamic>.from(metadata);
+
+    void sync(String systemKey, dynamic value) {
+      final originKey = originKeyMap[systemKey] ?? systemKey;
+      syncedMeta[originKey] = value;
+    }
+
+    sync('name', name);
+    if (location != null) sync('location', location);
+    if (spec != null) sync('spec', spec);
+    if (category != null) sync('category', category);
+    if (status != '정상') sync('status', status);
+    if (remarks != null) sync('remarks', remarks);
+    if (manufacturer != null) sync('manufacturer', manufacturer);
+    if (serialNumber != null) sync('serial_number', serialNumber);
+    if (unit != null) sync('unit', unit);
+
+    return {
+      'name': name,
+      'tag_id': tagId,
+      'quantity': quantity,
+      'safety_stock': safetyStock,
+      'location': location,
+      'spec': spec,
+      'category': category,
+      'status': status,
+      'remarks': remarks,
+      'unit': unit,
+      'serial_number': serialNumber,
+      'manufacturer': manufacturer,
+      'last_seen': lastSeen?.toIso8601String(),
+      'metadata': syncedMeta,
+      'origin_key_map': originKeyMap,
+    };
+  }
+
   String getValue(String key) {
     switch (key) {
-      case 'name': return name;
-      case 'tag_id': return tagId;
-      case 'location': return location ?? "-";
-      case 'spec': return spec ?? "-";
-      case 'category': return category ?? "-";
-      case 'status': return status;
-      case 'quantity': return quantity.toString();
-      case 'remarks': return remarks ?? "-"; // 명시적 필드 우선 반환
+      case '품명': return name;
+      case 'TAG ID': return tagId;
+      case '수량': return "$quantity $unit";
+      case '상태': return status;
+      case '위치': return location ?? "-";
+      case '규격': return spec ?? "-";
+      case '제조사': return manufacturer ?? "-";
+      case 'S/N': return serialNumber ?? "-";
+      case '비고': return remarks ?? "-";
       default:
-      // 그 외 필드는 metadata 내부에서 검색
         if (metadata.containsKey(key)) return metadata[key].toString();
         return "-";
     }
   }
 
-  /// 서버 저장을 위한 JSON 변환
-  Map<String, dynamic> toJson() {
-    return {
-      'name': name,
-      'tag_id': tagId,
-      'quantity': quantity,
-      'location': location,
-      'spec': spec,
-      'category': category,
-      'status': status,
-      'remarks': remarks, // 저장 시에도 포함
-      'last_seen': lastSeen?.toIso8601String(),
-      'metadata': metadata,
-    };
-  }
-
-  /// PocketBase 파일 접근 URL 생성 헬퍼
   String? getImageUrl(String baseUrl, {String thumb = ''}) {
     if (image == null || image!.isEmpty || id.isEmpty) return null;
-    String url = '$baseUrl/api/files/$collectionId/$id/$image';
-    if (thumb.isNotEmpty) url += '?thumb=$thumb';
-    return url;
+    return '$baseUrl/api/files/$collectionId/$id/$image${thumb.isNotEmpty ? '?thumb=$thumb' : ''}';
   }
+
+  bool get isShortage => quantity < safetyStock;
 }

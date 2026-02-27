@@ -6,6 +6,7 @@ import 'package:spreadsheet_decoder/spreadsheet_decoder.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:pocketbase/pocketbase.dart';
+import 'package:intl/intl.dart';
 
 import '../models/products.dart';
 import '../services/pb_service.dart';
@@ -13,24 +14,20 @@ import '../services/pb_service.dart';
 class ProductProvider extends ChangeNotifier {
   final String _collectionName = 'products';
   List<ProductModel> _items = [];
-  final List<String> _selectedColumns = ['category', 'location', 'spec', 'remarks'];
+  List<String> _selectedColumns = ['규격', '제조사', '위치', 'S/N'];
 
   bool _isLoading = false;
   bool _isSaving = false;
   bool _isParsing = false;
   bool _isDisposed = false;
 
-  bool _hasError = false;
-  String _errorMessage = "";
-  String _lastScannedTag = "";
-
   List<ProductModel> get items => _items;
   List<String> get selectedColumns => _selectedColumns;
   bool get isLoading => _isLoading;
   bool get isSaving => _isSaving;
   bool get isParsing => _isParsing;
-  bool get hasError => _hasError;
-  String get errorMessage => _errorMessage;
+
+  String _lastScannedTag = "";
   String get lastScannedTag => _lastScannedTag;
 
   ProductProvider() {
@@ -54,30 +51,14 @@ class ProductProvider extends ChangeNotifier {
   }
 
   Future<void> fetchData() async {
-    if (_isDisposed) {
-      return;
-    }
-
+    if (_isDisposed) return;
     _isLoading = true;
-    _hasError = false;
-    _errorMessage = "";
     notifyListeners();
-
     try {
-      debugPrint("📡 데이터 로딩 시작... (Collection: $_collectionName)");
-      final records = await PBService.pb.collection(_collectionName).getFullList(
-        sort: '-created',
-      );
+      final records = await PBService.pb.collection(_collectionName).getFullList(sort: '-created');
       _items = records.map((r) => ProductModel.fromJson(r.toJson())).toList();
-      debugPrint("✅ 데이터 로드 성공: ${_items.length}건");
     } catch (e) {
-      _hasError = true;
-      if (e is ClientException) {
-        _errorMessage = "서버 에러 (${e.statusCode}): ${e.response['message'] ?? e.toString()}";
-      } else {
-        _errorMessage = "연결 에러: $e";
-      }
-      debugPrint("❌ 물품 로드 에러 상세: $_errorMessage");
+      debugPrint("❌ 데이터 로드 에러: $e");
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -86,17 +67,15 @@ class ProductProvider extends ChangeNotifier {
 
   void _subscribe() {
     try {
-      PBService.pb.collection(_collectionName).subscribe('*', (e) {
-        debugPrint("🔔 실시간 업데이트 감지: ${e.action}");
-        fetchData();
-      });
+      PBService.pb.collection(_collectionName).subscribe('*', (e) => fetchData());
     } catch (e) {
       debugPrint("❌ 실시간 구독 실패: $e");
     }
   }
 
-  Future<void> refresh() async {
-    await fetchData();
+  Future<void> saveRemoteSettings(List<String> newColumns) async {
+    _selectedColumns = List.from(newColumns);
+    notifyListeners();
   }
 
   void setLastScannedTag(String tag) {
@@ -108,16 +87,10 @@ class ProductProvider extends ChangeNotifier {
 
   ProductModel? findProductByTag(String tag) {
     try {
-      return _items.firstWhere((p) => p.tagId == tag);
+      return _items.firstWhere((p) => p.tagId.trim().toLowerCase() == tag.trim().toLowerCase());
     } catch (_) {
       return null;
     }
-  }
-
-  void updateColumns(List<String> cols) {
-    _selectedColumns.clear();
-    _selectedColumns.addAll(cols);
-    notifyListeners();
   }
 
   Future<bool> handleSave({
@@ -125,20 +98,14 @@ class ProductProvider extends ChangeNotifier {
     required Map<String, dynamic> data,
     XFile? imageXFile,
   }) async {
-    if (_isDisposed) {
-      return false;
-    }
+    if (_isDisposed) return false;
     _isSaving = true;
     notifyListeners();
     try {
-      Uint8List? fileBytes;
-      if (imageXFile != null) {
-        fileBytes = await imageXFile.readAsBytes();
-      }
-
       List<http.MultipartFile> files = [];
-      if (fileBytes != null) {
-        files.add(http.MultipartFile.fromBytes('image', fileBytes, filename: imageXFile!.name));
+      if (imageXFile != null) {
+        final bytes = await imageXFile.readAsBytes();
+        files.add(http.MultipartFile.fromBytes('image', bytes, filename: imageXFile.name));
       }
 
       if (p == null) {
@@ -146,9 +113,14 @@ class ProductProvider extends ChangeNotifier {
       } else {
         await PBService.pb.collection(_collectionName).update(p.id, body: data, files: files);
       }
+      fetchData();
       return true;
     } catch (e) {
-      debugPrint("❌ 저장 실패 상세: $e");
+      if (e is ClientException) {
+        debugPrint("❌ 폼 저장 에러 (PB 거부): ${e.response}");
+      } else {
+        debugPrint("❌ 폼 저장 에러: $e");
+      }
       return false;
     } finally {
       _isSaving = false;
@@ -162,28 +134,18 @@ class ProductProvider extends ChangeNotifier {
       fetchData();
       return true;
     } catch (e) {
-      debugPrint("❌ 삭제 실패: $e");
       return false;
     }
   }
 
   Future<void> resetAllProducts() async {
-    if (_isDisposed) {
-      return;
-    }
     _isLoading = true;
     notifyListeners();
     try {
-      debugPrint("🧹 모든 제품 삭제 시작...");
       for (var item in _items) {
-        if (_isDisposed) {
-          break;
-        }
         await PBService.pb.collection(_collectionName).delete(item.id);
       }
       await fetchData();
-    } catch (e) {
-      debugPrint("❌ 초기화 실패: $e");
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -192,8 +154,8 @@ class ProductProvider extends ChangeNotifier {
 
   Future<Map<String, int>> batchImportFromExcel() async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx'],
+        type: FileType.custom,
+        allowedExtensions: ['xlsx']
     );
 
     if (result == null) {
@@ -203,116 +165,129 @@ class ProductProvider extends ChangeNotifier {
     _isParsing = true;
     notifyListeners();
 
-    int successCount = 0;
-    int failedCount = 0;
-    int totalRows = 0;
+    int success = 0;
+    int failed = 0;
+    int total = 0;
 
     try {
       final bytes = File(result.files.single.path!).readAsBytesSync();
-      final decoder = SpreadsheetDecoder.decodeBytes(bytes, update: false);
+      final decoder = SpreadsheetDecoder.decodeBytes(bytes);
 
-      final nameKeys = ['명칭', '이름', '품명', '성명', '제품명', 'name'];
-      final tagKeys = ['태그', 'tag', 'rfid', 'epc', '번호'];
-      final memoKeys = ['참고', '메모', '비고', 'memo', 'remarks'];
-      final locKeys = ['위치', '보관', '사용위치', 'location'];
-      final catKeys = ['분류', '키워드', '카테고리', 'category'];
-      final specKeys = ['규격', '모델', 'spec'];
+      final mapDef = {
+        'name': ['관리대상의명칭', '명칭', '품명', '제품명', 'name'],
+        'tag_id': ['태그번호', '태그', 'rfid', 'epc', 'tag'],
+        'loc': ['보관(사용)위치', '보관위치', '위치', 'location'],
+        'cat': ['분류키워드', '자산구분', '분류', 'category'],
+        'qty': ['수량', 'quantity', 'qty'],
+        'memo': ['참고사항', '비고', 'remarks', 'memo'],
+        'spec': ['부품번호', '규격', '모델', 'spec'],
+        'mfg': ['제조사', '제조처', '메이커', 'brand'],
+        'sn': ['시리얼', 's/n', 'sn', 'serial'],
+        'unit': ['단위', 'unit'],
+        'safe': ['안전재고', '기준재고', 'safety'],
+      };
 
       for (var table in decoder.tables.keys) {
         final sheet = decoder.tables[table]!;
-        if (sheet.maxRows < 2) {
-          continue;
-        }
+        if (sheet.maxRows < 2) continue;
 
-        final List<String> rawHeaders = sheet.rows[0].map((e) => e?.toString().trim() ?? "").toList();
-        final List<String> headers = rawHeaders.map((e) => e.toLowerCase()).toList();
-        debugPrint("📂 분석 시트: $table, 헤더: $rawHeaders");
+        final rawHeaders = sheet.rows[0].map((e) => e?.toString().trim() ?? "").toList();
+        final headers = rawHeaders.map((e) => e.toLowerCase().replaceAll(' ', '')).toList();
 
-        int nameIdx = -1, tagIdx = -1, memoIdx = -1, locIdx = -1, catIdx = -1, specIdx = -1;
+        int findIdx(List<String> keys) => headers.indexWhere((h) => keys.any((k) => h.contains(k.toLowerCase())));
 
-        for (int i = 0; i < headers.length; i++) {
-          String h = headers[i];
-          if (nameKeys.any((k) => h.contains(k))) { nameIdx = i; }
-          if (tagKeys.any((k) => h.contains(k))) { tagIdx = i; }
-          if (memoKeys.any((k) => h.contains(k))) { memoIdx = i; }
-          if (locKeys.any((k) => h.contains(k))) { locIdx = i; }
-          if (catKeys.any((k) => h.contains(k))) { catIdx = i; }
-          if (specKeys.any((k) => h.contains(k))) { specIdx = i; }
-        }
+        int nIdx = findIdx(mapDef['name']!);
+        int tIdx = findIdx(mapDef['tag_id']!);
+        int lIdx = findIdx(mapDef['loc']!);
+        int cIdx = findIdx(mapDef['cat']!);
+        int qIdx = findIdx(mapDef['qty']!);
+        int mIdx = findIdx(mapDef['memo']!);
+        int sIdx = findIdx(mapDef['spec']!);
+        int mfIdx = findIdx(mapDef['mfg']!);
+        int snIdx = findIdx(mapDef['sn']!);
+        int uIdx = findIdx(mapDef['unit']!);
+        int sfIdx = findIdx(mapDef['safe']!);
 
-        debugPrint("🎯 매칭 결과 - 이름:$nameIdx, 태그:$tagIdx, 위치:$locIdx, 분류:$catIdx");
-
-        if (tagIdx == -1) {
-          debugPrint("⚠️ 태그ID(RFID) 컬럼을 찾지 못해 이 시트는 건너뜁니다.");
-          continue;
-        }
+        debugPrint("📌 매핑 결과 -> 품명: $nIdx, 태그: $tIdx, 위치: $lIdx, 분류: $cIdx, 수량: $qIdx, 참고: $mIdx, 부품번호: $sIdx");
 
         for (int i = 1; i < sheet.maxRows; i++) {
-          if (_isDisposed) {
-            break;
-          }
           final row = sheet.rows[i];
-          if (row.isEmpty || row.every((element) => element == null)) {
-            continue;
+          if (row.isEmpty || row.every((e) => e == null)) continue;
+
+          total++;
+
+          String val(int idx) => (idx != -1 && row.length > idx) ? row[idx]?.toString().trim() ?? "" : "";
+
+          String tag = val(tIdx);
+
+          // [핵심 변경점] 태그가 비어있으면 버리지 않고 임시(가상) 태그를 발급합니다.
+          if (tag.isEmpty) {
+            tag = "TEMP-${DateTime.now().millisecondsSinceEpoch}-$i";
+            debugPrint("⚠️ [${i + 1}행] 태그가 없어 임시 태그($tag)를 발급하여 저장합니다.");
           }
 
-          totalRows++;
-
-          final String tagVal = tagIdx != -1 && row.length > tagIdx ? row[tagIdx]?.toString().trim() ?? "" : "";
-
-          if (tagVal.isEmpty) {
-            failedCount++;
-            continue;
-          }
-
-          final String nameVal = nameIdx != -1 && row.length > nameIdx ? row[nameIdx]?.toString() ?? "" : "";
-          final String memoVal = memoIdx != -1 && row.length > memoIdx ? row[memoIdx]?.toString() ?? "" : "";
-          final String locVal = locIdx != -1 && row.length > locIdx ? row[locIdx]?.toString() ?? "" : "";
-          final String catVal = catIdx != -1 && row.length > catIdx ? row[catIdx]?.toString() ?? "" : "";
-          final String specVal = specIdx != -1 && row.length > specIdx ? row[specIdx]?.toString() ?? "" : "";
-
-          final existing = findProductByTag(tagVal);
+          final Map<String, String> originKeyMap = {};
+          if (nIdx != -1) originKeyMap['name'] = rawHeaders[nIdx];
+          if (sIdx != -1) originKeyMap['spec'] = rawHeaders[sIdx];
+          if (lIdx != -1) originKeyMap['location'] = rawHeaders[lIdx];
+          if (mfIdx != -1) originKeyMap['manufacturer'] = rawHeaders[mfIdx];
+          if (snIdx != -1) originKeyMap['serial_number'] = rawHeaders[snIdx];
 
           final Map<String, dynamic> metadataMap = {};
-          final usedIndices = [nameIdx, tagIdx, memoIdx, locIdx, catIdx, specIdx];
+          final used = [nIdx, tIdx, lIdx, cIdx, qIdx, mIdx, sIdx, mfIdx, snIdx, uIdx, sfIdx];
           for (int c = 0; c < row.length; c++) {
-            if (!usedIndices.contains(c) && c < rawHeaders.length) {
+            if (!used.contains(c) && c < rawHeaders.length) {
               metadataMap[rawHeaders[c]] = row[c]?.toString() ?? "";
             }
           }
 
+          metadataMap['origin_key_map'] = originKeyMap;
+
           final data = {
-            'name': nameVal.isNotEmpty ? nameVal : "Unnamed",
-            'tag_id': tagVal,
-            'category': catVal,
-            'location': locVal,
-            'spec': specVal,
-            'remarks': memoVal,
-            'quantity': 1,
+            'name': val(nIdx).isEmpty ? "Unnamed" : val(nIdx),
+            'tag_id': tag,
+            'location': val(lIdx),
+            'category': val(cIdx).isNotEmpty ? val(cIdx) : val(findIdx(['자산구분'])),
+            'spec': val(sIdx),
+            'remarks': val(mIdx),
+            'manufacturer': val(mfIdx),
+            'serial_number': val(snIdx),
+            'unit': val(uIdx).isEmpty ? "ea" : val(uIdx),
+            'safety_stock': int.tryParse(val(sfIdx)) ?? 5,
+            'quantity': int.tryParse(val(qIdx)) ?? 1,
             'status': '정상',
             'metadata': metadataMap,
           };
 
           try {
-            if (existing != null) {
-              await PBService.pb.collection(_collectionName).update(existing.id, body: data);
-            } else {
+            // "TEMP-" 로 시작하는 임시 태그는 무조건 새로 Create 하도록 분기
+            if (tag.startsWith("TEMP-")) {
               await PBService.pb.collection(_collectionName).create(body: data);
+            } else {
+              final existing = findProductByTag(tag);
+              if (existing != null) {
+                await PBService.pb.collection(_collectionName).update(existing.id, body: data);
+              } else {
+                await PBService.pb.collection(_collectionName).create(body: data);
+              }
             }
-            successCount++;
+            success++;
           } catch (e) {
-            debugPrint("❌ 저장 실패 ($tagVal): $e");
-            failedCount++;
+            failed++;
+            if (e is ClientException) {
+              debugPrint("❌ DB 거부 (태그: $tag, ${i + 1}행): ${e.response}");
+            } else {
+              debugPrint("❌ 시스템 오류 (${i + 1}행): $e");
+            }
           }
         }
       }
     } catch (e) {
-      debugPrint("❌ 엑셀 파싱 에러: $e");
+      debugPrint("❌ 엑셀 파싱 중 치명적 오류: $e");
     } finally {
       _isParsing = false;
       fetchData();
     }
-
-    return {'total': totalRows, 'success': successCount, 'failed': failedCount};
+    return {'total': total, 'success': success, 'failed': failed};
   }
 }
