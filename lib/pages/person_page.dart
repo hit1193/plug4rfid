@@ -12,12 +12,7 @@ import 'package:intl/intl.dart';
 import '../models/persons.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/person_provider.dart';
-
-/// 전역 폰트 및 스타일 상수
-const String _fontPretendard = 'Pretendard';
-const Color _primaryColor = Color(0xFF6366F1);
-const Color _successColor = Color(0xFF10B981);
-const Color _warningColor = Color(0xFFF59E0B);
+import '../theme/app_theme.dart'; // 중앙 테마 관리 파일 임포트
 
 class PersonPage extends StatefulWidget {
   final String searchQuery;
@@ -118,7 +113,7 @@ class _PersonPageState extends State<PersonPage> {
     if (success) {
       messenger.showSnackBar(SnackBar(
         content: Text('[${p.name}]님 $building $gate $type 처리 완료'),
-        backgroundColor: type == '입장' ? _successColor : _warningColor,
+        backgroundColor: type == '입장' ? AppTheme.success : AppTheme.warning,
         duration: const Duration(seconds: 1),
       ));
     }
@@ -234,7 +229,7 @@ class _PersonPageState extends State<PersonPage> {
         if (!mounted) {
           return;
         }
-        messenger.showSnackBar(const SnackBar(content: Text('엑셀 파일이 저장되었습니다.')));
+        messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 파일이 저장되었습니다.')));
       }
     } catch (e) {
       if (!mounted) {
@@ -259,7 +254,7 @@ class _PersonPageState extends State<PersonPage> {
 
     return Theme(
       data: Theme.of(context).copyWith(
-        textTheme: Theme.of(context).textTheme.apply(fontFamily: _fontPretendard),
+        textTheme: Theme.of(context).textTheme.apply(fontFamily: AppTheme.fontPretendard),
       ),
       child: widget.isMobile
           ? _buildMobileLayout(provider, filteredList)
@@ -289,10 +284,10 @@ class _PersonPageState extends State<PersonPage> {
                   child: Column(
                     children: [
                       _buildHeader(columns, width),
-                      const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+                      const Divider(height: 1, thickness: 1, color: AppTheme.headerBg),
                       Expanded(
                         child: provider.isLoading
-                            ? const Center(child: CircularProgressIndicator())
+                            ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
                             : _buildListView(filteredList, provider, columns, width),
                       ),
                     ],
@@ -308,14 +303,14 @@ class _PersonPageState extends State<PersonPage> {
 
   Widget _buildMobileLayout(PersonProvider provider, List<Person> filteredList) {
     return Container(
-      color: const Color(0xFFF8FAFC),
+      color: AppTheme.surface,
       child: Column(
         children: [
           _buildMobileTopBar(provider, filteredList),
           _buildFilterToggle(),
           Expanded(
             child: provider.isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
                 : ListView.builder(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               itemCount: filteredList.length,
@@ -338,8 +333,8 @@ class _PersonPageState extends State<PersonPage> {
             children: [
               const Text('인원 관리', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 20)),
               Row(children: [
-                IconButton(icon: const Icon(Icons.refresh, color: _primaryColor), onPressed: () => provider.fetchData()),
-                IconButton(icon: const Icon(Icons.add_circle, color: _primaryColor, size: 26), onPressed: () => _showForm(context, provider, null)),
+                IconButton(icon: const Icon(Icons.refresh, color: AppTheme.primary), onPressed: () => provider.fetchData()),
+                IconButton(icon: const Icon(Icons.add_circle, color: AppTheme.primary, size: 26), onPressed: () => _showForm(context, provider, null)),
               ])
             ],
           ),
@@ -354,7 +349,6 @@ class _PersonPageState extends State<PersonPage> {
                     hintText: '성명 또는 사번 검색...',
                     hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.3)),
                     prefixIcon: const Icon(Icons.search, size: 20),
-                    // [수정됨] 모바일 취소 아이콘 크기 및 제약사항 조정
                     suffixIcon: value.text.isNotEmpty
                         ? Padding(
                       padding: const EdgeInsets.only(right: 8),
@@ -370,13 +364,12 @@ class _PersonPageState extends State<PersonPage> {
                     )
                         : null,
                     filled: true,
-                    fillColor: const Color(0xFFF1F5F9),
+                    fillColor: AppTheme.headerBg,
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   ),
                 );
-              }
-          ),
+              }),
         ],
       ),
     );
@@ -429,11 +422,11 @@ class _PersonPageState extends State<PersonPage> {
                 children: [
                   Row(
                     children: [
-                      IconButton(icon: const Icon(Icons.login, color: _successColor, size: 20), onPressed: () => _processAccessWithLocation(provider, p, '입장')),
-                      IconButton(icon: const Icon(Icons.logout, color: _warningColor, size: 20), onPressed: () => _processAccessWithLocation(provider, p, '퇴장')),
+                      IconButton(icon: const Icon(Icons.login, color: AppTheme.success, size: 20), onPressed: () => _processAccessWithLocation(provider, p, '입장')),
+                      IconButton(icon: const Icon(Icons.logout, color: AppTheme.warning, size: 20), onPressed: () => _processAccessWithLocation(provider, p, '퇴장')),
                     ],
                   ),
-                  IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18), onPressed: () => _confirmDelete(context, provider, p)),
+                  IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.danger, size: 18), onPressed: () => _confirmDelete(context, provider, p)),
                 ],
               ),
             ],
@@ -446,10 +439,10 @@ class _PersonPageState extends State<PersonPage> {
   Widget _buildStatusBadge(String status) {
     Color color = Colors.grey;
     if (status == '입장') {
-      color = _successColor;
+      color = AppTheme.success;
     }
     if (status == '퇴장') {
-      color = _warningColor;
+      color = AppTheme.warning;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -475,8 +468,7 @@ class _PersonPageState extends State<PersonPage> {
                     decoration: InputDecoration(
                       hintText: '성명, 사번, 부서 검색...',
                       hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.3), fontSize: 14),
-                      prefixIcon: const Icon(Icons.search, color: _primaryColor),
-                      // [핵심 수정] 데스크톱 취소 아이콘이 가려지지 않도록 제약사항 및 패딩 제거
+                      prefixIcon: const Icon(Icons.search, color: AppTheme.primary),
                       suffixIcon: value.text.isNotEmpty
                           ? Padding(
                         padding: const EdgeInsets.only(right: 8),
@@ -492,26 +484,25 @@ class _PersonPageState extends State<PersonPage> {
                       )
                           : null,
                       filled: true,
-                      fillColor: const Color(0xFFF1F5F9),
+                      fillColor: AppTheme.headerBg,
                       border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
                       contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   );
-                }
-            ),
+                }),
           ),
           const SizedBox(width: 16),
-          _buildAppBarIcon(Icons.delete_sweep_outlined, Colors.redAccent, "전체 초기화", () => _showResetConfirmationDialog(provider)),
+          _buildAppBarIcon(Icons.delete_sweep_outlined, AppTheme.danger, "전체 초기화", () => _showResetConfirmationDialog(provider)),
           _buildAppBarIcon(FontAwesomeIcons.fileExcel, const Color(0xFF1D6F42), "엑셀 업로드", () => _handleBatchImport(provider), isFA: true),
           _buildAppBarIcon(FontAwesomeIcons.fileArrowDown, const Color(0xFF1D6F42), "엑셀 다운로드", () => _exportToExcel(filtered), isFA: true),
-          _buildAppBarIcon(Icons.refresh, _primaryColor, "새로고침", () => provider.fetchData()),
-          _buildAppBarIcon(Icons.settings_suggest_outlined, _primaryColor, "컬럼 설정", () => _showColumnSelectionDialog(provider)),
+          _buildAppBarIcon(Icons.refresh, AppTheme.primary, "새로고침", () => provider.fetchData()),
+          _buildAppBarIcon(Icons.settings_suggest_outlined, AppTheme.primary, "컬럼 설정", () => _showColumnSelectionDialog(provider)),
           const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: () => _showForm(context, provider, null),
             icon: const Icon(Icons.add, size: 18),
             label: const Text("인원 추가"),
-            style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
           ),
         ],
       ),
@@ -537,7 +528,8 @@ class _PersonPageState extends State<PersonPage> {
                   : SingleChildScrollView(
                 child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: availableKeys.map((key) => CheckboxListTile(
+                    children: availableKeys
+                        .map((key) => CheckboxListTile(
                         title: Text(key),
                         value: tempSelection.contains(key),
                         onChanged: (val) {
@@ -550,23 +542,23 @@ class _PersonPageState extends State<PersonPage> {
                               tempSelection.remove(key);
                             }
                           });
-                        }
-                    )).toList()
-                ),
+                        }))
+                        .toList()),
               ),
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("취소")),
-              ElevatedButton(onPressed: () async {
-                await provider.saveRemoteSettings(tempSelection);
-                if (!context.mounted) {
-                  return;
-                }
-                Navigator.pop(ctx);
-              }, child: const Text("적용")),
+              ElevatedButton(
+                  onPressed: () async {
+                    await provider.saveRemoteSettings(tempSelection);
+                    if (!context.mounted) {
+                      return;
+                    }
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text("적용")),
             ],
-          )
-      ),
+          )),
     );
   }
 
@@ -586,8 +578,8 @@ class _PersonPageState extends State<PersonPage> {
                   setState(() => _currentFilter = m);
                 }
               },
-              selectedColor: _primaryColor,
-              backgroundColor: const Color(0xFFF1F5F9),
+              selectedColor: AppTheme.primary,
+              backgroundColor: AppTheme.headerBg,
               showCheckmark: false,
               shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(8)), side: BorderSide.none),
             ),
@@ -602,18 +594,15 @@ class _PersonPageState extends State<PersonPage> {
     return Container(
       height: 50,
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      color: const Color(0xFFF8FAFC),
+      color: AppTheme.headerBg,
       child: Row(
         children: [
           const SizedBox(width: _colImgWidth, child: Text('사진', style: headerStyle)),
           const Expanded(flex: _flexName, child: Text('성명/상태', style: headerStyle)),
           if (width > 900)
-            for (var colName in columns)
-              Expanded(flex: _flexDynamic, child: Text(colName, style: headerStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
-          if (width > 700)
-            const Expanded(flex: _flexDept, child: Text('부서', style: headerStyle)),
-          if (width > 500)
-            const Expanded(flex: _flexCode, child: Text('사번', style: headerStyle)),
+            for (var colName in columns) Expanded(flex: _flexDynamic, child: Text(colName, style: headerStyle, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          if (width > 700) const Expanded(flex: _flexDept, child: Text('부서', style: headerStyle)),
+          if (width > 500) const Expanded(flex: _flexCode, child: Text('사번', style: headerStyle)),
           const Expanded(flex: _flexRFID, child: Text('RFID EPC', style: headerStyle)),
           const SizedBox(width: _colActionWidth, child: Text('관리', textAlign: TextAlign.center, style: headerStyle)),
         ],
@@ -627,7 +616,7 @@ class _PersonPageState extends State<PersonPage> {
     }
     return ListView.separated(
       itemCount: list.length,
-      separatorBuilder: (ctx, idx) => const Divider(height: 1, color: Color(0xFFF1F5F9)),
+      separatorBuilder: (ctx, idx) => const Divider(height: 1, color: AppTheme.headerBg),
       itemBuilder: (context, index) {
         final item = list[index];
         final String currentStatus = item.metadata['last_access_type'] ?? "미확인";
@@ -661,23 +650,20 @@ class _PersonPageState extends State<PersonPage> {
                   ),
                 ),
                 if (width > 900)
-                  for (var colName in columns)
-                    Expanded(flex: _flexDynamic, child: Text(_getMetaValue(item, colName), style: const TextStyle(fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                if (width > 700)
-                  Expanded(flex: _flexDept, child: Text(item.department, style: const TextStyle(fontSize: 12, color: Colors.blueGrey), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                if (width > 500)
-                  Expanded(flex: _flexCode, child: Text(item.code, style: const TextStyle(fontSize: 12))),
-                Expanded(flex: _flexRFID, child: Text(item.tagId.isEmpty ? "미등록" : item.tagId, style: const TextStyle(fontSize: 12, color: _primaryColor, fontWeight: FontWeight.w600))),
+                  for (var colName in columns) Expanded(flex: _flexDynamic, child: Text(_getMetaValue(item, colName), style: const TextStyle(fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                if (width > 700) Expanded(flex: _flexDept, child: Text(item.department, style: const TextStyle(fontSize: 12, color: Colors.blueGrey), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                if (width > 500) Expanded(flex: _flexCode, child: Text(item.code, style: const TextStyle(fontSize: 12))),
+                Expanded(flex: _flexRFID, child: Text(item.tagId.isEmpty ? "미등록" : item.tagId, style: const TextStyle(fontSize: 12, color: AppTheme.primary, fontWeight: FontWeight.w600))),
                 SizedBox(
                   width: _colActionWidth,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      IconButton(icon: const Icon(Icons.login, color: _successColor, size: 18), onPressed: () => _processAccessWithLocation(provider, item, '입장'), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                      IconButton(icon: const Icon(Icons.login, color: AppTheme.success, size: 18), onPressed: () => _processAccessWithLocation(provider, item, '입장'), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
                       const SizedBox(width: 8),
-                      IconButton(icon: const Icon(Icons.logout, color: _warningColor, size: 18), onPressed: () => _processAccessWithLocation(provider, item, '퇴장'), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                      IconButton(icon: const Icon(Icons.logout, color: AppTheme.warning, size: 18), onPressed: () => _processAccessWithLocation(provider, item, '퇴장'), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
                       const SizedBox(width: 8),
-                      IconButton(icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18), onPressed: () => _confirmDelete(context, provider, item), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                      IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.danger, size: 18), onPressed: () => _confirmDelete(context, provider, item), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
                     ],
                   ),
                 ),
@@ -692,12 +678,11 @@ class _PersonPageState extends State<PersonPage> {
   Widget _buildAvatar(Person item) {
     final url = item.getImageUrl(widget.baseUrl, thumb: '100x100');
     return Container(
-      width: 44, height: 44,
-      decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.black.withValues(alpha: 0.05))),
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(color: AppTheme.headerBg, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.black.withValues(alpha: 0.05))),
       clipBehavior: Clip.antiAlias,
-      child: url != null
-          ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.grey))
-          : const Icon(Icons.camera_alt_outlined, color: Colors.grey, size: 18),
+      child: url != null ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.grey)) : const Icon(Icons.camera_alt_outlined, color: Colors.grey, size: 18),
     );
   }
 
@@ -709,15 +694,15 @@ class _PersonPageState extends State<PersonPage> {
         labelText: label,
         hintText: hint,
         hintStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.normal, color: Colors.grey),
-        labelStyle: const TextStyle(fontSize: 12, color: _primaryColor, fontWeight: FontWeight.bold),
+        labelStyle: const TextStyle(fontSize: 12, color: AppTheme.primary, fontWeight: FontWeight.bold),
         floatingLabelBehavior: FloatingLabelBehavior.always,
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: Colors.grey.shade400, width: 1.0),
+          borderSide: BorderSide(color: AppTheme.border, width: 1.0),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: _primaryColor, width: 2.0),
+          borderSide: const BorderSide(color: AppTheme.primary, width: 2.0),
         ),
         isDense: true,
         contentPadding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
@@ -782,7 +767,7 @@ class _PersonPageState extends State<PersonPage> {
               child: Wrap(
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.camera_alt, color: _primaryColor),
+                    leading: const Icon(Icons.camera_alt, color: AppTheme.primary),
                     title: const Text('카메라로 촬영', style: TextStyle(fontWeight: FontWeight.bold)),
                     onTap: () => Navigator.pop(ctx, 'camera'),
                   ),
@@ -820,7 +805,10 @@ class _PersonPageState extends State<PersonPage> {
                   return;
                 }
                 final bytes = await result.readAsBytes();
-                setDialogState(() { pickedFile = result; previewBytes = bytes; });
+                setDialogState(() {
+                  pickedFile = result;
+                  previewBytes = bytes;
+                });
               } catch (e) {
                 messenger.showSnackBar(SnackBar(content: Text('카메라 오류: $e')));
               }
@@ -830,7 +818,10 @@ class _PersonPageState extends State<PersonPage> {
                 return;
               }
               final bytes = await img.readAsBytes();
-              setDialogState(() { pickedFile = img; previewBytes = bytes; });
+              setDialogState(() {
+                pickedFile = img;
+                previewBytes = bytes;
+              });
             }
           } else {
             final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
@@ -838,7 +829,10 @@ class _PersonPageState extends State<PersonPage> {
               return;
             }
             final bytes = await img.readAsBytes();
-            setDialogState(() { pickedFile = img; previewBytes = bytes; });
+            setDialogState(() {
+              pickedFile = img;
+              previewBytes = bytes;
+            });
           }
         }
 
@@ -848,53 +842,55 @@ class _PersonPageState extends State<PersonPage> {
           content: SizedBox(
               width: 700,
               child: SingleChildScrollView(
-                  child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Column(children: [
-                                GestureDetector(
-                                    onTap: handlePhotoSelection,
-                                    child: Stack(
-                                      children: [
-                                        Container(width: 140, height: 160, decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(10)), child: Center(child: imageWidget)),
-                                        Positioned(bottom: 8, right: 8, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle), child: const Icon(Icons.camera_alt, color: Colors.white, size: 14))),
-                                      ],
-                                    )
-                                ),
-                                const SizedBox(height: 12),
-                                Row(children: [
-                                  const Text("활성", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                  Switch(value: isActive, activeTrackColor: _primaryColor.withValues(alpha: 0.5), activeThumbColor: _primaryColor, onChanged: (v) => setDialogState(() => isActive = v)),
-                                ]),
-                              ]),
-                              const SizedBox(width: 20),
-                              Expanded(child: Column(children: [
-                                _buildField("성명", nameC, hint: "성함을 입력하세요"), const SizedBox(height: 12),
-                                _buildField("부서", deptC, hint: "소속 부서"), const SizedBox(height: 12),
-                                _buildField("사번", codeC, hint: "사번 또는 관리 코드"), const SizedBox(height: 12),
-                                _buildField("RFID 태그", tagC, hint: "EPC 코드 직접 입력 가능"), const SizedBox(height: 12),
-                                _buildField("비고", remarksC, hint: "특이 사항 기록")
-                              ])),
-                            ]
-                        ),
-                        if (metaControllers.isNotEmpty) ...[
-                          const SizedBox(height: 20),
-                          const Divider(),
-                          const Align(alignment: Alignment.centerLeft, child: Text("추가 정보", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey))),
-                          const SizedBox(height: 12),
-                          Wrap(spacing: 12, runSpacing: 12, children: metaControllers.entries.map((e) => SizedBox(width: 210, child: _buildField(e.key, e.value))).toList())
-                        ]
-                      ]
-                  )
-              )
-          ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Column(children: [
+                        GestureDetector(
+                            onTap: handlePhotoSelection,
+                            child: Stack(
+                              children: [
+                                Container(
+                                    width: 140,
+                                    height: 160,
+                                    decoration: BoxDecoration(color: AppTheme.headerBg, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.border, width: 1.5)),
+                                    child: Center(child: imageWidget)),
+                                Positioned(bottom: 8, right: 8, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle), child: const Icon(Icons.camera_alt, color: Colors.white, size: 14))),
+                              ],
+                            )),
+                        const SizedBox(height: 12),
+                        Row(children: [
+                          const Text("활성", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          Switch(value: isActive, activeTrackColor: AppTheme.primary.withValues(alpha: 0.5), activeThumbColor: AppTheme.primary, onChanged: (v) => setDialogState(() => isActive = v)),
+                        ]),
+                      ]),
+                      const SizedBox(width: 20),
+                      Expanded(
+                          child: Column(children: [
+                            _buildField("성명", nameC, hint: "성함을 입력하세요"),
+                            const SizedBox(height: 12),
+                            _buildField("부서", deptC, hint: "소속 부서"),
+                            const SizedBox(height: 12),
+                            _buildField("사번", codeC, hint: "사번 또는 관리 코드"),
+                            const SizedBox(height: 12),
+                            _buildField("RFID 태그", tagC, hint: "EPC 코드 직접 입력 가능"),
+                            const SizedBox(height: 12),
+                            _buildField("비고", remarksC, hint: "특이 사항 기록")
+                          ])),
+                    ]),
+                    if (metaControllers.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      const Divider(),
+                      const Align(alignment: Alignment.centerLeft, child: Text("추가 정보", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey))),
+                      const SizedBox(height: 12),
+                      Wrap(spacing: 12, runSpacing: 12, children: metaControllers.entries.map((e) => SizedBox(width: 210, child: _buildField(e.key, e.value))).toList())
+                    ]
+                  ]))),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text("취소")),
             ElevatedButton(
-                onPressed: provider.isSaving ? null : () async {
+                onPressed: provider.isSaving
+                    ? null
+                    : () async {
                   if (nameC.text.trim().isEmpty) {
                     return;
                   }
@@ -917,9 +913,8 @@ class _PersonPageState extends State<PersonPage> {
                     navigator.pop();
                   }
                 },
-                style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white),
-                child: Text(provider.isSaving ? "저장 중..." : "저장")
-            ),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+                child: Text(provider.isSaving ? "저장 중..." : "저장")),
           ],
         );
       }),
@@ -928,21 +923,26 @@ class _PersonPageState extends State<PersonPage> {
 
   void _confirmDelete(BuildContext context, PersonProvider provider, Person p) {
     final navigator = Navigator.of(context);
-    showDialog(context: context, builder: (c) => AlertDialog(
-      title: const Text("삭제 확인"), content: Text("${p.name}님의 정보를 삭제하시습니까?"),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(c), child: const Text("취소")),
-        ElevatedButton(onPressed: () async {
-          final success = await provider.deletePerson(p.id);
-          if (!mounted) {
-            return;
-          }
-          if (success) {
-            navigator.pop();
-          }
-        }, child: const Text("삭제")),
-      ],
-    ));
+    showDialog(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text("삭제 확인"),
+          content: Text("${p.name}님의 정보를 삭제하시습니까?"),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text("취소")),
+            ElevatedButton(
+                onPressed: () async {
+                  final success = await provider.deletePerson(p.id);
+                  if (!mounted) {
+                    return;
+                  }
+                  if (success) {
+                    navigator.pop();
+                  }
+                },
+                child: const Text("삭제")),
+          ],
+        ));
   }
 }
 
@@ -962,11 +962,13 @@ class _CameraCaptureDialogState extends State<_CameraCaptureDialog> {
     _controller = CameraController(widget.cameras.first, ResolutionPreset.medium, enableAudio: false);
     _initializeFuture = _controller!.initialize();
   }
+
   @override
   void dispose() {
     _controller?.dispose();
     super.dispose();
   }
+
   @override
   Widget build(BuildContext context) {
     final navigator = Navigator.of(context);
@@ -974,7 +976,9 @@ class _CameraCaptureDialogState extends State<_CameraCaptureDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: const Text("웹캠 촬영 (Windows)", style: TextStyle(fontWeight: FontWeight.bold)),
       content: Container(
-        width: 480, height: 360, decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8)),
+        width: 480,
+        height: 360,
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8)),
         clipBehavior: Clip.antiAlias,
         child: FutureBuilder<void>(
           future: _initializeFuture,
@@ -1001,8 +1005,9 @@ class _CameraCaptureDialogState extends State<_CameraCaptureDialog> {
               debugPrint("캡처 오류: $e");
             }
           },
-          icon: const Icon(Icons.camera), label: const Text("촬영하기"),
-          style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white),
+          icon: const Icon(Icons.camera),
+          label: const Text("촬영하기"),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
         ),
       ],
     );
@@ -1045,22 +1050,26 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
     _buildingController.text = _buildingOptions.first;
     _gateController.text = _gateOptions.first;
   }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(16)), side: BorderSide.none),
       title: Text('${widget.type} 위치 선택', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-      content: SizedBox(width: 380, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        _buildComboField('건물명', _buildingController, _buildingOptions, hint: "건물을 선택하거나 직접 입력"),
-        const SizedBox(height: 24),
-        _buildComboField('출입구/GATE', _gateController, _gateOptions, hint: "GATE를 선택하거나 직접 입력"),
-      ])),
+      content: SizedBox(
+          width: 380,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            _buildComboField('건물명', _buildingController, _buildingOptions, hint: "건물을 선택하거나 직접 입력"),
+            const SizedBox(height: 24),
+            _buildComboField('출입구/GATE', _gateController, _gateOptions, hint: "GATE를 선택하거나 직접 입력"),
+          ])),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
-        ElevatedButton(onPressed: () => Navigator.pop(context, {'building': _buildingController.text, 'gate': _gateController.text}), style: ElevatedButton.styleFrom(backgroundColor: _primaryColor, foregroundColor: Colors.white), child: const Text('확인')),
+        ElevatedButton(onPressed: () => Navigator.pop(context, {'building': _buildingController.text, 'gate': _gateController.text}), style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white), child: const Text('확인')),
       ],
     );
   }
+
   Widget _buildComboField(String label, TextEditingController controller, List<String> options, {String? hint}) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Autocomplete<String>(
@@ -1074,29 +1083,54 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
           return ValueListenableBuilder<TextEditingValue>(
             valueListenable: textC,
             builder: (context, value, _) => TextField(
-              controller: textC, focusNode: focusN, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              controller: textC,
+              focusNode: focusN,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               decoration: InputDecoration(
-                labelText: label, hintText: hint, hintStyle: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.3)),
-                labelStyle: const TextStyle(fontSize: 12, color: _primaryColor, fontWeight: FontWeight.bold),
-                floatingLabelBehavior: FloatingLabelBehavior.always, filled: true, fillColor: Colors.white, isDense: true,
+                labelText: label,
+                hintText: hint,
+                hintStyle: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.3)),
+                labelStyle: const TextStyle(fontSize: 12, color: AppTheme.primary, fontWeight: FontWeight.bold),
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                filled: true,
+                fillColor: Colors.white,
+                isDense: true,
                 contentPadding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade400, width: 1.0)),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _primaryColor, width: 2.0)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: AppTheme.border, width: 1.0)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.primary, width: 2.0)),
                 suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
                   if (value.text.isNotEmpty)
                     IconButton(
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
                         icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
-                        onPressed: () { textC.clear(); controller.clear(); }
-                    ),
-                  const Icon(Icons.arrow_drop_down, color: Colors.grey), const SizedBox(width: 8),
+                        onPressed: () {
+                          textC.clear();
+                          controller.clear();
+                        }),
+                  const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                  const SizedBox(width: 8),
                 ]),
               ),
             ),
           );
         },
-        optionsViewBuilder: (ctx, onSel, opts) => Align(alignment: Alignment.topLeft, child: Material(elevation: 8.0, borderRadius: BorderRadius.circular(8), child: Container(width: 330, constraints: const BoxConstraints(maxHeight: 200), child: ListView.builder(padding: EdgeInsets.zero, shrinkWrap: true, itemCount: opts.length, itemBuilder: (ctx, idx) => ListTile(title: Text(opts.elementAt(idx), style: const TextStyle(fontSize: 13)), hoverColor: _primaryColor.withValues(alpha: 0.1), onTap: () => onSel(opts.elementAt(idx))))))),
+        optionsViewBuilder: (ctx, onSel, opts) => Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+                elevation: 8.0,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                    width: 330,
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: opts.length,
+                        itemBuilder: (ctx, idx) => ListTile(
+                            title: Text(opts.elementAt(idx), style: const TextStyle(fontSize: 13)),
+                            hoverColor: AppTheme.primary.withValues(alpha: 0.1),
+                            onTap: () => onSel(opts.elementAt(idx))))))),
       ),
     ]);
   }

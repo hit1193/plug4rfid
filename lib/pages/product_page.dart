@@ -2,23 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart';
 import 'dart:typed_data';
 import 'dart:io';
 import 'package:excel/excel.dart' as excel_pkg;
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../models/products.dart';
 import '../providers/product_provider.dart';
-
-/// 디자인 시스템 상수 (기존 값 유지)
-const String _fontPretendard = 'Pretendard';
-const Color _primaryColor = Color(0xFF6366F1);
-const Color _surfaceColor = Color(0xFFF8FAFC);
-const Color _borderColor = Color(0xFF94A3B8);
-const Color _headerBgColor = Color(0xFFF1F5F9);
-const Color _dangerColor = Color(0xFFEF4444);
+import '../theme/app_theme.dart';
 
 class ProductPage extends StatefulWidget {
   final String searchQuery;
@@ -44,6 +37,9 @@ class _ProductPageState extends State<ProductPage> {
   String _sortCriteria = 'name';
   bool _hideExcluded = true;
 
+  bool _isExcelImporting = false;
+  bool _isBatchProcessing = false;
+
   @override
   void initState() {
     super.initState();
@@ -57,7 +53,8 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
-  // --- 비즈니스 집계 로직 (RFID 1:1 방식 적용) ---
+  // --- 비즈니스 집계 및 처리 로직 ---
+
   Map<String, dynamic> _calculateMetrics(List<ProductModel> allItems) {
     final String today = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
@@ -65,9 +62,9 @@ class _ProductPageState extends State<ProductPage> {
     int currentStock = 0;
     int shortageCount = 0;
 
-    const inStatus = {'구매입고', '회수/반납'};
-    const outStatus = {'판매출고', '수리출고', '대여출고'};
-    const excludeStock = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
+    const inStatus = {'구매입고', '회수/반납', '수기입고'};
+    const outStatus = {'판매출고', '수리출고', '대여출고', '수기출고'};
+    const excludeStock = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
 
     final Map<String, int> stockByGroup = {};
     final Map<String, int> safetyByGroup = {};
@@ -97,19 +94,67 @@ class _ProductPageState extends State<ProductPage> {
       }
     });
 
-    return {
-      'in': todayIn,
-      'out': todayOut,
-      'stock': currentStock,
-      'short': shortageCount
-    };
+    return {'in': todayIn, 'out': todayOut, 'stock': currentStock, 'short': shortageCount};
   }
 
-  void _sortItems(List<ProductModel> items) {
-    if (_sortCriteria == 'name') {
-      items.sort((a, b) => a.name.compareTo(b.name));
-    } else {
-      items.sort((a, b) => a.status.compareTo(b.status));
+  Future<void> _processAssetAccessWithLocation(ProductProvider provider, ProductModel p, String type) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final Map<String, String>? location = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (ctx) => _LocationSelectionDialog(
+        type: type,
+        existingItems: provider.items,
+      ),
+    );
+
+    if (!mounted || location == null) {
+      return;
+    }
+
+    final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+    final String building = location['building']?.trim() ?? "미지정";
+    final String gate = location['gate']?.trim() ?? "미지정";
+
+    final updatedMeta = Map<String, dynamic>.from(p.metadata);
+    List<dynamic> history = updatedMeta['history'] is List ? List.from(updatedMeta['history']) : [];
+
+    history.add({
+      'at': now,
+      'from': p.status,
+      'to': type,
+      'note': '수기처리: $building($gate)',
+      'location': building,
+      'gate': gate,
+    });
+
+    if (history.length > 20) {
+      history = history.sublist(history.length - 20);
+    }
+
+    updatedMeta['history'] = history;
+    updatedMeta['last_location_info'] = {
+      'building': building,
+      'gate': gate,
+      'full_name': "$building - $gate"
+    };
+
+    final data = {
+      'status': type,
+      'metadata': updatedMeta,
+      'location': building,
+    };
+
+    final success = await provider.handleSave(p: p, data: data);
+
+    if (!mounted) {
+      return;
+    }
+    if (success) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('[${p.name}] $building $gate $type 완료'),
+        backgroundColor: type.contains('입고') ? AppTheme.success : AppTheme.warning,
+        duration: const Duration(seconds: 1),
+      ));
     }
   }
 
@@ -129,6 +174,118 @@ class _ProductPageState extends State<ProductPage> {
     return grouped;
   }
 
+  Future<void> _showResetConfirmationDialog(ProductProvider provider) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("데이터 및 설정 전체 초기화", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+        content: const Text("서버의 모든 자산 정보와 가변 필드 설정이 영구 삭제됩니다.\n새로운 엑셀 로드를 위해 모든 상태를 초기화하시겠습니까?"),
+        actions: [
+          TextButton(
+            onPressed: () { Navigator.pop(ctx, false); },
+            child: const Text("취소"),
+          ),
+          ElevatedButton(
+            onPressed: () { Navigator.pop(ctx, true); },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text("전체 초기화"),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || confirm != true) {
+      return;
+    }
+
+    setState(() {
+      _isBatchProcessing = true;
+      _selectedGroupKey = null;
+    });
+
+    try {
+      await provider.resetAllProducts();
+      await provider.saveRemoteSettings([]);
+      await provider.fetchData();
+
+      if (mounted) {
+        setState(() {
+          _currentQuery = "";
+          _searchController.clear();
+        });
+      }
+    } catch (e) {
+      debugPrint("초기화 중 오류 발생: $e");
+    } finally {
+      if (mounted) {
+        setState(() { _isBatchProcessing = false; });
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    messenger.showSnackBar(const SnackBar(content: Text('데이터와 필드 설정이 모두 초기화되었습니다.')));
+  }
+
+  // --- 에러 로그 생성 로직 (요청에 따라 실패 원인 기록 제거) ---
+
+  Future<void> _generateErrorExcel(ProductProvider provider) async {
+    final errors = provider.lastErrors;
+    final originalHeaders = provider.errorHeaders;
+
+    if (errors == null || errors.isEmpty || originalHeaders.isEmpty) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final excel = excel_pkg.Excel.createExcel();
+      final sheet = excel['ErrorLog'];
+      excel.rename('Sheet1', 'ErrorLog');
+
+      // 1. 헤더 생성: 업로드했던 엑셀의 모든 컬럼 그대로 복원 (실패원인 제외)
+      sheet.appendRow(originalHeaders.map((h) => excel_pkg.TextCellValue(h)).toList());
+
+      // 2. 데이터 생성: 각 실패 행의 원본 데이터 리스트 전체를 그대로 복원
+      for (var e in errors) {
+        final List<String> rowData = List<String>.from(e['originalRow']);
+
+        // 데이터의 길이가 헤더와 맞지 않을 경우를 대비해 패딩 처리
+        while (rowData.length < originalHeaders.length) {
+          rowData.add("");
+        }
+
+        sheet.appendRow(rowData.map((v) => excel_pkg.TextCellValue(v)).toList());
+      }
+
+      final String fileName = 'LoadError_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.xlsx';
+      final path = await FilePicker.platform.saveFile(
+          dialogTitle: '실패한 원본 항목 저장',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: ['xlsx']
+      );
+
+      if (!mounted || path == null) {
+        return;
+      }
+
+      final bytes = excel.encode();
+      if (bytes != null) {
+        await File(path).writeAsBytes(bytes);
+        if (mounted) {
+          messenger.showSnackBar(const SnackBar(content: Text('✅ 실패한 원본 데이터 로그가 저장되었습니다.')));
+        }
+      }
+    } catch (e) {
+      debugPrint("에러 엑셀 생성 오류: $e");
+    }
+  }
+
+  // --- 메인 빌드 및 레이아웃 ---
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<ProductProvider>();
@@ -146,7 +303,12 @@ class _ProductPageState extends State<ProductPage> {
       final q = _currentQuery.toLowerCase();
       return p.name.toLowerCase().contains(q) || p.tagId.toLowerCase().contains(q);
     }).toList();
-    _sortItems(filtered);
+
+    if (_sortCriteria == 'name') {
+      filtered.sort((a, b) => a.name.compareTo(b.name));
+    } else {
+      filtered.sort((a, b) => a.status.compareTo(b.status));
+    }
 
     final metrics = _calculateMetrics(provider.items);
     final groupedMap = _getGroupedData(filtered);
@@ -154,8 +316,7 @@ class _ProductPageState extends State<ProductPage> {
 
     return Theme(
       data: Theme.of(context).copyWith(
-        textTheme: Theme.of(context).textTheme.apply(fontFamily: _fontPretendard),
-        primaryTextTheme: Theme.of(context).primaryTextTheme.apply(fontFamily: _fontPretendard),
+        textTheme: Theme.of(context).textTheme.apply(fontFamily: AppTheme.fontPretendard),
       ),
       child: Stack(
         children: [
@@ -165,7 +326,6 @@ class _ProductPageState extends State<ProductPage> {
               children: [
                 _buildDashboard(metrics),
                 const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0)),
-
                 Expanded(
                   child: LayoutBuilder(builder: (ctx, constraints) {
                     if (constraints.maxWidth > 950 && !widget.isMobile) {
@@ -177,36 +337,46 @@ class _ProductPageState extends State<ProductPage> {
               ],
             ),
           ),
-          if (provider.isParsing || provider.isSaving || provider.isLoading)
-            _buildGlobalLoadingOverlay(provider),
+          if (provider.isSaving || provider.isLoading || _isExcelImporting || _isBatchProcessing)
+            _buildGlobalLoadingOverlay(),
         ],
       ),
     );
   }
 
-  Widget _buildGlobalLoadingOverlay(ProductProvider provider) {
-    String msg = "잠시만 기다려 주세요...";
-    if (provider.isParsing) msg = "엑셀 파일을 분석하여 서버에 저장 중입니다...";
-    if (provider.isSaving) msg = "데이터를 서버에 전송 중입니다...";
-    if (provider.isLoading) msg = "최신 정보를 불러오는 중입니다...";
-
+  Widget _buildDashboard(Map<String, dynamic> m) {
     return Container(
-      color: Colors.black.withValues(alpha: 0.4),
-      child: Center(
-        child: Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: _primaryColor),
-                const SizedBox(height: 24),
-                Text(msg, style: const TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
-              ],
-            ),
-          ),
-        ),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      color: Colors.white,
+      child: Wrap(
+        spacing: 12, runSpacing: 12,
+        children: [
+          _buildStatCard("당일 입고", m['in'], Colors.blue),
+          _buildStatCard("당일 출고", m['out'], Colors.orange),
+          _buildStatCard("현재고 합계", m['stock'], AppTheme.primary, isMain: true),
+          _buildStatCard("안전재고 부족", m['short'], AppTheme.danger, isAlert: m['short'] > 0),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String label, int val, Color color, {bool isMain = false, bool isAlert = false}) {
+    return Container(
+      width: 165,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isAlert ? color.withValues(alpha: 0.1) : (isMain ? color.withValues(alpha: 0.05) : AppTheme.surface),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: isAlert ? color : (isMain ? color : const Color(0xFFE2E8F0)), width: (isMain || isAlert) ? 1.5 : 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: isAlert ? color : Colors.blueGrey[700])),
+          const SizedBox(height: 4),
+          Text('${NumberFormat('#,###').format(val)}개', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: color)),
+        ],
       ),
     );
   }
@@ -237,9 +407,9 @@ class _ProductPageState extends State<ProductPage> {
         const VerticalDivider(width: 1, color: Color(0xFFE2E8F0)),
         Expanded(
           child: Container(
-            color: _surfaceColor,
+            color: AppTheme.surface,
             child: _selectedGroupKey == null
-                ? _buildEmptyState("목록에서 그룹을 선택하여 상세 현황을 확인하세요.")
+                ? const Center(child: Text("상세 현황을 확인하려면 그룹을 선택하세요."))
                 : _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? []),
           ),
         ),
@@ -259,8 +429,7 @@ class _ProductPageState extends State<ProductPage> {
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (ctx, idx) {
               final key = groupKeys[idx];
-              final items = groupedMap[key]!;
-              return _buildGroupTile(provider, key, items, false, true);
+              return _buildGroupTile(provider, key, groupedMap[key]!, false, true);
             },
           ),
         ),
@@ -268,41 +437,81 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Widget _buildDashboard(Map<String, dynamic> m) {
+  Widget _buildHeader(ProductProvider provider, List<ProductModel> filtered) {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      color: Colors.white,
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        alignment: WrapAlignment.start,
-        children: [
-          _buildStatCard("당일 입고/회수", m['in'], Colors.blue),
-          _buildStatCard("당일 판매/반출", m['out'], Colors.orange),
-          _buildStatCard("현재고 합계", m['stock'], _primaryColor, isMain: true),
-          _buildStatCard("안전재고 부족", m['short'], _dangerColor, isAlert: m['short'] > 0),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String label, int val, Color color, {bool isMain = false, bool isAlert = false}) {
-    return Container(
-      width: 165,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isAlert ? color.withValues(alpha: 0.1) : (isMain ? color.withValues(alpha: 0.05) : _surfaceColor),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: isAlert ? color : (isMain ? color : const Color(0xFFE2E8F0)), width: (isMain || isAlert) ? 1.5 : 1),
-      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: TextStyle(fontFamily: _fontPretendard, fontSize: 13, fontWeight: FontWeight.w600, color: isAlert ? color : Colors.blueGrey[700])),
-          const SizedBox(height: 4),
-          Text('${NumberFormat('#,###').format(val)}개', style: TextStyle(fontFamily: _fontPretendard, fontSize: 20, fontWeight: FontWeight.w900, color: color)),
+          Row(
+            children: [
+              Text('자산 통합 관리', style: AppTheme.headerStyle),
+              const Spacer(),
+              IconButton(
+                onPressed: () { _showResetConfirmationDialog(provider); },
+                tooltip: "전체 초기화",
+                icon: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent),
+              ),
+              IconButton(
+                onPressed: () { provider.fetchData(); },
+                tooltip: "새로고침",
+                icon: const Icon(Icons.refresh, color: AppTheme.primary),
+              ),
+              IconButton(
+                  onPressed: () { _importFromExcel(context, provider); },
+                  tooltip: "엑셀 업로드",
+                  icon: const FaIcon(FontAwesomeIcons.fileArrowUp, color: Colors.blueAccent, size: 20)
+              ),
+              IconButton(
+                  onPressed: () { _exportToExcel(context, filtered); },
+                  tooltip: "엑셀 다운로드",
+                  icon: const FaIcon(FontAwesomeIcons.fileArrowDown, color: Colors.green, size: 20)
+              ),
+              IconButton(
+                  onPressed: () { _showColumnSelectionDialog(provider); },
+                  tooltip: "컬럼 설정",
+                  icon: const Icon(Icons.settings_suggest_outlined, color: Colors.indigo)
+              ),
+              IconButton(
+                  onPressed: () { _showForm(context, provider, null); },
+                  tooltip: "자산 추가",
+                  icon: const Icon(Icons.add_circle, color: AppTheme.primary, size: 28)
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _searchController,
+              builder: (context, value, _) {
+                return TextField(
+                  controller: _searchController,
+                  onChanged: (v) => setState(() => _currentQuery = v),
+                  decoration: InputDecoration(
+                    hintText: '자산명 또는 태그 ID 검색...',
+                    hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.3)),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    suffixIcon: value.text.isNotEmpty
+                        ? Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.clear, size: 20, color: Colors.grey),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _currentQuery = "");
+                        },
+                      ),
+                    )
+                        : null,
+                    filled: true,
+                    fillColor: AppTheme.surface,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTheme.border)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppTheme.border)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                );
+              }
+          ),
         ],
       ),
     );
@@ -327,14 +536,11 @@ class _ProductPageState extends State<ProductPage> {
               ),
             ),
           ),
-          PopupMenuButton<String>(
-            tooltip: "정렬",
+          IconButton(
             icon: const Icon(Icons.sort, size: 20, color: Colors.blueGrey),
-            onSelected: (v) => setState(() => _sortCriteria = v),
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(value: 'name', child: Text("이름순 정렬", style: TextStyle(fontFamily: _fontPretendard, fontSize: 13))),
-              const PopupMenuItem(value: 'status', child: Text("상태순 정렬", style: TextStyle(fontFamily: _fontPretendard, fontSize: 13))),
-            ],
+            onPressed: () {
+              setState(() => _sortCriteria = _sortCriteria == 'name' ? 'status' : 'name');
+            },
           ),
         ],
       ),
@@ -344,15 +550,15 @@ class _ProductPageState extends State<ProductPage> {
   Widget _toggleChip(String mode, String label) {
     final isSel = _groupByMode == mode;
     return ChoiceChip(
-      label: Text(label, style: const TextStyle(fontFamily: _fontPretendard, fontSize: 12)),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
       selected: isSel,
-      onSelected: (v) {
-        if (v) {
+      onSelected: (bool selected) {
+        if (selected) {
           setState(() { _groupByMode = mode; _selectedGroupKey = null; });
         }
       },
-      selectedColor: _primaryColor,
-      labelStyle: TextStyle(fontFamily: _fontPretendard, color: isSel ? Colors.white : Colors.black87),
+      selectedColor: AppTheme.primary,
+      backgroundColor: const Color(0xFFF1F5F9),
       showCheckmark: false,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide.none),
     );
@@ -360,17 +566,16 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, bool isMobile) {
     final first = items.first;
-    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
-
+    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
     final tagCount = items.where((item) => !exclude.contains(item.status)).length;
     final bool isShort = _groupByMode == 'item' && tagCount < first.safetyStock;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
-        color: isSelected ? _primaryColor.withValues(alpha: 0.08) : Colors.white,
+        color: isSelected ? AppTheme.primary.withValues(alpha: 0.08) : Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: isSelected ? _primaryColor : const Color(0xFFE2E8F0)),
+        border: Border.all(color: isSelected ? AppTheme.primary : const Color(0xFFE2E8F0)),
       ),
       child: InkWell(
         onTap: () {
@@ -392,48 +597,23 @@ class _ProductPageState extends State<ProductPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold, fontSize: 13, color: isShort ? _dangerColor : Colors.black), maxLines: 1, overflow: TextOverflow.ellipsis),
-                    Text(first.spec ?? "-", style: const TextStyle(fontFamily: _fontPretendard, fontSize: 10, color: Colors.grey), maxLines: 1),
+                    Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isShort ? AppTheme.danger : Colors.black), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(first.spec ?? "-", style: const TextStyle(fontSize: 10, color: Colors.grey), maxLines: 1),
                   ],
                 ),
               ),
-              if (!isMobile) ...[
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(first.category ?? "-", style: const TextStyle(fontFamily: _fontPretendard, fontSize: 11, color: Colors.blueGrey, fontWeight: FontWeight.w600), maxLines: 1),
-                      Text(first.location ?? "-", style: const TextStyle(fontFamily: _fontPretendard, fontSize: 10, color: Colors.blueGrey), maxLines: 1),
-                    ],
-                  ),
-                ),
-              ],
               Container(
                 width: 70,
                 alignment: Alignment.centerRight,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isShort ? _dangerColor.withValues(alpha: 0.1) : _surfaceColor,
+                    color: isShort ? AppTheme.danger.withValues(alpha: 0.1) : AppTheme.surface,
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: isShort ? _dangerColor : const Color(0xFFCBD5E1)),
+                    border: Border.all(color: isShort ? AppTheme.danger : const Color(0xFFCBD5E1)),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('현재고', style: TextStyle(fontFamily: _fontPretendard, fontSize: 9, color: isShort ? _dangerColor : Colors.blueGrey, fontWeight: FontWeight.bold)),
-                      Text('$tagCount', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.w900, fontSize: 14, color: isShort ? _dangerColor : _primaryColor)),
-                    ],
-                  ),
+                  child: Text('$tagCount', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: isShort ? AppTheme.danger : AppTheme.primary)),
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                icon: const Icon(Icons.delete_sweep_outlined, size: 20, color: Colors.redAccent),
-                onPressed: () => _confirmBatchDelete(context, provider, items),
               ),
             ],
           ),
@@ -443,46 +623,25 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items) {
+    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
     final cols = provider.selectedColumns;
-    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
-
     final displayItems = _hideExcluded ? items.where((p) => !exclude.contains(p.status)).toList() : items;
-    final currentStock = displayItems.where((p) => !exclude.contains(p.status)).length;
 
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          padding: const EdgeInsets.all(16),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: Text('$groupName - 상세 내역', style: const TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.w900, fontSize: 18), overflow: TextOverflow.ellipsis),
-                    ),
-                    const SizedBox(width: 16),
-                    FilterChip(
-                      label: const Text('출고/폐기 숨기기', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12)),
-                      selected: _hideExcluded,
-                      onSelected: (v) => setState(() => _hideExcluded = v),
-                      selectedColor: _primaryColor.withValues(alpha: 0.1),
-                      checkmarkColor: _primaryColor,
-                    ),
-                  ],
-                ),
-              ),
-              RichText(
-                textAlign: TextAlign.right,
-                text: TextSpan(
-                  style: const TextStyle(fontFamily: _fontPretendard, fontSize: 12, color: Colors.grey),
-                  children: [
-                    const TextSpan(text: '현재고 태그: '),
-                    TextSpan(text: '$currentStock개', style: const TextStyle(color: _primaryColor, fontWeight: FontWeight.w900, fontSize: 14)),
-                    TextSpan(text: '  (전체 등록: ${items.length}행)'),
-                  ],
-                ),
+              Text(groupName, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+              const Spacer(),
+              FilterChip(
+                label: const Text('출고/폐종 숨기기', style: TextStyle(fontSize: 12)),
+                selected: _hideExcluded,
+                onSelected: (v) {
+                  setState(() => _hideExcluded = v);
+                },
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide.none),
               ),
             ],
           ),
@@ -490,16 +649,15 @@ class _ProductPageState extends State<ProductPage> {
         Container(
           margin: const EdgeInsets.symmetric(horizontal: 16),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: const BoxDecoration(color: _headerBgColor, borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
+          decoration: const BoxDecoration(color: AppTheme.headerBg, borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
           child: Row(
             children: [
-              const SizedBox(width: 44, child: Text('사진', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
+              const SizedBox(width: 44, child: Text('사진', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
               const SizedBox(width: 12),
               for (var c in cols)
-                Expanded(flex: 2, child: Text(c, style: const TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
-              const Expanded(flex: 3, child: Text('TAG ID', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
-              const SizedBox(width: 70, child: Text('상태', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
-              const SizedBox(width: 40, child: Text('관리', textAlign: TextAlign.center, style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
+                Expanded(flex: 2, child: Text(c, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+              const Expanded(flex: 3, child: Text('TAG ID', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+              const SizedBox(width: 100, child: Text('관리', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
             ],
           ),
         ),
@@ -509,64 +667,41 @@ class _ProductPageState extends State<ProductPage> {
             itemCount: displayItems.length,
             itemBuilder: (ctx, idx) {
               final p = displayItems[idx];
-              final bool isExcluded = exclude.contains(p.status);
-
+              final bool isOut = exclude.contains(p.status);
               return Container(
                 decoration: BoxDecoration(
-                    color: isExcluded ? Colors.grey.shade50 : Colors.white,
-                    border: const Border(bottom: BorderSide(color: _headerBgColor))
+                    color: isOut ? Colors.grey.shade50 : Colors.white,
+                    border: const Border(bottom: BorderSide(color: AppTheme.headerBg))
                 ),
-                child: Opacity(
-                  opacity: isExcluded ? 0.5 : 1.0,
-                  child: InkWell(
-                    onTap: () => _showForm(context, provider, p),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Row(
-                        children: [
-                          _buildThumbnail(p, size: 44),
-                          const SizedBox(width: 12),
-                          for (var c in cols)
-                            Expanded(flex: 2, child: Text(p.getValue(c), style: const TextStyle(fontFamily: _fontPretendard, fontSize: 13), overflow: TextOverflow.ellipsis)),
-                          Expanded(flex: 3, child: Text(p.tagId, style: TextStyle(fontFamily: _fontPretendard, color: Colors.grey[700], fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.5), overflow: TextOverflow.ellipsis)),
-                          SizedBox(width: 70, child: _buildStatusBadge(p.status)),
-                          SizedBox(
-                              width: 40,
-                              child: IconButton(
-                                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                                  onPressed: () => _confirmIndividualDelete(context, provider, p)
-                              )
-                          ),
-                        ],
-                      ),
-                    ),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                  leading: _buildThumbnail(p, size: 44),
+                  title: Row(
+                    children: [
+                      for (var c in cols)
+                        Expanded(flex: 2, child: Text(p.getValue(c), style: const TextStyle(fontSize: 13))),
+                      Expanded(flex: 3, child: Text(p.tagId, style: TextStyle(fontSize: 12, color: Colors.blueGrey, fontWeight: FontWeight.w600))),
+                    ],
                   ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.login, color: AppTheme.success, size: 20), onPressed: () { _processAssetAccessWithLocation(provider, p, '수기입고'); }),
+                      const SizedBox(width: 12),
+                      IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.logout, color: AppTheme.warning, size: 20), onPressed: () { _processAssetAccessWithLocation(provider, p, '수기출고'); }),
+                      const SizedBox(width: 12),
+                      IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.delete_outline, color: AppTheme.danger, size: 20), onPressed: () { _confirmIndividualDelete(context, provider, p); }),
+                    ],
+                  ),
+                  onTap: () {
+                    _showForm(context, provider, p);
+                  },
                 ),
               );
             },
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildStatusBadge(String status) {
-    Color c;
-    switch (status) {
-      case '구매입고': c = Colors.blue; break;
-      case '회수/반납': c = Colors.teal; break;
-      case '판매출고': c = Colors.orange; break;
-      case '수리출고': c = Colors.deepOrange; break;
-      case '대여출고': c = Colors.purple; break;
-      case '수리필요': c = Colors.amber; break;
-      case '폐기': c = Colors.red; break;
-      case '분실': c = Colors.grey; break;
-      default: c = Colors.green;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      decoration: BoxDecoration(color: c.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
-      child: Text(status, style: TextStyle(fontFamily: _fontPretendard, color: c, fontWeight: FontWeight.bold, fontSize: 10), maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }
 
@@ -577,362 +712,303 @@ class _ProductPageState extends State<ProductPage> {
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
       clipBehavior: Clip.antiAlias,
       child: url != null
-          ? Image.network(url, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined))
-          : Icon(Icons.camera_alt_outlined, color: Colors.grey.withValues(alpha: 0.3), size: size * 0.5),
-    );
-  }
-
-  Widget _buildEmptyState(String msg) {
-    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      const Icon(Icons.inventory_2_outlined, size: 64, color: Color(0xFFE2E8F0)),
-      const SizedBox(height: 16),
-      Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontFamily: _fontPretendard, color: Colors.grey)),
-    ]));
-  }
-
-  Widget _buildHeader(ProductProvider provider, List<ProductModel> filtered) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text('자산 통합 관리', style: TextStyle(fontFamily: _fontPretendard, fontSize: 20, fontWeight: FontWeight.w900), overflow: TextOverflow.ellipsis),
-              ),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(onPressed: () => provider.fetchData(), icon: const Icon(Icons.refresh, color: _primaryColor)),
-                    IconButton(
-                        onPressed: () async {
-                          final res = await provider.batchImportFromExcel();
-                          if (!mounted) return;
-                          if (res['total']! > 0) {
-                            if (!context.mounted) return;
-                            showDialog(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text("엑셀 임포트 결과", style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-                                content: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text("전체 엑셀 행: ${res['total']}행", style: const TextStyle(fontFamily: _fontPretendard)),
-                                    Text("생성된 태그: ${res['success']}개", style: const TextStyle(fontFamily: _fontPretendard, color: Colors.green, fontWeight: FontWeight.bold)),
-                                    Text("실패: ${res['failed']}건", style: const TextStyle(fontFamily: _fontPretendard, color: Colors.red)),
-                                    if (res['failed']! > 0)
-                                      const Padding(
-                                        padding: EdgeInsets.only(top: 8.0),
-                                        child: Text("※ 데이터 저장 중 오류가 발생한 항목입니다.", style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, color: Colors.grey)),
-                                      ),
-                                  ],
-                                ),
-                                actions: [
-                                  ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text("확인", style: TextStyle(fontFamily: _fontPretendard)))
-                                ],
-                              ),
-                            );
-                          } else {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('임포트가 취소되었거나, 유효한 데이터가 없습니다.', style: TextStyle(fontFamily: _fontPretendard)))
-                            );
-                          }
-                        },
-                        icon: const FaIcon(FontAwesomeIcons.fileArrowUp, size: 16, color: Colors.indigo)
-                    ),
-                    IconButton(onPressed: () => _exportToExcel(context, filtered), icon: const FaIcon(FontAwesomeIcons.fileArrowDown, size: 16, color: Colors.green)),
-                    IconButton(onPressed: () => _showColumnSelectionDialog(provider), icon: const Icon(Icons.settings_suggest_outlined, color: Colors.indigo)),
-                    IconButton(onPressed: () => _showResetDialog(provider), icon: const Icon(Icons.delete_sweep_outlined, color: Colors.redAccent)),
-                    IconButton(onPressed: () => _showForm(context, provider, null), icon: const Icon(Icons.add_circle, color: _primaryColor, size: 28)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _searchController,
-            onChanged: (v) => setState(() => _currentQuery = v),
-            style: const TextStyle(fontFamily: _fontPretendard),
-            decoration: InputDecoration(
-              hintText: '자산명 또는 태그 ID 검색...',
-              hintStyle: const TextStyle(fontFamily: _fontPretendard, color: Colors.grey),
-              prefixIcon: const Icon(Icons.search, color: Colors.grey),
-              filled: true,
-              fillColor: _surfaceColor,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _borderColor)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: _borderColor)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<String> _extractAvailableMetaKeys(List<ProductModel> items) {
-    final Set<String> keySet = {'품명', '규격', '제조사', '위치', 'S/N', '분류', '단위', '비고'};
-    for (var item in items) {
-      item.metadata.forEach((k, v) {
-        if (k != 'origin_key_map' && k != 'history') {
-          keySet.add(k);
-        }
-      });
-    }
-    return keySet.toList()..sort();
-  }
-
-  void _showColumnSelectionDialog(ProductProvider provider) {
-    final List<String> availableKeys = _extractAvailableMetaKeys(provider.items);
-    final List<String> temp = List.from(provider.selectedColumns);
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(builder: (context, setDlgState) => AlertDialog(
-        title: const Text("표시 항목 설정", style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-        content: SizedBox(
-          width: 350,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text("상세 리스트에 표시할 항목을 최대 5개 선택하세요.", style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 12),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: availableKeys.map((key) => CheckboxListTile(
-                      title: Text(key, style: const TextStyle(fontFamily: _fontPretendard, fontSize: 14)),
-                      value: temp.contains(key),
-                      activeColor: _primaryColor,
-                      dense: true,
-                      onChanged: (v) => setDlgState(() {
-                        if (v == true) {
-                          if (temp.length < 5) temp.add(key);
-                        } else {
-                          temp.remove(key);
-                        }
-                      }),
-                    )).toList(),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("취소", style: TextStyle(fontFamily: _fontPretendard))),
-          ElevatedButton(onPressed: () { provider.saveRemoteSettings(temp); Navigator.pop(ctx); }, child: const Text("적용", style: TextStyle(fontFamily: _fontPretendard))),
-        ],
-      )),
+          ? Image.network(url, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image))
+          : Icon(Icons.camera_alt_outlined, color: Colors.grey.withValues(alpha: 0.3)),
     );
   }
 
   Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p, {String? initialTag}) async {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
     final nameC = TextEditingController(text: p?.name ?? "");
     final tagC = TextEditingController(text: initialTag ?? p?.tagId ?? "");
-    final locC = TextEditingController(text: p?.location ?? "");
-    final specC = TextEditingController(text: p?.spec ?? "");
-    final catC = TextEditingController(text: p?.category ?? "");
-    final remC = TextEditingController(text: p?.remarks ?? "");
-    final snC = TextEditingController(text: p?.serialNumber ?? "");
     final mfgC = TextEditingController(text: p?.manufacturer ?? "");
+    final snC = TextEditingController(text: p?.serialNumber ?? "");
+    final specC = TextEditingController(text: p?.spec ?? "");
     final unitC = TextEditingController(text: p?.unit ?? "ea");
+    final catC = TextEditingController(text: p?.category ?? "");
+    final locC = TextEditingController(text: p?.location ?? "");
     final safeC = TextEditingController(text: p?.safetyStock.toString() ?? "5");
-
-    final qtyGenerateC = TextEditingController(text: "1");
+    final qtyC = TextEditingController(text: p?.quantity.toString() ?? "1");
+    final remC = TextEditingController(text: p?.remarks ?? "");
 
     String selectedStatus = p?.status ?? "구매입고";
     XFile? file;
     Uint8List? preview;
 
-    final Map<String, TextEditingController> dynamicControllers = {};
+    final Map<String, TextEditingController> metaControllers = {};
+    const sysKeys = {'origin_key_map', 'history', 'last_location_info'};
+    final Map<String, dynamic> originMap = p?.metadata['origin_key_map'] ?? {};
+
     if (p != null) {
       p.metadata.forEach((key, value) {
-        if (!['origin_key_map', 'history'].contains(key)) {
-          dynamicControllers[key] = TextEditingController(text: value.toString());
+        if (!sysKeys.contains(key)) {
+          metaControllers[key] = TextEditingController(text: value?.toString() ?? "");
         }
       });
     }
 
-    bool isProcessing = false;
+    void setupSync(TextEditingController master, String metaKey) {
+      if (metaControllers.containsKey(metaKey)) {
+        final slave = metaControllers[metaKey]!;
+        bool isLock = false;
+
+        master.addListener(() {
+          if (isLock) { return; }
+          isLock = true;
+          if (slave.text != master.text) {
+            slave.text = master.text;
+          }
+          isLock = false;
+        });
+
+        slave.addListener(() {
+          if (isLock) { return; }
+          isLock = true;
+          if (master.text != slave.text) {
+            master.text = slave.text;
+          }
+          isLock = false;
+        });
+      }
+    }
+
+    originMap.forEach((excelHeader, dbField) {
+      if (dbField == 'name') { setupSync(nameC, excelHeader); }
+      else if (dbField == 'tag_id') { setupSync(tagC, excelHeader); }
+      else if (dbField == 'manufacturer') { setupSync(mfgC, excelHeader); }
+      else if (dbField == 'serial_number') { setupSync(snC, excelHeader); }
+      else if (dbField == 'category') { setupSync(catC, excelHeader); }
+      else if (dbField == 'location') { setupSync(locC, excelHeader); }
+      else if (dbField == 'spec') { setupSync(specC, excelHeader); }
+    });
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(builder: (dialogCtx, setS) {
-        final nav = Navigator.of(dialogCtx);
+
+        Future<void> handlePhotoSelection() async {
+          final source = await showModalBottomSheet<String>(
+            context: dialogCtx,
+            backgroundColor: Colors.white,
+            shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            builder: (ctx) => SafeArea(
+              child: Wrap(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.camera_alt, color: AppTheme.primary),
+                    title: const Text('카메라로 촬영', style: TextStyle(fontWeight: FontWeight.bold)),
+                    onTap: () { Navigator.pop(ctx, 'camera'); },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.photo_library, color: Colors.green),
+                    title: const Text('갤러리/파일에서 선택', style: TextStyle(fontWeight: FontWeight.bold)),
+                    onTap: () { Navigator.pop(ctx, 'gallery'); },
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          if (!dialogCtx.mounted || source == null) {
+            return;
+          }
+
+          if (source == 'camera') {
+            if (Platform.isWindows) {
+              try {
+                final cameras = await availableCameras();
+                if (cameras.isEmpty) {
+                  throw Exception("인식된 카메라 장치가 없습니다.");
+                }
+                if (!dialogCtx.mounted) {
+                  return;
+                }
+                final XFile? result = await showDialog<XFile>(
+                  context: dialogCtx,
+                  builder: (ctx) => _CameraCaptureDialog(cameras: cameras),
+                );
+                if (!dialogCtx.mounted || result == null) {
+                  return;
+                }
+                final bytes = await result.readAsBytes();
+                setS(() { file = result; preview = bytes; });
+              } catch (e) { messenger.showSnackBar(SnackBar(content: Text('카메라 오류: $e'))); }
+            } else {
+              final img = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 70);
+              if (!dialogCtx.mounted || img == null) {
+                return;
+              }
+              final bytes = await img.readAsBytes();
+              setS(() { file = img; preview = bytes; });
+            }
+          } else {
+            final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
+            if (!dialogCtx.mounted || img == null) {
+              return;
+            }
+            final bytes = await img.readAsBytes();
+            setS(() { file = img; preview = bytes; });
+          }
+        }
+
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(p == null ? '자산 신규 등록 (태그 발행)' : '정보 및 프로세스 변경', style: const TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
+          title: Text(p == null ? '자산 신규 등록' : '자산 정보 상세 편집', style: const TextStyle(fontWeight: FontWeight.bold)),
           content: SizedBox(
-            width: 750,
+            width: 850,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Center(child: _buildFormImagePicker(p, preview, (f, b) => setS(() { file = f; preview = b; }))),
-                  const SizedBox(height: 32),
-
-                  const Row(
-                    children: [
-                      Icon(Icons.layers, color: _primaryColor, size: 20),
-                      SizedBox(width: 8),
-                      Text("기본 항목", style: TextStyle(fontFamily: _fontPretendard, fontSize: 16, fontWeight: FontWeight.w900, color: _primaryColor)),
-                    ],
-                  ),
-                  const Divider(thickness: 1, color: Color(0xFFE2E8F0)),
-                  const SizedBox(height: 12),
-
-                  if (p == null) ...[
-                    Row(children: [
-                      Expanded(child: _ProductField(label: '발행할 태그 수량 (예: 10개 한 번에 등록)', controller: qtyGenerateC, maxLines: 1, keyboardType: TextInputType.number)),
-                      const SizedBox(width: 16),
-                      const Expanded(child: SizedBox()),
-                    ]),
-                  ],
-
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '품명 (필수)', controller: nameC, maxLines: 1)),
-                    const SizedBox(width: 16),
-                    Expanded(child: _ProductField(label: p == null ? '기본 태그 ID (지정하지 않으면 자동생성)' : 'RFID TAG ID', controller: tagC, maxLines: 1)),
-                  ]),
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '제조사', controller: mfgC, maxLines: 1)),
-                    const SizedBox(width: 16),
-                    Expanded(child: _ProductField(label: '시리얼 번호(S/N)', controller: snC, maxLines: 1))
-                  ]),
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '분류', controller: catC, maxLines: 1)),
-                    const SizedBox(width: 16),
-                    Expanded(child: _ProductField(label: '보관 위치', controller: locC, maxLines: 1))
-                  ]),
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '규격 / 모델명', controller: specC, maxLines: 1)),
-                    const SizedBox(width: 16),
-                    Expanded(child: _ProductField(label: '단위', controller: unitC, maxLines: 1)),
-                  ]),
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '안전재고수량 (그룹 기준)', controller: safeC, maxLines: 1, keyboardType: TextInputType.number)),
-                    const SizedBox(width: 16),
-                    Expanded(child: _ProductSelectField(
-                      label: '비즈니스 상태 (프로세스)',
-                      initialValue: selectedStatus,
-                      items: const ['정상', '구매입고', '회수/반납', '판매출고', '수리출고', '대여출고', '수리필요', '폐기', '분실'],
-                      onChanged: (v) { if (v != null) selectedStatus = v; },
-                    )),
-                  ]),
-                  Row(children: [
-                    Expanded(child: _ProductField(label: '비고 / 사유', controller: remC, maxLines: 1)),
-                    const SizedBox(width: 16),
-                    const Expanded(child: SizedBox()),
-                  ]),
-
-                  if (dynamicControllers.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    const Row(
-                      children: [
-                        Icon(Icons.table_view, color: Colors.green, size: 20),
-                        SizedBox(width: 8),
-                        Text("엑셀 항목", style: TextStyle(fontFamily: _fontPretendard, fontSize: 16, fontWeight: FontWeight.w900, color: Colors.green)),
-                      ],
+                  Center(
+                    child: GestureDetector(
+                      onTap: handlePhotoSelection,
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 120, height: 120,
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                                color: AppTheme.surface,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: AppTheme.border, width: 1.5)
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: preview != null
+                                  ? Image.memory(preview!, fit: BoxFit.contain)
+                                  : (p != null ? _buildThumbnail(p, size: 120) : const Icon(Icons.camera_alt, size: 40, color: Colors.grey)),
+                            ),
+                          ),
+                          Positioned(bottom: 6, right: 6, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle), child: const Icon(Icons.camera_alt, color: Colors.white, size: 14))),
+                        ],
+                      ),
                     ),
-                    const Divider(thickness: 1, color: Color(0xFFE2E8F0)),
-                    const SizedBox(height: 12),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(children: [
+                    const Icon(Icons.inventory_2_outlined, color: AppTheme.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Text("마스터 필드 정보", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.primary)),
+                  ]),
+                  const Divider(thickness: 1),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: _ProductField(label: '품명', controller: nameC, hint: "자산 명칭")),
+                    const SizedBox(width: 12),
+                    Expanded(child: _ProductField(label: 'RFID TAG ID', controller: tagC, hint: "태그 ID")),
+                  ]),
+                  Row(children: [
+                    Expanded(child: _ProductField(label: '제조사', controller: mfgC)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _ProductField(label: '시리얼 번호(S/N)', controller: snC)),
+                  ]),
+                  Row(children: [
+                    Expanded(child: _ProductField(label: '분류', controller: catC)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _ProductField(label: '보관 위치', controller: locC)),
+                  ]),
+                  Row(children: [
+                    Expanded(child: _ProductField(label: '규격/모델명', controller: specC)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _ProductField(label: '단위', controller: unitC)),
+                  ]),
+                  Row(children: [
+                    Expanded(child: _ProductField(label: '현재 수량', controller: qtyC, keyboardType: TextInputType.number)),
+                    const SizedBox(width: 12),
+                    Expanded(child: _ProductField(label: '안전재고', controller: safeC, keyboardType: TextInputType.number)),
+                  ]),
+                  _ProductSelectField(
+                      label: '상태',
+                      value: selectedStatus,
+                      items: const ['구매입고', '회수/반납', '수기입고', '정상', '수리필요', '분실', '폐기'],
+                      onChanged: (v) { if (v != null) { selectedStatus = v; } }
+                  ),
+                  _ProductField(label: '비고', controller: remC),
 
-                    for (int i = 0; i < dynamicControllers.length; i += 2)
-                      Row(children: [
-                        Expanded(child: _ProductField(label: dynamicControllers.keys.elementAt(i), controller: dynamicControllers.values.elementAt(i), maxLines: 1)),
-                        const SizedBox(width: 16),
-                        Expanded(child: (i + 1 < dynamicControllers.length)
-                            ? _ProductField(label: dynamicControllers.keys.elementAt(i + 1), controller: dynamicControllers.values.elementAt(i + 1), maxLines: 1)
-                            : const SizedBox()),
-                      ]),
-                  ],
+                  if (metaControllers.isNotEmpty) ...[
+                    const SizedBox(height: 32),
+                    Row(children: [
+                      const Icon(Icons.table_view_outlined, color: Colors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Text("추가 메타데이터 정보 (엑셀 항목)", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.green)),
+                      const SizedBox(width: 8),
+                      const Text("(마스터 필드와 실시간 연동)", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    ]),
+                    const Divider(thickness: 1, color: Colors.green),
+                    const SizedBox(height: 12),
+                    for (int i = 0; i < metaControllers.length; i += 2)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 0),
+                        child: Row(children: [
+                          Expanded(child: _ProductField(
+                            label: metaControllers.keys.elementAt(i),
+                            controller: metaControllers.values.elementAt(i),
+                            isMeta: true,
+                          )),
+                          const SizedBox(width: 12),
+                          if (i + 1 < metaControllers.length)
+                            Expanded(child: _ProductField(
+                              label: metaControllers.keys.elementAt(i + 1),
+                              controller: metaControllers.values.elementAt(i + 1),
+                              isMeta: true,
+                            ))
+                          else
+                            const Expanded(child: SizedBox()),
+                        ]),
+                      ),
+                  ]
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(
-                onPressed: isProcessing ? null : () => nav.pop(),
-                child: const Text("취소", style: TextStyle(fontFamily: _fontPretendard))
-            ),
+            TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
             ElevatedButton(
-              onPressed: isProcessing ? null : () async {
-                if (nameC.text.isEmpty) return;
-                setS(() => isProcessing = true);
+              onPressed: () async {
+                if (nameC.text.isEmpty) {
+                  return;
+                }
 
                 final updatedMeta = Map<String, dynamic>.from(p?.metadata ?? {});
+                metaControllers.forEach((k, v) => updatedMeta[k] = v.text.trim());
 
-                dynamicControllers.forEach((k, v) => updatedMeta[k] = v.text.trim());
-
-                if (p != null && p.status != selectedStatus) {
-                  List<dynamic> history = updatedMeta['history'] is List ? List.from(updatedMeta['history']) : [];
-                  history.add({'at': DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now()), 'from': p.status, 'to': selectedStatus, 'note': remC.text.trim()});
-                  if (history.length > 10) history = history.sublist(history.length - 10);
-                  updatedMeta['history'] = history;
+                int finalQty = int.tryParse(qtyC.text) ?? 1;
+                if (finalQty < 1) {
+                  finalQty = 1;
                 }
 
                 final data = {
                   'name': nameC.text.trim(),
+                  'tag_id': tagC.text.trim(),
+                  'manufacturer': mfgC.text.trim(),
+                  'serial_number': snC.text.trim(),
+                  'category': catC.text.trim(),
                   'location': locC.text.trim(),
                   'spec': specC.text.trim(),
-                  'category': catC.text.trim(),
-                  'remarks': remC.text.trim(),
-                  'quantity': 1,
-                  'safety_stock': int.tryParse(safeC.text) ?? 5,
                   'unit': unitC.text.trim(),
-                  'serial_number': snC.text.trim(),
-                  'manufacturer': mfgC.text.trim(),
+                  'quantity': finalQty,
+                  'safety_stock': int.tryParse(safeC.text) ?? 0,
+                  'remarks': remC.text.trim(),
                   'status': selectedStatus,
                   'metadata': updatedMeta,
                 };
 
-                bool success = true;
-                try {
-                  if (p == null) {
-                    int genCount = int.tryParse(qtyGenerateC.text) ?? 1;
-                    for (int i = 0; i < genCount; i++) {
-                      final itemData = Map<String, dynamic>.from(data);
-                      if (genCount == 1 && tagC.text.isNotEmpty) {
-                        itemData['tag_id'] = tagC.text.trim();
-                      } else {
-                        itemData['tag_id'] = "TEMP-${DateTime.now().millisecondsSinceEpoch}-$i";
-                      }
-                      final res = await provider.handleSave(p: null, data: itemData, imageXFile: file);
-                      if (!res) success = false;
-                    }
-                  } else {
-                    data['tag_id'] = tagC.text.trim();
-                    success = await provider.handleSave(p: p, data: data, imageXFile: file);
+                final success = await provider.handleSave(p: p, data: data, imageXFile: file);
 
-                    if (success && file != null) {
-                      final sameItems = provider.items.where((item) => item.name == p.name && item.id != p.id).toList();
-                      for (var target in sameItems) {
-                        await provider.handleSave(p: target, data: {}, imageXFile: file);
-                      }
-                    }
-                  }
-                } catch (e) {
-                  success = false;
+                if (!mounted) {
+                  return;
                 }
-
-                if (dialogCtx.mounted) {
-                  setS(() => isProcessing = false);
-                  if (success) {
-                    nav.pop();
-                  } else {
-                    if (!dialogCtx.mounted) return;
-                    ScaffoldMessenger.of(dialogCtx).showSnackBar(const SnackBar(content: Text('❌ 저장에 실패했습니다. 서버 연결을 확인하세요.', style: TextStyle(fontFamily: _fontPretendard))));
-                  }
+                if (success) {
+                  navigator.pop();
                 }
               },
-              child: Text(isProcessing ? "처리 중..." : "저장", style: const TextStyle(fontFamily: _fontPretendard)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+              child: const Text("저장"),
             )
           ],
         );
@@ -940,195 +1016,11 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// [수정됨] 카메라 촬영 및 갤러리 선택 기능 통합 이미지 피커
-  Widget _buildFormImagePicker(ProductModel? p, Uint8List? preview, Function(XFile, Uint8List) onPicked) {
-    final picker = ImagePicker();
-
-    // 이미지 획득 내부 함수
-    Future<void> pickImage(ImageSource source) async {
-      final scaffoldMessenger = ScaffoldMessenger.of(context);
-      try {
-        // [안정성 확보] 플랫폼 가드: 웹 환경이거나 델리게이트가 없는 환경 방어
-        if (source == ImageSource.camera && kIsWeb) {
-          throw Exception("현재 웹 브라우저 환경에서는 카메라를 직접 호출할 수 없습니다.");
-        }
-
-        final img = await picker.pickImage(
-          source: source,
-          imageQuality: 70, // 용량 최적화
-          maxWidth: 1024,   // 해상도 제한
-        );
-
-        if (!mounted) return;
-        if (img != null) {
-          final bytes = await img.readAsBytes();
-          onPicked(img, bytes);
-        }
-      } catch (e) {
-        if (!mounted) return;
-        String errMsg = e.toString();
-        // 델리게이트 오류를 한국어로 순화하여 안내
-        if (errMsg.contains('cameraDelegate')) {
-          errMsg = "카메라를 실행할 수 없습니다. 기기에 카메라가 없거나 권한 설정이 필요합니다.";
-        } else if (errMsg.contains('Exception:')) {
-          errMsg = errMsg.replaceFirst("Exception: ", "");
-        }
-
-        scaffoldMessenger.showSnackBar(
-            SnackBar(
-              content: Text('⚠️ 오류: $errMsg', style: const TextStyle(fontFamily: _fontPretendard)),
-              backgroundColor: _dangerColor,
-            )
-        );
-      }
-    }
-
-    return GestureDetector(
-      onTap: () {
-        // 하단 선택 시트 노출
-        showModalBottomSheet(
-          context: context,
-          backgroundColor: Colors.white,
-          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-          builder: (ctx) {
-            return SafeArea(
-              child: Wrap(
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.camera_alt, color: _primaryColor),
-                    title: const Text('카메라로 촬영', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      pickImage(ImageSource.camera);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.photo_library, color: Colors.green),
-                    title: const Text('갤러리에서 선택', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      pickImage(ImageSource.gallery);
-                    },
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-      child: Stack(
-        children: [
-          Container(
-            width: 120, height: 120,
-            decoration: BoxDecoration(
-                color: _surfaceColor,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5)
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: preview != null
-                ? Image.memory(preview, fit: BoxFit.cover)
-                : _buildThumbnail(p ?? ProductModel(name: '', tagId: ''), size: 120),
-          ),
-          // 우측 하단 카메라 배지 (사용자 유도 UI)
-          Positioned(
-            bottom: 6,
-            right: 6,
-            child: Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), shape: BoxShape.circle),
-              child: const Icon(Icons.camera_alt, color: Colors.white, size: 16),
-            ),
-          ),
-        ],
-      ),
+  Widget _buildGlobalLoadingOverlay() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.4),
+      child: const Center(child: CircularProgressIndicator(color: AppTheme.primary)),
     );
-  }
-
-  void _confirmIndividualDelete(BuildContext context, ProductProvider provider, ProductModel p) {
-    final nav = Navigator.of(context);
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('삭제 확인', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-      content: Text('[${p.tagId}] ${p.name} 자산을 삭제하시겠습니까?', style: const TextStyle(fontFamily: _fontPretendard)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소', style: TextStyle(fontFamily: _fontPretendard))),
-        ElevatedButton(
-          onPressed: () async {
-            final success = await provider.deleteProduct(p.id);
-            if (success && ctx.mounted) {
-              nav.pop();
-            }
-          },
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-          child: const Text('삭제', style: TextStyle(fontFamily: _fontPretendard)),
-        ),
-      ],
-    ));
-  }
-
-  void _confirmBatchDelete(BuildContext context, ProductProvider provider, List<ProductModel> items) {
-    final nav = Navigator.of(context);
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('그룹 일괄 삭제', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
-      content: Text('해당 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?', style: const TextStyle(fontFamily: _fontPretendard)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소', style: TextStyle(fontFamily: _fontPretendard))),
-        ElevatedButton(
-          onPressed: () async {
-            for (final i in items) {
-              await provider.deleteProduct(i.id);
-            }
-            if (ctx.mounted) {
-              setState(() => _selectedGroupKey = null);
-              nav.pop();
-            }
-          },
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-          child: const Text('전체 삭제', style: TextStyle(fontFamily: _fontPretendard)),
-        ),
-      ],
-    ));
-  }
-
-  void _showResetDialog(ProductProvider provider) {
-    final nav = Navigator.of(context);
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('DB 전체 초기화', style: TextStyle(fontFamily: _fontPretendard, color: Colors.red, fontWeight: FontWeight.bold)),
-      content: const Text('서버에 등록된 모든 물품 데이터를 삭제합니다. 계속하시겠습니까?', style: TextStyle(fontFamily: _fontPretendard)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소', style: TextStyle(fontFamily: _fontPretendard))),
-        ElevatedButton(
-          onPressed: () async {
-            await provider.resetAllProducts();
-            if (ctx.mounted) {
-              nav.pop();
-            }
-          },
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-          child: const Text('전체 삭제', style: TextStyle(fontFamily: _fontPretendard)),
-        ),
-      ],
-    ));
-  }
-
-  Future<void> _exportToExcel(BuildContext context, List<ProductModel> list) async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final excel = excel_pkg.Excel.createExcel();
-      final sheet = excel['물품리스트'];
-      excel.rename('Sheet1', '물품리스트');
-      sheet.appendRow([excel_pkg.TextCellValue('품명'), excel_pkg.TextCellValue('제조사'), excel_pkg.TextCellValue('규격'), excel_pkg.TextCellValue('S/N'), excel_pkg.TextCellValue('태그ID'), excel_pkg.TextCellValue('상태'), excel_pkg.TextCellValue('위치'), excel_pkg.TextCellValue('비고')]);
-      for (final i in list) {
-        sheet.appendRow([excel_pkg.TextCellValue(i.name), excel_pkg.TextCellValue(i.manufacturer ?? ""), excel_pkg.TextCellValue(i.spec ?? ""), excel_pkg.TextCellValue(i.serialNumber ?? ""), excel_pkg.TextCellValue(i.tagId), excel_pkg.TextCellValue(i.status), excel_pkg.TextCellValue(i.location ?? ""), excel_pkg.TextCellValue(i.remarks ?? "")]);
-      }
-      final path = await FilePicker.platform.saveFile(fileName: 'Asset_Inventory_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
-      if (path != null) {
-        await File(path).writeAsBytes(excel.encode()!);
-        messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 파일이 성공적으로 저장되었습니다.', style: TextStyle(fontFamily: _fontPretendard))));
-      }
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('❌ 저장 실패: $e', style: const TextStyle(fontFamily: _fontPretendard))));
-    }
   }
 
   void _showMobileGroupDetail(ProductProvider provider, String groupName, List<ProductModel> items) {
@@ -1143,50 +1035,217 @@ class _ProductPageState extends State<ProductPage> {
       ),
     );
   }
+
+  void _confirmIndividualDelete(BuildContext context, ProductProvider provider, ProductModel p) {
+    final messenger = ScaffoldMessenger.of(context);
+    final nav = Navigator.of(context);
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('삭제 확인'), content: Text('${p.name}을(를) 삭제하시겠습니까?'),
+      actions: [
+        TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text('취소')),
+        ElevatedButton(
+            onPressed: () async {
+              final success = await provider.deleteProduct(p.id);
+              if (!ctx.mounted) {
+                return;
+              }
+              if (success) {
+                nav.pop();
+              } else {
+                messenger.showSnackBar(const SnackBar(content: Text('삭제에 실패했습니다.')));
+              }
+            },
+            child: const Text('삭제')
+        ),
+      ],
+    ));
+  }
+
+  Future<void> _importFromExcel(BuildContext context, ProductProvider provider) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() {
+      _isExcelImporting = true;
+    });
+
+    try {
+      final res = await provider.batchImportFromExcel();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (res['total'] == 0 && res['failed'] == 0 && res['success'] == 0) {
+        return;
+      }
+
+      final int failedCount = res['failed'] ?? 0;
+      String msg = '총 ${res['total']}행 처리 완료 (성공: ${res['success']}, 실패: $failedCount)';
+
+      if (failedCount > 0) {
+        msg += '\n⚠️ 실패한 원본 항목은 [로그 받기]를 눌러 확인하세요.';
+      }
+
+      messenger.showSnackBar(SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 10),
+        backgroundColor: failedCount == 0 ? AppTheme.success : AppTheme.warning,
+        action: failedCount > 0
+            ? SnackBarAction(
+            label: '로그 받기',
+            textColor: Colors.white,
+            onPressed: () {
+              _generateErrorExcel(provider);
+            }
+        )
+            : null,
+      ));
+
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+            content: Text('업로드 중 오류 발생: $e'),
+            backgroundColor: AppTheme.danger
+        ));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isExcelImporting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _exportToExcel(BuildContext context, List<ProductModel> list) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (list.isEmpty) {
+      return;
+    }
+
+    try {
+      final excel = excel_pkg.Excel.createExcel();
+      final sheet = excel['자산리스트'];
+      excel.rename('Sheet1', '자산리스트');
+      sheet.appendRow([excel_pkg.TextCellValue('태그ID'), excel_pkg.TextCellValue('품명'), excel_pkg.TextCellValue('위치'), excel_pkg.TextCellValue('분류'), excel_pkg.TextCellValue('상태')]);
+
+      for (final i in list) {
+        sheet.appendRow([excel_pkg.TextCellValue(i.tagId), excel_pkg.TextCellValue(i.name), excel_pkg.TextCellValue(i.location ?? ""), excel_pkg.TextCellValue(i.category ?? ""), excel_pkg.TextCellValue(i.status)]);
+      }
+
+      final path = await FilePicker.platform.saveFile(dialogTitle: '파일 저장 위치 선택', fileName: 'Asset_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
+
+      if (!mounted || path == null) {
+        return;
+      }
+
+      final bytes = excel.encode();
+      if (bytes != null) {
+        await File(path).writeAsBytes(bytes);
+        if (mounted) {
+          messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 파일이 저장되었습니다.')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('❌ 저장 실패: $e')));
+      }
+    }
+  }
+
+  void _showColumnSelectionDialog(ProductProvider provider) {
+    final availableKeys = _extractAvailableMetaKeys(provider.items);
+    final List<String> tempSelection = List.from(provider.selectedColumns);
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+          builder: (context, setDlgState) => AlertDialog(
+            title: const Text("표시 항목 설정"),
+            content: SizedBox(
+              width: 400,
+              child: SingleChildScrollView(
+                child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: availableKeys.map((key) => CheckboxListTile(
+                        title: Text(key),
+                        value: tempSelection.contains(key),
+                        onChanged: (val) {
+                          setDlgState(() {
+                            if (val == true) {
+                              if (tempSelection.length < 5) {
+                                tempSelection.add(key);
+                              }
+                            } else {
+                              tempSelection.remove(key);
+                            }
+                          });
+                        }
+                    )).toList()
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
+              ElevatedButton(onPressed: () async {
+                await provider.saveRemoteSettings(tempSelection);
+                if (!context.mounted) {
+                  return;
+                }
+                Navigator.pop(ctx);
+              }, child: const Text("적용")),
+            ],
+          )
+      ),
+    );
+  }
+
+  List<String> _extractAvailableMetaKeys(List<ProductModel> items) {
+    final Set<String> keySet = {};
+    for (var item in items) {
+      item.metadata.forEach((k, v) {
+        if (!['origin_key_map', 'history', 'last_location_info'].contains(k)) {
+          keySet.add(k);
+        }
+      });
+    }
+    return keySet.toList()..sort();
+  }
 }
 
-class _ProductField extends StatefulWidget {
+class _ProductField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
-  final int maxLines;
+  final String? hint;
   final TextInputType keyboardType;
-  const _ProductField({required this.label, required this.controller, required this.maxLines, this.keyboardType = TextInputType.text});
-  @override
-  State<_ProductField> createState() => _ProductFieldState();
-}
+  final bool isMeta;
 
-class _ProductFieldState extends State<_ProductField> {
-  late FocusNode _focusNode;
-  @override
-  void initState() {
-    super.initState();
-    _focusNode = FocusNode();
-    _focusNode.addListener(() {
-      if (mounted) setState(() {});
-    });
-  }
-  @override
-  void dispose() { _focusNode.dispose(); super.dispose(); }
+  const _ProductField({
+    required this.label,
+    required this.controller,
+    this.hint,
+    this.keyboardType = TextInputType.text,
+    this.isMeta = false,
+  });
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 16),
       child: TextField(
-        controller: widget.controller,
-        focusNode: _focusNode,
-        maxLines: widget.maxLines,
-        keyboardType: widget.keyboardType,
-        style: const TextStyle(fontFamily: _fontPretendard, fontSize: 14, fontWeight: FontWeight.w600),
+        controller: controller,
+        keyboardType: keyboardType,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         decoration: InputDecoration(
-          labelText: widget.label,
+          labelText: label,
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.4), fontSize: 13),
           floatingLabelBehavior: FloatingLabelBehavior.always,
-          labelStyle: const TextStyle(fontFamily: _fontPretendard, color: _primaryColor, fontSize: 13),
-          isDense: true,
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.border)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.primary, width: 2.0)),
           filled: true,
-          fillColor: _focusNode.hasFocus ? Colors.white : Colors.grey[100],
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 15),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _borderColor, width: 1.2)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _primaryColor, width: 2.0)),
+          fillColor: isMeta ? Colors.green.withValues(alpha: 0.02) : Colors.white,
+          isDense: true,
+          contentPadding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
         ),
       ),
     );
@@ -1195,37 +1254,184 @@ class _ProductFieldState extends State<_ProductField> {
 
 class _ProductSelectField extends StatelessWidget {
   final String label;
-  final String initialValue;
+  final String value;
   final List<String> items;
   final ValueChanged<String?> onChanged;
-  const _ProductSelectField({required this.label, required this.initialValue, required this.items, required this.onChanged});
+  const _ProductSelectField({required this.label, required this.value, required this.items, required this.onChanged});
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 16),
       child: DropdownButtonFormField<String>(
-        initialValue: initialValue,
-        items: [
-          for (final e in items)
-            DropdownMenuItem(
-              value: e,
-              child: Text(e, style: const TextStyle(fontFamily: _fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)),
-            )
-        ],
+        initialValue: value,
+        items: items.map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)))).toList(),
         onChanged: onChanged,
-        style: const TextStyle(fontFamily: _fontPretendard, color: Colors.black, fontSize: 14, fontWeight: FontWeight.bold),
         decoration: InputDecoration(
           labelText: label,
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.4), fontSize: 13),
           floatingLabelBehavior: FloatingLabelBehavior.always,
-          labelStyle: const TextStyle(fontFamily: _fontPretendard, color: _primaryColor, fontSize: 13),
-          isDense: true,
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.border, width: 1.0)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.primary, width: 2.0)),
           filled: true,
-          fillColor: Colors.grey[100],
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _borderColor, width: 1.2)),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _borderColor)),
+          fillColor: Colors.white,
+          isDense: true,
+          contentPadding: const EdgeInsets.fromLTRB(12, 20, 12, 12),
         ),
       ),
+    );
+  }
+}
+
+class _CameraCaptureDialog extends StatefulWidget {
+  final List<CameraDescription> cameras;
+  const _CameraCaptureDialog({required this.cameras});
+  @override
+  State<_CameraCaptureDialog> createState() => _CameraCaptureDialogState();
+}
+
+class _CameraCaptureDialogState extends State<_CameraCaptureDialog> {
+  CameraController? _controller;
+  Future<void>? _initializeFuture;
+  @override
+  void initState() {
+    super.initState();
+    _controller = CameraController(widget.cameras.first, ResolutionPreset.medium, enableAudio: false);
+    _initializeFuture = _controller!.initialize();
+  }
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) {
+    final nav = Navigator.of(context);
+    return AlertDialog(
+      title: const Text("웹캠 촬영 (Windows)"),
+      content: Container(
+        width: 480, height: 360,
+        decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(8)),
+        clipBehavior: Clip.antiAlias,
+        child: FutureBuilder<void>(
+          future: _initializeFuture,
+          builder: (ctx, snap) {
+            if (snap.connectionState == ConnectionState.done) {
+              return CameraPreview(_controller!);
+            }
+            return const Center(child: CircularProgressIndicator(color: Colors.white));
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () { nav.pop(); }, child: const Text("취소")),
+        ElevatedButton(
+          onPressed: () async {
+            final img = await _controller!.takePicture();
+            if (mounted) {
+              nav.pop(img);
+            }
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+          child: const Text("촬영"),
+        ),
+      ],
+    );
+  }
+}
+
+class _LocationSelectionDialog extends StatefulWidget {
+  final String type;
+  final List<ProductModel> existingItems;
+  const _LocationSelectionDialog({required this.type, required this.existingItems});
+  @override
+  State<_LocationSelectionDialog> createState() => _LocationSelectionDialogState();
+}
+
+class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
+  late List<String> _buildings;
+  late List<String> _gates;
+  final TextEditingController _bC = TextEditingController();
+  final TextEditingController _gC = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    final Set<String> bs = {'메인창고', '출하장A', '보관실B'};
+    final Set<String> gs = {'G1', 'G2', '정문'};
+    for (var i in widget.existingItems) {
+      final loc = i.metadata['last_location_info'];
+      if (loc is Map) {
+        if (loc['building'] != null) {
+          bs.add(loc['building']);
+        }
+        if (loc['gate'] != null) {
+          gs.add(loc['gate']);
+        }
+      }
+    }
+    _buildings = bs.toList()..sort();
+    _gates = gs.toList()..sort();
+    _bC.text = _buildings.first;
+    _gC.text = _gates.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text('${widget.type} 위치 선택', style: const TextStyle(fontWeight: FontWeight.bold)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildComboField('건물/창고명', _bC, _buildings),
+          const SizedBox(height: 20),
+          _buildComboField('GATE/상세위치', _gC, _gates),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () { Navigator.pop(context); }, child: const Text("취소")),
+        ElevatedButton(
+            onPressed: () { Navigator.pop(context, {'building': _bC.text, 'gate': _gC.text}); },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white),
+            child: const Text("확인")
+        ),
+      ],
+    );
+  }
+
+  Widget _buildComboField(String label, TextEditingController ctrl, List<String> opts) {
+    return Autocomplete<String>(
+      optionsBuilder: (val) => val.text.isEmpty ? opts : opts.where((o) => o.contains(val.text)),
+      onSelected: (sel) => ctrl.text = sel,
+      fieldViewBuilder: (ctx, tC, fN, onS) {
+        if (tC.text != ctrl.text && ctrl.text.isNotEmpty && tC.text.isEmpty) {
+          tC.text = ctrl.text;
+        }
+        tC.addListener(() {
+          if (tC.text != ctrl.text) {
+            ctrl.text = tC.text;
+          }
+        });
+        return ValueListenableBuilder<TextEditingValue>(
+          valueListenable: tC,
+          builder: (ctx, val, _) => TextField(
+            controller: tC, focusNode: fN,
+            decoration: InputDecoration(
+              labelText: label,
+              labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.4), fontSize: 13),
+              floatingLabelBehavior: FloatingLabelBehavior.always,
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.border)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppTheme.primary, width: 2.0)),
+              suffixIcon: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (val.text.isNotEmpty)
+                  IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.clear, size: 18), onPressed: () { tC.clear(); ctrl.clear(); }),
+                const Icon(Icons.arrow_drop_down),
+                const SizedBox(width: 8),
+              ]),
+            ),
+          ),
+        );
+      },
     );
   }
 }
