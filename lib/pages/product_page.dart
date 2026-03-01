@@ -7,11 +7,12 @@ import 'dart:io';
 import 'package:excel/excel.dart' as excel_pkg;
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../models/products.dart';
 import '../providers/product_provider.dart';
 
-/// 디자인 시스템 상수
+/// 디자인 시스템 상수 (기존 값 유지)
 const String _fontPretendard = 'Pretendard';
 const Color _primaryColor = Color(0xFF6366F1);
 const Color _surfaceColor = Color(0xFFF8FAFC);
@@ -75,7 +76,6 @@ class _ProductPageState extends State<ProductPage> {
       final lastActionDate = item.updated ?? item.created ?? "";
       final isToday = lastActionDate.startsWith(today);
 
-      // [핵심] quantity 합산이 아닌 태그 객체(레코드) 갯수(+1)로 카운트
       if (inStatus.contains(item.status) && isToday) {
         todayIn += 1;
       }
@@ -87,13 +87,13 @@ class _ProductPageState extends State<ProductPage> {
         currentStock += 1;
         String key = "${item.name}|${item.spec ?? ''}";
         stockByGroup[key] = (stockByGroup[key] ?? 0) + 1;
-        safetyByGroup[key] = item.safetyStock; // 안전재고 기준값 저장
+        safetyByGroup[key] = item.safetyStock;
       }
     }
 
     stockByGroup.forEach((key, tagCount) {
       if (tagCount < (safetyByGroup[key] ?? 0)) {
-        shortageCount++; // 그룹별 태그 갯수가 안전재고보다 적으면 부족 카운트 증가
+        shortageCount++;
       }
     });
 
@@ -109,7 +109,6 @@ class _ProductPageState extends State<ProductPage> {
     if (_sortCriteria == 'name') {
       items.sort((a, b) => a.name.compareTo(b.name));
     } else {
-      // 수량 정렬 대신 상태별 정렬로 변경 (RFID 환경에 맞춤)
       items.sort((a, b) => a.status.compareTo(b.status));
     }
   }
@@ -303,7 +302,6 @@ class _ProductPageState extends State<ProductPage> {
         children: [
           Text(label, style: TextStyle(fontFamily: _fontPretendard, fontSize: 13, fontWeight: FontWeight.w600, color: isAlert ? color : Colors.blueGrey[700])),
           const SizedBox(height: 4),
-          // "개" 단위 추가
           Text('${NumberFormat('#,###').format(val)}개', style: TextStyle(fontFamily: _fontPretendard, fontSize: 20, fontWeight: FontWeight.w900, color: color)),
         ],
       ),
@@ -364,7 +362,6 @@ class _ProductPageState extends State<ProductPage> {
     final first = items.first;
     const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
 
-    // [핵심] 수량 합산이 아닌 유효한 태그 갯수(.length)를 셈
     final tagCount = items.where((item) => !exclude.contains(item.status)).length;
     final bool isShort = _groupByMode == 'item' && tagCount < first.safetyStock;
 
@@ -449,7 +446,6 @@ class _ProductPageState extends State<ProductPage> {
     final cols = provider.selectedColumns;
     const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
 
-    // 상태 필터링 적용
     final displayItems = _hideExcluded ? items.where((p) => !exclude.contains(p.status)).toList() : items;
     final currentStock = displayItems.where((p) => !exclude.contains(p.status)).length;
 
@@ -502,7 +498,6 @@ class _ProductPageState extends State<ProductPage> {
               for (var c in cols)
                 Expanded(flex: 2, child: Text(c, style: const TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
               const Expanded(flex: 3, child: Text('TAG ID', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
-              // 수량 컬럼 제거 (각 행이 태그 1개를 의미하므로 불필요)
               const SizedBox(width: 70, child: Text('상태', style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
               const SizedBox(width: 40, child: Text('관리', textAlign: TextAlign.center, style: TextStyle(fontFamily: _fontPretendard, fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54))),
             ],
@@ -534,7 +529,6 @@ class _ProductPageState extends State<ProductPage> {
                           for (var c in cols)
                             Expanded(flex: 2, child: Text(p.getValue(c), style: const TextStyle(fontFamily: _fontPretendard, fontSize: 13), overflow: TextOverflow.ellipsis)),
                           Expanded(flex: 3, child: Text(p.tagId, style: TextStyle(fontFamily: _fontPretendard, color: Colors.grey[700], fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.5), overflow: TextOverflow.ellipsis)),
-                          // 수량 출력 제거
                           SizedBox(width: 70, child: _buildStatusBadge(p.status)),
                           SizedBox(
                               width: 40,
@@ -596,8 +590,6 @@ class _ProductPageState extends State<ProductPage> {
     ]));
   }
 
-  // --- 헤더 및 메뉴 조작 ---
-
   Widget _buildHeader(ProductProvider provider, List<ProductModel> filtered) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -620,6 +612,7 @@ class _ProductPageState extends State<ProductPage> {
                           final res = await provider.batchImportFromExcel();
                           if (!mounted) return;
                           if (res['total']! > 0) {
+                            if (!context.mounted) return;
                             showDialog(
                               context: context,
                               builder: (ctx) => AlertDialog(
@@ -644,6 +637,7 @@ class _ProductPageState extends State<ProductPage> {
                               ),
                             );
                           } else {
+                            if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(content: Text('임포트가 취소되었거나, 유효한 데이터가 없습니다.', style: TextStyle(fontFamily: _fontPretendard)))
                             );
@@ -680,8 +674,6 @@ class _ProductPageState extends State<ProductPage> {
       ),
     );
   }
-
-  // --- 다이얼로그 및 폼 로직 ---
 
   List<String> _extractAvailableMetaKeys(List<ProductModel> items) {
     final Set<String> keySet = {'품명', '규격', '제조사', '위치', 'S/N', '분류', '단위', '비고'};
@@ -752,7 +744,6 @@ class _ProductPageState extends State<ProductPage> {
     final unitC = TextEditingController(text: p?.unit ?? "ea");
     final safeC = TextEditingController(text: p?.safetyStock.toString() ?? "5");
 
-    // [핵심] 여러 개의 태그를 동시에 생성하기 위한 발행 수량 필드 (신규일 때만 사용)
     final qtyGenerateC = TextEditingController(text: "1");
 
     String selectedStatus = p?.status ?? "구매입고";
@@ -797,7 +788,6 @@ class _ProductPageState extends State<ProductPage> {
                   const Divider(thickness: 1, color: Color(0xFFE2E8F0)),
                   const SizedBox(height: 12),
 
-                  // 신규 등록일 때만 일괄 생성 기능 노출
                   if (p == null) ...[
                     Row(children: [
                       Expanded(child: _ProductField(label: '발행할 태그 수량 (예: 10개 한 번에 등록)', controller: qtyGenerateC, maxLines: 1, keyboardType: TextInputType.number)),
@@ -894,7 +884,7 @@ class _ProductPageState extends State<ProductPage> {
                   'spec': specC.text.trim(),
                   'category': catC.text.trim(),
                   'remarks': remC.text.trim(),
-                  'quantity': 1, // RFID 시스템이므로 언제나 1
+                  'quantity': 1,
                   'safety_stock': int.tryParse(safeC.text) ?? 5,
                   'unit': unitC.text.trim(),
                   'serial_number': snC.text.trim(),
@@ -906,14 +896,12 @@ class _ProductPageState extends State<ProductPage> {
                 bool success = true;
                 try {
                   if (p == null) {
-                    // [핵심] 일괄 생성 로직: 입력한 개수만큼 반복하여 독립적인 레코드(태그) 생성
                     int genCount = int.tryParse(qtyGenerateC.text) ?? 1;
                     for (int i = 0; i < genCount; i++) {
                       final itemData = Map<String, dynamic>.from(data);
                       if (genCount == 1 && tagC.text.isNotEmpty) {
                         itemData['tag_id'] = tagC.text.trim();
                       } else {
-                        // 2개 이상 발행 시 임시 태그 자동 부여
                         itemData['tag_id'] = "TEMP-${DateTime.now().millisecondsSinceEpoch}-$i";
                       }
                       final res = await provider.handleSave(p: null, data: itemData, imageXFile: file);
@@ -939,7 +927,8 @@ class _ProductPageState extends State<ProductPage> {
                   if (success) {
                     nav.pop();
                   } else {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ 저장에 실패했습니다. 서버 연결을 확인하세요.', style: TextStyle(fontFamily: _fontPretendard))));
+                    if (!dialogCtx.mounted) return;
+                    ScaffoldMessenger.of(dialogCtx).showSnackBar(const SnackBar(content: Text('❌ 저장에 실패했습니다. 서버 연결을 확인하세요.', style: TextStyle(fontFamily: _fontPretendard))));
                   }
                 }
               },
@@ -951,20 +940,107 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// [수정됨] 카메라 촬영 및 갤러리 선택 기능 통합 이미지 피커
   Widget _buildFormImagePicker(ProductModel? p, Uint8List? preview, Function(XFile, Uint8List) onPicked) {
-    return GestureDetector(
-      onTap: () async {
-        final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
+    final picker = ImagePicker();
+
+    // 이미지 획득 내부 함수
+    Future<void> pickImage(ImageSource source) async {
+      final scaffoldMessenger = ScaffoldMessenger.of(context);
+      try {
+        // [안정성 확보] 플랫폼 가드: 웹 환경이거나 델리게이트가 없는 환경 방어
+        if (source == ImageSource.camera && kIsWeb) {
+          throw Exception("현재 웹 브라우저 환경에서는 카메라를 직접 호출할 수 없습니다.");
+        }
+
+        final img = await picker.pickImage(
+          source: source,
+          imageQuality: 70, // 용량 최적화
+          maxWidth: 1024,   // 해상도 제한
+        );
+
+        if (!mounted) return;
         if (img != null) {
           final bytes = await img.readAsBytes();
           onPicked(img, bytes);
         }
+      } catch (e) {
+        if (!mounted) return;
+        String errMsg = e.toString();
+        // 델리게이트 오류를 한국어로 순화하여 안내
+        if (errMsg.contains('cameraDelegate')) {
+          errMsg = "카메라를 실행할 수 없습니다. 기기에 카메라가 없거나 권한 설정이 필요합니다.";
+        } else if (errMsg.contains('Exception:')) {
+          errMsg = errMsg.replaceFirst("Exception: ", "");
+        }
+
+        scaffoldMessenger.showSnackBar(
+            SnackBar(
+              content: Text('⚠️ 오류: $errMsg', style: const TextStyle(fontFamily: _fontPretendard)),
+              backgroundColor: _dangerColor,
+            )
+        );
+      }
+    }
+
+    return GestureDetector(
+      onTap: () {
+        // 하단 선택 시트 노출
+        showModalBottomSheet(
+          context: context,
+          backgroundColor: Colors.white,
+          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          builder: (ctx) {
+            return SafeArea(
+              child: Wrap(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.camera_alt, color: _primaryColor),
+                    title: const Text('카메라로 촬영', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      pickImage(ImageSource.camera);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.photo_library, color: Colors.green),
+                    title: const Text('갤러리에서 선택', style: TextStyle(fontFamily: _fontPretendard, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      pickImage(ImageSource.gallery);
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        );
       },
-      child: Container(
-        width: 120, height: 120,
-        decoration: BoxDecoration(color: _surfaceColor, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE2E8F0))),
-        clipBehavior: Clip.antiAlias,
-        child: preview != null ? Image.memory(preview, fit: BoxFit.contain) : _buildThumbnail(p ?? ProductModel(name: '', tagId: ''), size: 120),
+      child: Stack(
+        children: [
+          Container(
+            width: 120, height: 120,
+            decoration: BoxDecoration(
+                color: _surfaceColor,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5)
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: preview != null
+                ? Image.memory(preview, fit: BoxFit.cover)
+                : _buildThumbnail(p ?? ProductModel(name: '', tagId: ''), size: 120),
+          ),
+          // 우측 하단 카메라 배지 (사용자 유도 UI)
+          Positioned(
+            bottom: 6,
+            right: 6,
+            child: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.6), shape: BoxShape.circle),
+              child: const Icon(Icons.camera_alt, color: Colors.white, size: 16),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1068,8 +1144,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 }
-
-// --- 공용 입력 컴포넌트 ---
 
 class _ProductField extends StatefulWidget {
   final String label;
