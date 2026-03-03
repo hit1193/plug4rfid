@@ -112,9 +112,10 @@ class _ProductPageState extends State<ProductPage> {
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type) async {
     final messenger = ScaffoldMessenger.of(context);
-    final result = await showDialog<Map<String, String>>(
+
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => _LocationSelectionDialog(type: type),
+      builder: (ctx) => _ManualInoutDialog(type: type, product: p),
     );
 
     if (!mounted || result == null) {
@@ -123,12 +124,21 @@ class _ProductPageState extends State<ProductPage> {
 
     final success = await provider.handleSave(
       p: p,
-      data: {'status': type, 'location': result['building'] ?? "미지정"},
+      data: {
+        'status': result['status'] ?? type,
+        'location': result['location'] ?? "미지정",
+        'metadata': {
+          ...p.metadata,
+          'last_manual_reason': result['reason'],
+          'last_handler': result['handler'],
+          'last_processed_at': DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now()),
+        }
+      },
     );
 
     if (mounted && success) {
       messenger.showSnackBar(SnackBar(
-        content: Text('[${p.name}] $type 완료'),
+        content: Text('[${p.name}] ${result['status']} 완료'),
         backgroundColor: AppTheme.success,
         duration: const Duration(seconds: 1),
       ));
@@ -172,6 +182,8 @@ class _ProductPageState extends State<ProductPage> {
 
     final metrics = _calculateMetrics(provider.items);
     final groupedMap = _getGroupedData(filtered);
+
+    // Cascade 연산자 (..)를 사용하여 정렬 후 리스트 반환
     final groupKeys = groupedMap.keys.toList()..sort();
 
     return Theme(
@@ -360,6 +372,8 @@ class _ProductPageState extends State<ProductPage> {
             onChanged: (v) { setState(() => _currentQuery = v); },
             decoration: InputDecoration(
               hintText: '검색...',
+              // 메인 검색바 hintText 흐리게 적용
+              hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 14),
               prefixIcon: const Icon(Icons.search, size: 18),
               filled: true,
               fillColor: AppTheme.headerBg,
@@ -628,9 +642,9 @@ class _ProductPageState extends State<ProductPage> {
                   if (p == null) ...[
                     _buildSectionHeader(Icons.copy_all, "생성 수량 (동일 품목 일괄 등록)", Colors.orange),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.start, // 마스터 정보와 정렬 일치 (좌측 정렬)
+                      mainAxisAlignment: MainAxisAlignment.start,
                       children: [
-                        const SizedBox(width: 23), // 중앙 정렬된 Wrap과의 시작 위치 동기화 보정
+                        const SizedBox(width: 23),
                         SizedBox(
                           width: fieldWidth,
                           child: _buildStyledField(
@@ -638,7 +652,7 @@ class _ProductPageState extends State<ProductPage> {
                             qtyC,
                             keyboardType: TextInputType.number,
                             hint: "생성할 태그 개수",
-                            onChanged: (v) => setS(() {}),
+                            onChanged: (v) { setS(() {}); },
                           ),
                         ),
                       ],
@@ -647,16 +661,16 @@ class _ProductPageState extends State<ProductPage> {
                   ],
                   _buildSectionHeader(Icons.star, "마스터 정보", Colors.blue),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.start, // 좌측 정렬로 수정
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
-                      const SizedBox(width: 23), // 시작 위치 보정
+                      const SizedBox(width: 23),
                       SizedBox(width: fieldWidth, child: _buildStyledField("품명", nameC)),
                       const SizedBox(width: 12),
                       SizedBox(width: fieldWidth, child: _buildStyledField("태그ID", tagC, hint: "EPC 번호")),
                     ],
                   ),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.start, // 좌측 정렬로 수정
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       const SizedBox(width: 23),
                       SizedBox(width: fieldWidth, child: _buildStyledField("위치", locC, hint: "창고/구역")),
@@ -665,7 +679,7 @@ class _ProductPageState extends State<ProductPage> {
                     ],
                   ),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.start, // 좌측 정렬로 수정
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       const SizedBox(width: 23),
                       SizedBox(width: fieldWidth, child: _buildStyledField("제조사", mfgC)),
@@ -674,7 +688,7 @@ class _ProductPageState extends State<ProductPage> {
                     ],
                   ),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.start, // 좌측 정렬로 수정
+                    mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       const SizedBox(width: 23),
                       SizedBox(width: fieldWidth, child: _buildStyledField("안전재고", safeC, keyboardType: TextInputType.number, hint: "최저 유지 수량")),
@@ -692,7 +706,7 @@ class _ProductPageState extends State<ProductPage> {
                           child: Wrap(
                             spacing: 12,
                             runSpacing: 0,
-                            alignment: WrapAlignment.start, // 홀수 시 이상하지 않게 좌측 정렬 적용
+                            alignment: WrapAlignment.start,
                             children: metaControllers.entries.map((e) => SizedBox(
                               width: fieldWidth,
                               child: _buildStyledField(e.key, e.value),
@@ -773,9 +787,11 @@ class _ProductPageState extends State<ProductPage> {
         onChanged: onChanged,
         style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         decoration: InputDecoration(
-          labelText: label, hintText: hint,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.38), fontSize: 13, fontWeight: FontWeight.bold),
-          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.38), fontSize: 13),
+          labelText: label,
+          hintText: hint,
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
+          // hintStyle 흐리게 적용 (alpha: 0.2)
+          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
           floatingLabelBehavior: FloatingLabelBehavior.always, filled: true, fillColor: Colors.white,
           border: OutlineInputBorder(
             borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
@@ -801,11 +817,14 @@ class _ProductPageState extends State<ProductPage> {
       child: DropdownButtonFormField<String>(
         initialValue: initial,
         items: const ['정상', '구매입고', '회수/반납', '판매출고', '수리출고', '대여출고', '수리필요', '분실', '폐기']
-            .map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)))).toList(),
+            .map((e) => DropdownMenuItem(
+            value: e,
+            child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
+        )).toList(),
         onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.38), fontSize: 13, fontWeight: FontWeight.bold),
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
           floatingLabelBehavior: FloatingLabelBehavior.always, filled: true, fillColor: Colors.white,
           border: OutlineInputBorder(
             borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
@@ -902,7 +921,7 @@ class _ProductPageState extends State<ProductPage> {
             title: const Text('삭제 확인'),
             content: Text('${p.name} 자산을 삭제하시겠습니까?'),
             actions: [
-              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text('취소')),
+              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
               ElevatedButton(onPressed: () async { await provider.deleteProduct(p.id); if (ctx.mounted) { Navigator.pop(ctx); } }, child: const Text('삭제'))
             ]
         )
@@ -918,24 +937,136 @@ class _ProductPageState extends State<ProductPage> {
   }
 }
 
-class _LocationSelectionDialog extends StatefulWidget {
+// --- 수기 입고/출고 상세 다이얼로그 위젯 ---
+class _ManualInoutDialog extends StatefulWidget {
   final String type;
-  const _LocationSelectionDialog({required this.type});
+  final ProductModel product;
+
+  const _ManualInoutDialog({required this.type, required this.product});
+
   @override
-  State<_LocationSelectionDialog> createState() => _LocationSelectionDialogState();
+  State<_ManualInoutDialog> createState() => _ManualInoutDialogState();
 }
 
-class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
-  final TextEditingController _bC = TextEditingController(text: "본관A");
+class _ManualInoutDialogState extends State<_ManualInoutDialog> {
+  late TextEditingController _locC;
+  late TextEditingController _reasonC;
+  late TextEditingController _handlerC;
+  late String _selectedStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _locC = TextEditingController(text: widget.product.location ?? "본관A");
+    _reasonC = TextEditingController();
+    _handlerC = TextEditingController();
+    _selectedStatus = widget.type == '수기입고' ? '구매입고' : '판매출고';
+  }
+
+  @override
+  void dispose() {
+    _locC.dispose();
+    _reasonC.dispose();
+    _handlerC.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bool isIn = widget.type == '수기입고';
+    final List<String> statusItems = isIn
+        ? ['구매입고', '회수/반납', '수기입고']
+        : ['판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'];
+
     return AlertDialog(
-        title: Text('${widget.type} 위치'),
-        content: TextField(controller: _bC, decoration: const InputDecoration(labelText: '건물/구역')),
-        actions: [
-          TextButton(onPressed: () { Navigator.pop(context); }, child: const Text("취소")),
-          ElevatedButton(onPressed: () { Navigator.pop(context, {'building': _bC.text}); }, child: const Text("확인"))
-        ]
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(
+        children: [
+          Icon(isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning),
+          const SizedBox(width: 8),
+          Text('${widget.type} 처리', style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: SizedBox(
+        width: 450,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('대상: [${widget.product.name}]', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black54)),
+              const SizedBox(height: 20),
+
+              _buildStyledDropdown("처리 유형", _selectedStatus, statusItems, (v) {
+                if (v != null) { setState(() => _selectedStatus = v); }
+              }),
+
+              _buildStyledField("이동 장소", _locC, hint: "창고 또는 구역명"),
+
+              _buildStyledField("담당자", _handlerC, hint: "성함 또는 사번"),
+
+              _buildStyledField("특이사항/비고", _reasonC, hint: "이동 사유 상세 입력"),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("취소")),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context, {
+              'status': _selectedStatus,
+              'location': _locC.text.trim(),
+              'handler': _handlerC.text.trim(),
+              'reason': _reasonC.text.trim(),
+            });
+          },
+          child: const Text("확인"),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStyledField(String label, TextEditingController ctrl, {String? hint}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextField(
+        controller: ctrl,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
+          // hintStyle 흐리게 적용 (alpha: 0.2)
+          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStyledDropdown(String label, String value, List<String> items, ValueChanged<String?> onChanged) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: DropdownButtonFormField<String>(
+        initialValue: value,
+        items: items.map((e) => DropdownMenuItem(
+            value: e,
+            child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
+        )).toList(),
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
+          // hintStyle 흐리게 적용 (Dropdown은 기본 hint가 없지만 일관성을 위해 설정)
+          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
+          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
     );
   }
 }
