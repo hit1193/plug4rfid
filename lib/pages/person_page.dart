@@ -36,8 +36,8 @@ class _PersonPageState extends State<PersonPage> {
   String _currentSearchQuery = "";
   late String _currentFilter;
 
-  static const double _colImgSize = 70.0; // 이미지 크기 소폭 상향
-  static const double _colActionWidth = 180.0; // 버튼 영역 폭 확보
+  static const double _colImgSize = 70.0;
+  static const double _colActionWidth = 180.0;
 
   @override
   void initState() {
@@ -167,11 +167,14 @@ class _PersonPageState extends State<PersonPage> {
             const Divider(height: 1),
             _buildHeader(provider, filteredList),
             _buildFilterToggle(),
-            const SizedBox(height: 16), // 간격 소폭 확대
+            const SizedBox(height: 16),
             Expanded(
               child: provider.isLoading
                   ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
-                  : _buildListView(filteredList, provider, currentColumns),
+                  : Padding(
+                padding: const EdgeInsets.only(bottom: 20), // [수정] 하단 여백 20px
+                child: _buildListView(filteredList, provider, currentColumns),
+              ),
             ),
           ],
         ),
@@ -179,10 +182,9 @@ class _PersonPageState extends State<PersonPage> {
     );
   }
 
-  // [상향] 대시보드 폰트 크기 대폭 확대
   Widget _buildDashboard(Map<String, dynamic> m) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20), // 패딩 상향
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       color: Colors.white,
       child: LayoutBuilder(builder: (ctx, constraints) {
         bool isWide = constraints.maxWidth > 850;
@@ -229,12 +231,12 @@ class _PersonPageState extends State<PersonPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.8), width: 2.5), // 선 두께 상향
+        border: Border.all(color: color.withValues(alpha: 0.8), width: 2.5),
         boxShadow: [BoxShadow(color: color.withValues(alpha: 0.08), blurRadius: 6, offset: const Offset(0, 3))],
       ),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 32), // 아이콘 상향
+          Icon(icon, color: color, size: 32),
           const SizedBox(width: 16),
           Flexible(
             child: Column(
@@ -242,7 +244,7 @@ class _PersonPageState extends State<PersonPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(label, style: TextStyle(fontSize: 13, color: color.withValues(alpha: 0.7), fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
-                Text('$val', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: color), overflow: TextOverflow.ellipsis), // 22 -> 32 상향
+                Text('$val', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: color), overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -251,7 +253,6 @@ class _PersonPageState extends State<PersonPage> {
     );
   }
 
-  // [상향] 검색바 텍스트 크기 확대
   Widget _buildHeader(PersonProvider provider, List<Person> filtered) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -279,7 +280,7 @@ class _PersonPageState extends State<PersonPage> {
           TextField(
             controller: _searchController,
             onChanged: (val) => setState(() => _currentSearchQuery = val),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600), // 입력 폰트 상향
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             decoration: InputDecoration(
               hintText: '성명, 사번, 부서 또는 초성 검색...',
               hintStyle: const TextStyle(color: Colors.black26, fontSize: 16),
@@ -309,7 +310,7 @@ class _PersonPageState extends State<PersonPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          width: 52, height: 52, // 터치 타겟 확대
+          width: 52, height: 52,
           alignment: Alignment.center,
           child: Icon(icon, color: color ?? Colors.black45, size: isLarge ? 34 : 24),
         ),
@@ -317,7 +318,6 @@ class _PersonPageState extends State<PersonPage> {
     );
   }
 
-  // [상향] 세그먼티드 버튼 텍스트 확대
   Widget _buildFilterToggle() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -345,12 +345,13 @@ class _PersonPageState extends State<PersonPage> {
     );
   }
 
-  // [상향] 리스트 아이템 폰트 크기 확대
+  // [핵심 수정] 마우스 오버 시 사각형 그림자(Hover Color)를 완벽히 제거
   Widget _buildListView(List<Person> list, PersonProvider provider, List<String> columns) {
     if (list.isEmpty) {
       return _buildEmptyState("표시할 인원 정보가 없습니다.");
     }
     return ListView.separated(
+      cacheExtent: 1000,
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
       itemCount: list.length,
       separatorBuilder: (ctx, idx) => const SizedBox(height: 12),
@@ -363,19 +364,30 @@ class _PersonPageState extends State<PersonPage> {
           locationDisplay = locInfo['full_name'] ?? locationDisplay;
         }
 
+        final Color cardBorderColor = currentStatus == '입장'
+            ? AppTheme.success
+            : (currentStatus == '퇴장' ? AppTheme.warning : Colors.black.withValues(alpha: 0.1));
+
         return InkWell(
+          key: ValueKey(item.id),
           onTap: () => _showForm(context, provider, item),
+          // [핵심] 마우스 오버 및 클릭 시 발생하는 사각형 효과를 투명하게 설정하여 제거
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+              // [수정] 물품정보와 동일한 완벽한 Flat 스타일 (그림자 제거)
               border: Border.all(
-                color: currentStatus == '입장' ? AppTheme.success : Colors.black.withValues(alpha: 0.1),
-                width: 2.5, // 테두리 강조
+                color: cardBorderColor,
+                width: AppTheme.outlineWidth,
               ),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
+              boxShadow: null,
             ),
-            padding: const EdgeInsets.all(20), // 패딩 확대
+            padding: const EdgeInsets.all(20),
             child: Row(
               children: [
                 _buildAvatar(item, size: _colImgSize),
@@ -386,7 +398,7 @@ class _PersonPageState extends State<PersonPage> {
                     children: [
                       Row(
                         children: [
-                          Text(item.name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)), // 16 -> 18 상향
+                          Text(item.name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
                           const SizedBox(width: 12),
                           _buildStatusBadge(currentStatus),
                         ],
@@ -397,14 +409,14 @@ class _PersonPageState extends State<PersonPage> {
                         runSpacing: 8,
                         children: columns.map((col) {
                           return SizedBox(
-                            width: 140, // 폭 확대
+                            width: 140,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(col, style: const TextStyle(fontSize: 12, color: Colors.black26, fontWeight: FontWeight.bold)), // 10 -> 12 상향
+                                Text(col, style: const TextStyle(fontSize: 12, color: Colors.black26, fontWeight: FontWeight.bold)),
                                 Text(
                                   _getMetaValue(item, col),
-                                  style: const TextStyle(fontSize: 15, color: Colors.blueGrey, fontWeight: FontWeight.w600), // 13 -> 15 상향
+                                  style: const TextStyle(fontSize: 15, color: Colors.blueGrey, fontWeight: FontWeight.w600),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ],
@@ -413,7 +425,7 @@ class _PersonPageState extends State<PersonPage> {
                         }).toList(),
                       ),
                       const SizedBox(height: 8),
-                      Text(locationDisplay, style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)), // 11 -> 13 상향
+                      Text(locationDisplay, style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w500)),
                     ],
                   ),
                 ),
@@ -445,7 +457,7 @@ class _PersonPageState extends State<PersonPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(25),
         child: Container(
-          width: 50, height: 50, // 버튼 크기 상향
+          width: 50, height: 50,
           decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
           child: Icon(icon, color: color, size: 24),
         ),
@@ -464,7 +476,12 @@ class _PersonPageState extends State<PersonPage> {
       ),
       clipBehavior: Clip.antiAlias,
       child: url != null
-          ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12))
+          ? Image.network(
+        url,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12),
+      )
           : const Icon(Icons.person_outline, color: Colors.black12, size: 30),
     );
   }
@@ -495,8 +512,6 @@ class _PersonPageState extends State<PersonPage> {
       ),
     );
   }
-
-  // --- 다이얼로그 및 기타 로직 보존 및 폰트 튜닝 ---
 
   void _showColumnSelectionDialog(PersonProvider provider) {
     final availableKeys = _extractAvailableMetaKeys(provider.list);
@@ -684,7 +699,6 @@ class _PersonPageState extends State<PersonPage> {
     return keySet.toList()..sort();
   }
 
-  // [상향] 입력 필드 텍스트 확대
   Widget _buildStyledField(String label, TextEditingController ctrl, {TextInputType keyboardType = TextInputType.text, String? hint}) {
     return StatefulBuilder(builder: (context, setStateField) => Focus(
         onFocusChange: (hasFocus) => setStateField(() {}),
@@ -693,10 +707,10 @@ class _PersonPageState extends State<PersonPage> {
           return TextField(
               controller: ctrl,
               keyboardType: keyboardType,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600), // 14 -> 16 상향
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               decoration: InputDecoration(
                   labelText: label,
-                  labelStyle: AppTheme.inputLabelStyle.copyWith(fontSize: 14), // 라벨 상향
+                  labelStyle: AppTheme.inputLabelStyle.copyWith(fontSize: 14),
                   hintText: hint,
                   hintStyle: AppTheme.inputHintStyle.copyWith(fontSize: 15),
                   filled: true,
@@ -777,7 +791,7 @@ class _PersonPageState extends State<PersonPage> {
           actionsAlignment: MainAxisAlignment.center,
           title: Text(p == null ? '신규 인원 등록' : '정보 수정 및 데이터 편집', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22)),
           content: SizedBox(
-            width: 900, // 정보가 많으므로 폭 추가 확보
+            width: 900,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -801,7 +815,7 @@ class _PersonPageState extends State<PersonPage> {
                             child: Stack(
                               children: [
                                 Container(
-                                  width: 180, height: 210, // 아바타 편집 영역 확대
+                                  width: 180, height: 210,
                                   decoration: BoxDecoration(color: const Color(0xFFF8F9FA), borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.black12, width: 2)),
                                   child: Center(child: imageWidget),
                                 ),
@@ -858,7 +872,7 @@ class _PersonPageState extends State<PersonPage> {
                         spacing: 16,
                         runSpacing: 16,
                         children: metaControllers.entries.map((e) => SizedBox(
-                            width: 360, // 필드 폭 확대
+                            width: 360,
                             child: _buildStyledField(e.key, e.value)
                         )).toList()
                     )
