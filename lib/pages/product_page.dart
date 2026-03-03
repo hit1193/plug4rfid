@@ -96,20 +96,30 @@ class _ProductPageState extends State<ProductPage> {
 
   String _getDisplayValue(ProductModel p, String key) {
     switch (key) {
-      case '품명': return p.name;
-      case '태그ID': return p.tagId;
-      case '위치': return p.location ?? "-";
-      case '상태': return p.status;
-      case '규격': return p.spec ?? "-";
-      case '분류': return p.category ?? "-";
-      case 'S/N': return p.serialNumber ?? "-";
-      default: return p.metadata[key]?.toString() ?? "-";
+      case '품명':
+        return p.name;
+      case '태그ID':
+        return p.tagId;
+      case '위치':
+        return p.location ?? "-";
+      case '상태':
+        return p.status;
+      case '규격':
+        return p.spec ?? "-";
+      case '분류':
+        return p.category ?? "-";
+      case 'S/N':
+        return p.serialNumber ?? "-";
+      default:
+        return p.metadata[key]?.toString() ?? "-";
     }
   }
 
   Map<String, dynamic> _calculateMetrics(List<ProductModel> allItems) {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    int todayIn = 0; int todayOut = 0; int currentStock = 0;
+    int todayIn = 0;
+    int todayOut = 0;
+    int currentStock = 0;
 
     const inStatus = {'구매입고', '회수/반납', '수기입고'};
     const excludeStock = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
@@ -117,12 +127,23 @@ class _ProductPageState extends State<ProductPage> {
     for (final item in allItems) {
       final lastDate = item.updated ?? item.created ?? "";
       if (lastDate.startsWith(todayStr)) {
-        if (inStatus.contains(item.status)) { todayIn++; }
-        if (excludeStock.contains(item.status)) { todayOut++; }
+        if (inStatus.contains(item.status)) {
+          todayIn++;
+        }
+        if (excludeStock.contains(item.status)) {
+          todayOut++;
+        }
       }
-      if (!excludeStock.contains(item.status)) { currentStock++; }
+      if (!excludeStock.contains(item.status)) {
+        currentStock++;
+      }
     }
-    return {'prev': currentStock - todayIn + todayOut, 'in': todayIn, 'out': todayOut, 'stock': currentStock};
+    return {
+      'prev': currentStock - todayIn + todayOut,
+      'in': todayIn,
+      'out': todayOut,
+      'stock': currentStock
+    };
   }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type) async {
@@ -212,6 +233,8 @@ class _ProductPageState extends State<ProductPage> {
                     return _buildMobileLayout(provider, groupedMap, groupKeys);
                   }),
                 ),
+                // [개선] 화면 하단에 2칸(24px) 정도의 물리적 여백을 두어 카드가 바닥에 붙지 않게 함
+                const SizedBox(height: 24),
               ],
             ),
             if (provider.isParsing || provider.isSaving) ...[
@@ -283,11 +306,13 @@ class _ProductPageState extends State<ProductPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(label,
+                Text(
+                  label,
                   style: TextStyle(fontSize: 11, color: isMain ? Colors.white70 : Colors.black45, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
-                Text('$val',
+                Text(
+                  '$val',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isMain ? Colors.white : Colors.black87),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -317,7 +342,8 @@ class _ProductPageState extends State<ProductPage> {
               Expanded(
                 child: RepaintBoundary(
                   child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+                    // [개선] 집계 리스트 하단 여유 공간 증대 (60px)
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 60),
                     itemCount: groupKeys.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (ctx, idx) {
@@ -355,7 +381,8 @@ class _ProductPageState extends State<ProductPage> {
         Expanded(
           child: RepaintBoundary(
             child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 60),
+              // [개선] 모바일 하단 여백 추가 (80px)
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
               itemCount: groupKeys.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (ctx, idx) {
@@ -382,26 +409,40 @@ class _ProductPageState extends State<ProductPage> {
                   runSpacing: 4,
                   alignment: WrapAlignment.start,
                   children: [
-                    _buildActionIcon(Icons.refresh, "새로고침", () { provider.fetchData(); }),
+                    _buildActionIcon(Icons.refresh, "새로고침", () {
+                      provider.fetchData();
+                    }),
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 임포트", () async {
                       final res = await provider.batchImportFromExcel();
                       if (res['total']! > 0) {
                         _showInfoDialog("임포트 완료", "성공: ${res['success']} / 전체: ${res['total']}");
                       }
                     }, color: Colors.indigo),
-                    _buildActionIcon(Icons.settings_outlined, "표시 설정", () { _showColumnSelectionDialog(provider); }),
-                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑셀 출력", () { _exportToExcel(context, filtered); }, color: Colors.green),
-                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () { _showResetDialog(provider); }, color: AppTheme.danger),
+                    _buildActionIcon(Icons.settings_outlined, "표시 설정", () {
+                      _showColumnSelectionDialog(provider);
+                    }),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑셀 출력", () {
+                      _exportToExcel(context, filtered);
+                    }, color: Colors.green),
+                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
+                      _showResetDialog(provider);
+                    }, color: AppTheme.danger),
                   ],
                 ),
               ),
-              _buildActionIcon(Icons.add_circle, "신규 등록", () { _showForm(context, provider, null); }, color: AppTheme.primary, isLarge: true),
+              _buildActionIcon(Icons.add_circle, "신규 등록", () {
+                _showForm(context, provider, null);
+              }, color: AppTheme.primary, isLarge: true),
             ],
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _searchController,
-            onChanged: (v) { setState(() { _currentQuery = v; }); },
+            onChanged: (v) {
+              setState(() {
+                _currentQuery = v;
+              });
+            },
             decoration: InputDecoration(
               hintText: '품명 또는 태그ID 검색...',
               hintStyle: widget.uiConfig.hintStyle,
@@ -424,7 +465,8 @@ class _ProductPageState extends State<ProductPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          width: 44, height: 44,
+          width: 44,
+          height: 44,
           alignment: Alignment.center,
           child: Icon(icon, color: color ?? Colors.black54, size: isLarge ? 30 : 20),
         ),
@@ -446,7 +488,10 @@ class _ProductPageState extends State<ProductPage> {
           selected: {_groupByMode},
           showSelectedIcon: true,
           onSelectionChanged: (Set<String> newSelection) {
-            setState(() { _groupByMode = newSelection.first; _selectedGroupKey = null; });
+            setState(() {
+              _groupByMode = newSelection.first;
+              _selectedGroupKey = null;
+            });
           },
         ),
       ),
@@ -473,14 +518,19 @@ class _ProductPageState extends State<ProductPage> {
               FilterChip(
                 label: const Text('보유 자산만 보기', style: TextStyle(fontSize: 12)),
                 selected: _hideExcluded,
-                onSelected: (v) { setState(() { _hideExcluded = v; }); },
+                onSelected: (v) {
+                  setState(() {
+                    _hideExcluded = v;
+                  });
+                },
               ),
             ],
           ),
         ),
         Expanded(
           child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+            // [개선] 상세 목록 스크롤 끝단 여백 대폭 확대 (100px) - 조작성 향상
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             cacheExtent: 1000,
             itemCount: displayItems.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -489,7 +539,9 @@ class _ProductPageState extends State<ProductPage> {
               Color statusColor = p.status == '정상' ? AppTheme.success : (excludeStatus.contains(p.status) ? Colors.grey : Colors.orange);
 
               return InkWell(
-                onTap: () { _showForm(context, provider, p); },
+                onTap: () {
+                  _showForm(context, provider, p);
+                },
                 child: Container(
                   decoration: BoxDecoration(
                     color: Colors.white,
@@ -505,7 +557,8 @@ class _ProductPageState extends State<ProductPage> {
                         const SizedBox(width: 16),
                         Expanded(
                           child: Wrap(
-                            spacing: 20, runSpacing: 8,
+                            spacing: 20,
+                            runSpacing: 8,
                             alignment: WrapAlignment.start,
                             children: dynamicColumns.map((col) {
                               return SizedBox(
@@ -527,11 +580,17 @@ class _ProductPageState extends State<ProductPage> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              _buildCircleAction(Icons.login, AppTheme.success, "입고", () { _processAssetAccess(provider, p, '수기입고'); }),
+                              _buildCircleAction(Icons.login, AppTheme.success, "입고", () {
+                                _processAssetAccess(provider, p, '수기입고');
+                              }),
                               const SizedBox(width: 8),
-                              _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () { _processAssetAccess(provider, p, '수기출고'); }),
+                              _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () {
+                                _processAssetAccess(provider, p, '수기출고');
+                              }),
                               const SizedBox(width: 8),
-                              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () { _confirmIndividualDelete(context, provider, p); }),
+                              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                                _confirmIndividualDelete(context, provider, p);
+                              }),
                             ],
                           ),
                         ),
@@ -554,7 +613,8 @@ class _ProductPageState extends State<ProductPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
         child: Container(
-          width: 44, height: 44,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(color: color.withValues(alpha: 0.08), shape: BoxShape.circle),
           child: Icon(icon, color: color, size: 20),
         ),
@@ -575,8 +635,13 @@ class _ProductPageState extends State<ProductPage> {
 
     return InkWell(
       onTap: () {
-        if (isMobile) { _showMobileGroupDetail(provider, title, items); }
-        else { setState(() { _selectedGroupKey = title; }); }
+        if (isMobile) {
+          _showMobileGroupDetail(provider, title, items);
+        } else {
+          setState(() {
+            _selectedGroupKey = title;
+          });
+        }
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -603,7 +668,6 @@ class _ProductPageState extends State<ProductPage> {
                 ],
               ),
             ),
-            // [개선] 우측 수량 배지 (라운드 사각형) 추가
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -620,7 +684,9 @@ class _ProductPageState extends State<ProductPage> {
             IconButton(
               icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size: 22),
               tooltip: "일괄 삭제",
-              onPressed: () { _confirmGroupDelete(context, provider, title, items); },
+              onPressed: () {
+                _confirmGroupDelete(context, provider, title, items);
+              },
             ),
           ],
         ),
@@ -631,7 +697,8 @@ class _ProductPageState extends State<ProductPage> {
   Widget _buildThumbnail(ProductModel p, {double size = 44}) {
     final url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
     return Container(
-      width: size, height: size,
+      width: size,
+      height: size,
       decoration: BoxDecoration(color: const Color(0xFFF1F3F5), borderRadius: BorderRadius.circular(10)),
       clipBehavior: Clip.antiAlias,
       child: url != null
@@ -684,7 +751,8 @@ class _ProductPageState extends State<ProductPage> {
     final qtyC = TextEditingController(text: "1");
 
     String selectedStatus = p?.status ?? "정상";
-    XFile? file; Uint8List? preview;
+    XFile? file;
+    Uint8List? preview;
     final Map<String, TextEditingController> metaControllers = {};
 
     if (p != null) {
@@ -712,7 +780,6 @@ class _ProductPageState extends State<ProductPage> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text(p == null ? "신규 자산 마스터 등록" : "상세 제원 정보 수정", style: const TextStyle(fontWeight: FontWeight.bold)),
           contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
-          // [수정] 다이얼로그 버튼들을 중앙으로 배치
           actionsAlignment: MainAxisAlignment.center,
           actionsPadding: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
           content: SizedBox(
@@ -726,11 +793,15 @@ class _ProductPageState extends State<ProductPage> {
                       final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
                       if (img != null) {
                         final b = await img.readAsBytes();
-                        setS(() { file = img; preview = b; });
+                        setS(() {
+                          file = img;
+                          preview = b;
+                        });
                       }
                     },
                     child: Container(
-                        width: 140, height: 140,
+                        width: 140,
+                        height: 140,
                         decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.black12)),
                         clipBehavior: Clip.antiAlias,
                         child: preview != null
@@ -741,7 +812,8 @@ class _ProductPageState extends State<ProductPage> {
                   _buildSectionHeader(Icons.star, "기본 제원 정보", Colors.blue),
                   const SizedBox(height: 20),
                   Wrap(
-                    spacing: 16, runSpacing: 16,
+                    spacing: 16,
+                    runSpacing: 16,
                     alignment: WrapAlignment.start,
                     children: [
                       SizedBox(width: fw, child: _buildStyledField("품명", nameC)),
@@ -754,7 +826,11 @@ class _ProductPageState extends State<ProductPage> {
                       SizedBox(
                           width: fw,
                           child: _buildStyledDropdown("현재 상태", selectedStatus, ProductProvider.allStatus, (v) {
-                            if (v != null) { setS(() { selectedStatus = v; }); }
+                            if (v != null) {
+                              setS(() {
+                                selectedStatus = v;
+                              });
+                            }
                           })),
                     ],
                   ),
@@ -763,7 +839,8 @@ class _ProductPageState extends State<ProductPage> {
                     _buildSectionHeader(Icons.table_view, "추가 메타데이터 (Excel)", Colors.green),
                     const SizedBox(height: 20),
                     Wrap(
-                        spacing: 16, runSpacing: 16,
+                        spacing: 16,
+                        runSpacing: 16,
                         alignment: WrapAlignment.start,
                         children: metaControllers.entries.map((e) {
                           return SizedBox(width: fw, child: _buildStyledField(e.key, e.value));
@@ -774,7 +851,8 @@ class _ProductPageState extends State<ProductPage> {
                     _buildSectionHeader(Icons.copy_all, "벌크(대량) 생성 설정", Colors.orange),
                     const SizedBox(height: 20),
                     Wrap(
-                      spacing: 16, runSpacing: 16,
+                      spacing: 16,
+                      runSpacing: 16,
                       alignment: WrapAlignment.start,
                       children: [
                         SizedBox(width: fw, child: _buildStyledField("등록 수량 (단위: EA)", qtyC, keyboardType: TextInputType.number)),
@@ -811,13 +889,17 @@ class _ProductPageState extends State<ProductPage> {
               text: "취소",
               bgColor: Colors.transparent,
               textColor: Colors.black54,
-              onPressed: () { Navigator.pop(dialogCtx); },
+              onPressed: () {
+                Navigator.pop(dialogCtx);
+              },
             ),
             const SizedBox(width: 12),
             _buildFlatButton(
               text: "데이터 저장",
               onPressed: () async {
-                if (nameC.text.trim().isEmpty) { return; }
+                if (nameC.text.trim().isEmpty) {
+                  return;
+                }
                 final navigator = Navigator.of(dialogCtx);
                 final int loopCount = int.tryParse(qtyC.text.trim()) ?? 1;
                 final updatedMeta = Map<String, dynamic>.from(p?.metadata ?? {});
@@ -826,16 +908,22 @@ class _ProductPageState extends State<ProductPage> {
                 if (p == null) {
                   for (int i = 0; i < loopCount; i++) {
                     String finalTag = tagC.text.trim();
-                    if (loopCount > 1 && finalTag.isNotEmpty) { finalTag = "${finalTag}_${i + 1}"; }
+                    if (loopCount > 1 && finalTag.isNotEmpty) {
+                      finalTag = "${finalTag}_${i + 1}";
+                    }
                     final data = {'name': nameC.text.trim(), 'tag_id': finalTag, 'location': locC.text.trim(), 'category': catC.text.trim(), 'spec': specC.text.trim(), 'serial_number': snC.text.trim(), 'status': selectedStatus, 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5, 'metadata': updatedMeta};
                     final res = await provider.handleSave(p: null, data: data, imageXFile: file);
-                    if (!res) { allSuccess = false; }
+                    if (!res) {
+                      allSuccess = false;
+                    }
                   }
                 } else {
                   final data = {'name': nameC.text.trim(), 'tag_id': tagC.text.trim(), 'location': locC.text.trim(), 'category': catC.text.trim(), 'spec': specC.text.trim(), 'serial_number': snC.text.trim(), 'status': selectedStatus, 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5, 'metadata': updatedMeta};
                   allSuccess = await provider.handleSave(p: p, data: data, imageXFile: file);
                 }
-                if (allSuccess) { navigator.pop(); }
+                if (allSuccess) {
+                  navigator.pop();
+                }
               },
             ),
           ],
@@ -868,8 +956,13 @@ class _ProductPageState extends State<ProductPage> {
                                   value: temp.contains(key),
                                   onChanged: (val) {
                                     setS(() {
-                                      if (val!) { if (temp.length < 5) { temp.add(key); } }
-                                      else if (temp.length > 1) { temp.remove(key); }
+                                      if (val!) {
+                                        if (temp.length < 5) {
+                                          temp.add(key);
+                                        }
+                                      } else if (temp.length > 1) {
+                                        temp.remove(key);
+                                      }
                                     });
                                   });
                             }).toList()))),
@@ -878,7 +971,9 @@ class _ProductPageState extends State<ProductPage> {
                     text: "취소",
                     bgColor: Colors.transparent,
                     textColor: Colors.black54,
-                    onPressed: () { Navigator.pop(ctx); },
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    },
                   ),
                   const SizedBox(width: 8),
                   _buildFlatButton(
@@ -923,7 +1018,9 @@ class _ProductPageState extends State<ProductPage> {
                 text: "취소",
                 bgColor: Colors.transparent,
                 textColor: Colors.black54,
-                onPressed: () { Navigator.pop(ctx); },
+                onPressed: () {
+                  Navigator.pop(ctx);
+                },
               ),
               const SizedBox(width: 8),
               _buildFlatButton(
@@ -932,7 +1029,9 @@ class _ProductPageState extends State<ProductPage> {
                 onPressed: () async {
                   final navigator = Navigator.of(ctx);
                   await provider.deleteMultipleProducts(items.map((e) => e.id).toList());
-                  setState(() { _selectedGroupKey = null; });
+                  setState(() {
+                    _selectedGroupKey = null;
+                  });
                   navigator.pop();
                 },
               ),
@@ -951,7 +1050,9 @@ class _ProductPageState extends State<ProductPage> {
                 text: "취소",
                 bgColor: Colors.transparent,
                 textColor: Colors.black54,
-                onPressed: () { Navigator.pop(ctx); },
+                onPressed: () {
+                  Navigator.pop(ctx);
+                },
               ),
               const SizedBox(width: 8),
               _buildFlatButton(
@@ -960,7 +1061,9 @@ class _ProductPageState extends State<ProductPage> {
                 onPressed: () async {
                   final navigator = Navigator.of(ctx);
                   await provider.resetAllProducts();
-                  setState(() { _selectedGroupKey = null; });
+                  setState(() {
+                    _selectedGroupKey = null;
+                  });
                   navigator.pop();
                 },
               ),
@@ -979,7 +1082,9 @@ class _ProductPageState extends State<ProductPage> {
                 text: "취소",
                 bgColor: Colors.transparent,
                 textColor: Colors.black54,
-                onPressed: () { Navigator.pop(ctx); },
+                onPressed: () {
+                  Navigator.pop(ctx);
+                },
               ),
               const SizedBox(width: 8),
               _buildFlatButton(
@@ -1010,7 +1115,11 @@ class _ProductPageState extends State<ProductPage> {
             content: Text(msg),
             actionsAlignment: MainAxisAlignment.center,
             actions: [
-              _buildFlatButton(text: "확인", onPressed: () { Navigator.pop(ctx); })
+              _buildFlatButton(
+                  text: "확인",
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                  })
             ]));
   }
 
@@ -1033,7 +1142,9 @@ class _ProductPageState extends State<ProductPage> {
   Widget _buildStyledField(String label, TextEditingController ctrl, {TextInputType keyboardType = TextInputType.text, String? hint}) {
     return StatefulBuilder(builder: (context, setStateField) {
       return Focus(
-        onFocusChange: (hasFocus) { setStateField(() {}); },
+        onFocusChange: (hasFocus) {
+          setStateField(() {});
+        },
         child: Builder(builder: (ctx) {
           final bool hasFocus = Focus.of(ctx).hasFocus;
           return TextField(
@@ -1059,7 +1170,9 @@ class _ProductPageState extends State<ProductPage> {
   Widget _buildStyledDropdown(String label, String initial, List<String> items, ValueChanged<String?> onChanged) {
     return StatefulBuilder(builder: (context, setStateField) {
       return Focus(
-        onFocusChange: (hasFocus) { setStateField(() {}); },
+        onFocusChange: (hasFocus) {
+          setStateField(() {});
+        },
         child: Builder(builder: (ctx) {
           final bool hasFocus = Focus.of(ctx).hasFocus;
           return DropdownButtonFormField<String>(
@@ -1142,7 +1255,6 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(children: [Icon(isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning), const SizedBox(width: 10), Text('${widget.type} 처리')]),
-      // [수정] 다이얼로그 버튼 중앙 정렬
       actionsAlignment: MainAxisAlignment.center,
       content: SizedBox(
           width: 450,
@@ -1151,7 +1263,11 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                 Text("품목: ${widget.product.name}", style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 20),
                 _buildStyledDropdown("유형", _selS, items, (v) {
-                  if (v != null) { setState(() { _selS = v; }); }
+                  if (v != null) {
+                    setState(() {
+                      _selS = v;
+                    });
+                  }
                 }),
                 const SizedBox(height: 16),
                 _buildStyledField("위치", _locC),
@@ -1165,7 +1281,9 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
           text: "취소",
           bgColor: Colors.transparent,
           textColor: Colors.black54,
-          onPressed: () { Navigator.pop(context); },
+          onPressed: () {
+            Navigator.pop(context);
+          },
         ),
         const SizedBox(width: 12),
         _buildFlatButton(
@@ -1214,51 +1332,28 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
         onFocusChange: (hasFocus) => setStateField(() {}),
         child: Builder(builder: (ctx) {
           final bool hasFocus = Focus.of(ctx).hasFocus;
-          return TextField(
-              controller: ctrl,
-              decoration: InputDecoration(
-                  labelText: label,
-                  labelStyle: widget.uiConfig.labelStyle,
-                  filled: true,
-                  fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16)
-              )
-          );
+          return TextField(controller: ctrl, decoration: InputDecoration(labelText: label, labelStyle: widget.uiConfig.labelStyle, filled: true, fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)), contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16)));
         }),
       );
     });
   }
 
   Widget _buildStyledDropdown(String label, String initial, List<String> items, ValueChanged<String?> onChanged) {
-    return StatefulBuilder(
-        builder: (context, setStateField) {
-          return Focus(
-            onFocusChange: (hasFocus) => setStateField(() {}),
-            child: Builder(
-                builder: (ctx) {
-                  final bool hasFocus = Focus.of(ctx).hasFocus;
-                  return DropdownButtonFormField<String>(
-                      initialValue: initial,
-                      items: items.map((e) {
-                        return DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)));
-                      }).toList(),
-                      onChanged: onChanged,
-                      decoration: InputDecoration(
-                          labelText: label,
-                          labelStyle: widget.uiConfig.labelStyle,
-                          filled: true,
-                          fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)),
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-                      )
-                  );
-                }
-            ),
+    return StatefulBuilder(builder: (context, setStateField) {
+      return Focus(
+        onFocusChange: (hasFocus) => setStateField(() {}),
+        child: Builder(builder: (ctx) {
+          final bool hasFocus = Focus.of(ctx).hasFocus;
+          return DropdownButtonFormField<String>(
+            initialValue: initial,
+            items: items.map((e) {
+              return DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)));
+            }).toList(),
+            onChanged: onChanged,
+            decoration: InputDecoration(labelText: label, labelStyle: widget.uiConfig.labelStyle, filled: true, fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)), contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
           );
-        }
-    );
+        }),
+      );
+    });
   }
 }
