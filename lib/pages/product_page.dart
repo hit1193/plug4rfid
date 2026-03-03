@@ -109,7 +109,7 @@ class _ProductPageState extends State<ProductPage> {
     return result;
   }
 
-  // --- 스마트 검색 매칭 로직 ---
+  // --- 스마트 검색 매칭 로직 (초성 검색 지원) ---
   bool _isMatch(String target, String query) {
     final t = target.toLowerCase();
     final q = query.toLowerCase();
@@ -290,7 +290,6 @@ class _ProductPageState extends State<ProductPage> {
             ),
           );
         } else {
-          // [수정] 폭이 좁을 때 '전일 재고' 유실 방지 - 2x2 그리드 구조
           return Column(
             children: [
               Row(
@@ -437,7 +436,6 @@ class _ProductPageState extends State<ProductPage> {
                   runSpacing: 4,
                   alignment: WrapAlignment.start,
                   children: [
-                    // [수정] 기능 아이콘 순서 재배치: 새로고침 -> 엑셀업 -> 엑셀다운 -> 설정 -> 초기화
                     _buildActionIcon(Icons.refresh, "새로고침", () { provider.fetchData(); }),
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 임포트", () async {
                       final res = await provider.batchImportFromExcel();
@@ -451,7 +449,6 @@ class _ProductPageState extends State<ProductPage> {
                   ],
                 ),
               ),
-              // [수정] '추가' 아이콘 일관성 있는 Icons.add_box로 변경
               _buildActionIcon(Icons.add_box, "신규 등록", () { _showForm(context, provider, null); }, color: AppTheme.primary, isLarge: true),
             ],
           ),
@@ -466,14 +463,14 @@ class _ProductPageState extends State<ProductPage> {
               filled: true,
               fillColor: Colors.white,
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(30),
                 borderSide: const BorderSide(color: Color(0xFFE9ECEF), width: 1.5),
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(30),
                 borderSide: const BorderSide(color: AppTheme.primary, width: 2),
               ),
-              contentPadding: EdgeInsets.zero,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
             ),
           ),
         ],
@@ -502,6 +499,11 @@ class _ProductPageState extends State<ProductPage> {
       child: SizedBox(
         width: double.infinity,
         child: SegmentedButton<String>(
+          // [수정] 높이를 아주 조금만 더 키우기 위해 내부 패딩 조정 (상하 12 -> 16)
+          style: SegmentedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            visualDensity: VisualDensity.comfortable,
+          ),
           segments: const [
             ButtonSegment(value: 'item', label: Text('품명별', style: TextStyle(fontWeight: FontWeight.bold))),
             ButtonSegment(value: 'location', label: Text('위치별', style: TextStyle(fontWeight: FontWeight.bold))),
@@ -661,7 +663,6 @@ class _ProductPageState extends State<ProductPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
-                  // [수정] '현재고: ... / 전체: ...' 텍스트 제거 (요청 사항)
                 ],
               ),
             ),
@@ -1123,7 +1124,7 @@ class _ProductPageState extends State<ProductPage> {
     return StatefulBuilder(
         builder: (context, setStateField) {
           return Focus(
-            onFocusChange: (hasFocus) { setStateField(() {}); },
+            onFocusChange: (hasFocus) => setStateField(() {}),
             child: Builder(
                 builder: (ctx) {
                   final bool hasFocus = Focus.of(ctx).hasFocus;
