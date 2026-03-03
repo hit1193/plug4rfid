@@ -36,7 +36,7 @@ class _ProductPageState extends State<ProductPage> {
   String _sortCriteria = 'name';
   bool _hideExcluded = true;
 
-  // 레이아웃 상수
+  // 레이아웃 고정 상수
   static const double _colImgSize = 54.0;
   static const double _colActionWidth = 140.0;
 
@@ -70,12 +70,13 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
+  /// 통계 계산: 전일재고, 오늘입고, 오늘출고, 당일재고
   Map<String, dynamic> _calculateMetrics(List<ProductModel> allItems) {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
     int todayIn = 0;
     int todayOut = 0;
-    int currentStock = 0;
+    int currentStock = 0; // 당일 재고
 
     const inStatus = {'구매입고', '회수/반납', '수기입고'};
     const excludeStock = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
@@ -94,6 +95,7 @@ class _ProductPageState extends State<ProductPage> {
       }
     }
 
+    // 전일 재고 계산 logic
     int prevStock = currentStock - todayIn + todayOut;
 
     return {
@@ -167,8 +169,6 @@ class _ProductPageState extends State<ProductPage> {
 
     final metrics = _calculateMetrics(provider.items);
     final groupedMap = _getGroupedData(filtered);
-
-    // [수정] Cascade 연산자(..)를 사용하여 인라인 정렬 구현
     final groupKeys = groupedMap.keys.toList()..sort();
 
     return Theme(
@@ -346,6 +346,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// SegmentedButton 크기 키움 및 디자인 개선
   Widget _buildFilterBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -366,7 +367,7 @@ class _ProductPageState extends State<ProductPage> {
               });
             },
             style: SegmentedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16), // 세로 크기 확대
               visualDensity: VisualDensity.standard,
               backgroundColor: Colors.white,
               selectedBackgroundColor: AppTheme.primary.withValues(alpha: 0.1),
@@ -446,7 +447,6 @@ class _ProductPageState extends State<ProductPage> {
                                   Text(col, style: TextStyle(fontSize: 10, color: Colors.black.withValues(alpha: 0.38), fontWeight: FontWeight.bold)),
                                   const SizedBox(height: 2),
                                   Text(val, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  // [수정] 중괄호를 제거하여 Set<Text> 에러 해결
                                   if (col == '품명')
                                     Text(p.status, style: TextStyle(fontSize: 10, color: p.status == '정상' ? AppTheme.success : AppTheme.warning, fontWeight: FontWeight.bold)),
                                 ],
@@ -477,6 +477,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// 수량 표시부 사각라운드 강조 UI
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, bool isMobile) {
     final first = items.first;
     const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
@@ -502,6 +503,7 @@ class _ProductPageState extends State<ProductPage> {
             _buildThumbnail(first, size: 48),
             const SizedBox(width: 12),
             Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+            // 수량 표시 영역 라운드 박스 처리
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -539,6 +541,8 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  // --- 편집 폼 및 설정 로직 (동적 필드 보존) ---
+
   Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p, {String? initialTag}) async {
     final nameC = TextEditingController(text: p?.name ?? "");
     final tagC = TextEditingController(text: initialTag ?? p?.tagId ?? "");
@@ -551,8 +555,8 @@ class _ProductPageState extends State<ProductPage> {
     String selectedStatus = p?.status ?? "정상";
     XFile? file; Uint8List? preview;
 
+    // [복구] 사용자 추가 항목 컨트롤러 로직
     final Map<String, TextEditingController> metaControllers = {};
-
     if (p != null) {
       p.metadata.forEach((key, value) {
         if (!['origin_key_map', 'history', 'last_location_info'].contains(key)) {
@@ -605,15 +609,6 @@ class _ProductPageState extends State<ProductPage> {
                     ),
                   ),
                   const SizedBox(height: 32),
-                  // [수정] Spread 연산자를 올바르게 사용하여 여러 위젯 삽입
-                  if (p == null) ...[
-                    _buildSectionHeader(Icons.copy_all, "대량 등록 설정", Colors.orange),
-                    const Row(children: [
-                      SizedBox(width: 23),
-                      SizedBox(width: 370.0, child: Text('등록 개수를 입력하세요.', style: TextStyle(fontSize: 12, color: Colors.grey))),
-                    ]),
-                    const SizedBox(height: 16),
-                  ],
                   _buildSectionHeader(Icons.star, "마스터 데이터", Colors.blue),
                   Row(mainAxisAlignment: MainAxisAlignment.start, children: [
                     const SizedBox(width: 23),
@@ -641,6 +636,7 @@ class _ProductPageState extends State<ProductPage> {
                       if (v != null) setS(() => selectedStatus = v);
                     })),
                   ]),
+                  // [복구] 사용자 추가 항목 표시
                   if (metaControllers.isNotEmpty) ...[
                     const SizedBox(height: 32),
                     _buildSectionHeader(Icons.table_view, "사용자 추가 항목 (Excel 등)", Colors.green),
@@ -686,6 +682,7 @@ class _ProductPageState extends State<ProductPage> {
 
   void _showColumnSelectionDialog(ProductProvider provider) {
     final availableKeys = ['품명', '태그ID', '위치', '상태', '규격', '분류', '제조사', 'S/N'];
+    // [복구] DB에 존재하는 모든 키 수집
     final Set<String> metaKeys = {};
     for (var item in provider.items) {
       item.metadata.forEach((k, v) {
@@ -714,7 +711,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 보조 메서드 ---
+  // --- 보조 UI 메서드 ---
 
   Future<void> _exportToExcel(BuildContext context, List<ProductModel> list) async {
     final messenger = ScaffoldMessenger.of(context);
