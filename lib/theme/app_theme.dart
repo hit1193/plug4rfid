@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 
 /// 앱 전체에서 사용할 디자인 시스템 상수 및 테마 정의
-/// C++Builder의 전역 스타일 시트나 공통 헤더와 같은 역할을 합니다.
+/// Material 3의 특성인 입체감(Elevation/Tint)을 FA 환경에 맞게 원천 차단합니다.
 class AppTheme {
   // 폰트 및 기본 색상 정의
   static const String fontPretendard = 'Pretendard';
   static const Color primary = Color(0xFF6366F1);
-  static const Color surface = Colors.white; // 상세 리스트 배경색 일원화
+  static const Color surface = Colors.white;
   static const Color border = Color(0xFF94A3B8);
   static const Color headerBg = Color(0xFFF1F5F9);
   static const Color danger = Color(0xFFEF4444);
   static const Color success = Color(0xFF10B981);
   static const Color warning = Color(0xFFF59E0B);
+
+  static const Color dividerColor = Color(0xFFE9ECEF);
 
   // --- UX 세부 설정 상수 ---
   static const TextStyle inputHintStyle = TextStyle(
@@ -30,6 +32,7 @@ class AppTheme {
   static const Color inputBorderColor = Colors.black26;
   static const double buttonElevation = 0.0;
   static const double outlineWidth = 2.0;
+  static const double cardRadius = 16.0;
 
   static TextStyle get headerStyle => const TextStyle(
     fontSize: 20,
@@ -51,7 +54,27 @@ class AppTheme {
       fontFamily: fontPretendard,
       scaffoldBackgroundColor: Colors.white,
 
-      // 입력창(TextField) 기본 디자인 설정
+      // 구분선 테마
+      dividerTheme: const DividerThemeData(
+        color: dividerColor,
+        thickness: 1.0,
+        space: 1.0,
+      ),
+
+      // SegmentedButton 테마 (Pill 스타일)
+      segmentedButtonTheme: SegmentedButtonThemeData(
+        style: SegmentedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+          side: const BorderSide(color: primary, width: outlineWidth),
+          backgroundColor: Colors.white,
+          selectedBackgroundColor: primary,
+          selectedForegroundColor: Colors.white,
+          foregroundColor: Colors.black54,
+        ),
+      ),
+
+      // 입력창 테마
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: inputFillColor,
@@ -65,32 +88,28 @@ class AppTheme {
           borderRadius: BorderRadius.circular(8),
           borderSide: const BorderSide(color: primary, width: 2.0),
         ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: danger, width: 1.0),
-        ),
       ),
 
-      // 버튼 테마 설정 (Flat 스타일 구현을 위해 WidgetStateProperty 사용)
+      // [핵심 수정] 모든 상태에서 입체감 효과(Shadow/Tint)를 제거하여 완벽한 Flat 스타일 구현
       elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ButtonStyle(
-          backgroundColor: WidgetStateProperty.all(primary),
-          foregroundColor: WidgetStateProperty.all(Colors.white),
-          // [수정] 모든 상태에서 그림자를 제거하여 완벽한 Flat 스타일 구현
-          elevation: WidgetStateProperty.all(0),
-          overlayColor: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.pressed)) return Colors.white10;
-            if (states.contains(WidgetState.hovered)) return Colors.white.withValues(alpha: 0.05);
-            return null;
-          }),
-          padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 24, vertical: 16)),
-          shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+          elevation: 0,                   // 고정 그림자 제거
+          shadowColor: Colors.transparent, // 그림자 색상 제거 (잔상 방지)
+          surfaceTintColor: Colors.transparent, // Material 3 특유의 푸르스름한 색조 제거
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
 
+      // 텍스트 버튼 (취소용)
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: Colors.black54,
+          elevation: 0,
+          shadowColor: Colors.transparent,
+          surfaceTintColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
