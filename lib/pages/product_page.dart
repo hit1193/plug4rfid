@@ -267,28 +267,26 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  // [핵심 수정] 대시보드 레이아웃 최적화 (하단 영역과 수직 정렬 일치)
   Widget _buildDashboard(Map<String, dynamic> m) {
     return Container(
+      // 하단 헤더/필터바와 동일하게 horizontal 16 유지
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       color: Colors.white,
       child: LayoutBuilder(builder: (ctx, constraints) {
         bool isWide = constraints.maxWidth > 850;
         if (isWide) {
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1600),
-              child: Row(
-                children: [
-                  Expanded(child: _buildStatTile("전일 재고", m['prev'], Icons.history, Colors.blueGrey)),
-                  const SizedBox(width: 12),
-                  Expanded(child: _buildStatTile("금일 입고", m['in'], Icons.add_chart, Colors.green)),
-                  const SizedBox(width: 12),
-                  Expanded(child: _buildStatTile("금일 출고", m['out'], Icons.trending_down, Colors.orange)),
-                  const SizedBox(width: 12),
-                  Expanded(child: _buildStatTile("현재 실재고", m['stock'], Icons.inventory, AppTheme.primary, isMain: true)),
-                ],
-              ),
-            ),
+          // [수정] Center/ConstrainedBox를 제거하여 하단 컨텐츠와 동일한 폭으로 확장
+          return Row(
+            children: [
+              Expanded(child: _buildStatTile("전일 재고", m['prev'], Icons.history, Colors.blueGrey)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildStatTile("금일 입고", m['in'], Icons.add_chart, Colors.green)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildStatTile("금일 출고", m['out'], Icons.trending_down, Colors.orange)),
+              const SizedBox(width: 12),
+              Expanded(child: _buildStatTile("현재 실재고", m['stock'], Icons.inventory, AppTheme.primary, isMain: true)),
+            ],
           );
         } else {
           return Column(
@@ -409,7 +407,7 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildHeader(ProductProvider provider, List<ProductModel> filtered) {
     return Container(
-      // [튜닝] 하단 패딩을 줄여 분류 버튼과 시각적으로 결합
+      // 하단 패딩을 줄여 분류 버튼과 시각적으로 결합
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
         children: [
@@ -483,7 +481,7 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildFilterBar() {
     return Padding(
-      // [튜닝] 상단 간격을 줄이고 하단 간격을 넓혀 리스트뷰와의 거리를 벌림
+      // 상단 간격을 줄이고 하단 간격을 넓혀 리스트뷰와의 거리를 벌림
       padding: const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 20),
       child: SizedBox(
         width: double.infinity,
