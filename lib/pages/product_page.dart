@@ -657,7 +657,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [UI 개선] 입력창 레이아웃 최적화 (수량 필드 최하단 이동 및 간격 조정) ---
+  // --- [UI 개선 및 빌드 오류 수정] ---
   Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p, {String? initialTag}) async {
     final nameC = TextEditingController(text: p?.name ?? "");
     final tagC = TextEditingController(text: initialTag ?? p?.tagId ?? "");
@@ -729,7 +729,7 @@ class _ProductPageState extends State<ProductPage> {
 
                   // 1. 기본 제원 정보 섹션
                   _buildSectionHeader(Icons.star, "기본 제원 정보", Colors.blue),
-                  const SizedBox(height: 16), // [개선] 헤더 아래 간격 확보
+                  const SizedBox(height: 20),
                   Wrap(
                     spacing: 16,
                     runSpacing: 16,
@@ -744,11 +744,16 @@ class _ProductPageState extends State<ProductPage> {
                       SizedBox(width: fw, child: _buildStyledField("S/N", snC)),
                       SizedBox(
                           width: fw,
-                          child: _buildStyledDropdown("현재 상태", selectedStatus, (v) {
-                            if (v != null) {
-                              setS(() { selectedStatus = v; });
-                            }
-                          })),
+                          child: _buildStyledDropdown(
+                              "현재 상태",
+                              selectedStatus,
+                              ProductProvider.allStatus, // [핵심 수정] 누락된 items 리스트 추가
+                                  (v) {
+                                if (v != null) {
+                                  setS(() { selectedStatus = v; });
+                                }
+                              }
+                          )),
                     ],
                   ),
 
@@ -756,7 +761,7 @@ class _ProductPageState extends State<ProductPage> {
                   if (metaControllers.isNotEmpty) ...[
                     const SizedBox(height: 32),
                     _buildSectionHeader(Icons.table_view, "추가 메타데이터 (Excel)", Colors.green),
-                    const SizedBox(height: 16), // [개선] 헤더 아래 간격 확보
+                    const SizedBox(height: 20),
                     Wrap(
                         spacing: 16,
                         runSpacing: 16,
@@ -766,18 +771,39 @@ class _ProductPageState extends State<ProductPage> {
                         }).toList()),
                   ],
 
-                  // 3. 벌크(대량) 생성 설정 섹션 (가장 하단으로 이동)
+                  // 3. 벌크(대량) 생성 설정 섹션 (가장 하단 배치 및 정보 카드 페어링)
                   if (p == null) ...[
                     const SizedBox(height: 32),
                     _buildSectionHeader(Icons.copy_all, "벌크(대량) 생성 설정", Colors.orange),
-                    const SizedBox(height: 16), // [개선] 헤더 아래 간격 확보
+                    const SizedBox(height: 20),
                     Wrap(
                       spacing: 16,
                       runSpacing: 16,
                       alignment: WrapAlignment.start,
                       children: [
-                        // 다른 필드와 정렬을 맞추기 위해 Wrap 내부에 배치
                         SizedBox(width: fw, child: _buildStyledField("등록 수량 (단위: EA)", qtyC, keyboardType: TextInputType.number)),
+
+                        Container(
+                          width: fw,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.orange.withValues(alpha: 0.1)),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.info_outline, size: 20, color: Colors.orange),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  "설정한 수량만큼 동일 제원의 자산이 일괄 등록됩니다.",
+                                  style: TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -980,12 +1006,14 @@ class _ProductPageState extends State<ProductPage> {
         decoration: InputDecoration(labelText: label, hintText: hint, labelStyle: const TextStyle(color: Colors.black38, fontSize: 13, fontWeight: FontWeight.bold), floatingLabelBehavior: FloatingLabelBehavior.always, border: const OutlineInputBorder(), contentPadding: const EdgeInsets.fromLTRB(12, 22, 12, 10)));
   }
 
-  Widget _buildStyledDropdown(String label, String initial, ValueChanged<String?> onChanged) {
-    return DropdownButtonFormField<String>(
-        initialValue: initial,
-        items: const ['정상', '수리필요', '폐기'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)))).toList(),
-        onChanged: onChanged,
-        decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(color: Colors.black38, fontSize: 13, fontWeight: FontWeight.bold), floatingLabelBehavior: FloatingLabelBehavior.always, border: const OutlineInputBorder(), contentPadding: const EdgeInsets.fromLTRB(12, 11, 12, 11)));
+  Widget _buildStyledDropdown(String label, String initial, List<String> items, ValueChanged<String?> onChanged) {
+    return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: DropdownButtonFormField<String>(
+            initialValue: initial,
+            items: items.map((e) { return DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))); }).toList(),
+            onChanged: onChanged,
+            decoration: InputDecoration(labelText: label, labelStyle: const TextStyle(color: Colors.black, fontSize: 13, fontWeight: FontWeight.bold), border: const OutlineInputBorder(), contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14))));
   }
 
   Widget _buildGlobalLoadingOverlay(ProductProvider provider) {
