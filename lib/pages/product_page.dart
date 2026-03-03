@@ -37,9 +37,8 @@ class _ProductPageState extends State<ProductPage> {
   bool _hideExcluded = true;
 
   // 레이아웃 상수
-  static const double _rowHeight = 72.0;
-  static const double _colImgWidth = 80.0;
-  static const double _colActionWidth = 120.0;
+  static const double _colImgSize = 54.0;
+  static const double _colActionWidth = 140.0;
 
   @override
   void initState() {
@@ -53,6 +52,8 @@ class _ProductPageState extends State<ProductPage> {
     _searchController.dispose();
     super.dispose();
   }
+
+  // --- 비즈니스 로직 헬퍼 ---
 
   String _getDisplayValue(ProductModel p, String key) {
     switch (key) {
@@ -70,57 +71,47 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Map<String, dynamic> _calculateMetrics(List<ProductModel> allItems) {
-    final String today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
     int todayIn = 0;
     int todayOut = 0;
     int currentStock = 0;
-    int shortageCount = 0;
 
     const inStatus = {'구매입고', '회수/반납', '수기입고'};
     const excludeStock = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
 
-    final Map<String, int> stockByGroup = {};
-    final Map<String, int> safetyByGroup = {};
-
     for (final item in allItems) {
-      final lastActionDate = item.updated ?? item.created ?? "";
-      final isToday = lastActionDate.startsWith(today);
+      final lastDate = item.updated ?? item.created ?? "";
+      final isToday = lastDate.startsWith(todayStr);
 
-      if (inStatus.contains(item.status) && isToday) {
-        todayIn++;
-      }
-      if (excludeStock.contains(item.status) && isToday) {
-        todayOut++;
+      if (isToday) {
+        if (inStatus.contains(item.status)) todayIn++;
+        if (excludeStock.contains(item.status)) todayOut++;
       }
 
       if (!excludeStock.contains(item.status)) {
         currentStock++;
-        String key = "${item.name}|${item.spec ?? ''}";
-        stockByGroup[key] = (stockByGroup[key] ?? 0) + 1;
-        safetyByGroup[key] = item.safetyStock;
       }
     }
 
-    stockByGroup.forEach((key, tagCount) {
-      if (tagCount < (safetyByGroup[key] ?? 0)) {
-        shortageCount++;
-      }
-    });
+    int prevStock = currentStock - todayIn + todayOut;
 
-    return {'in': todayIn, 'out': todayOut, 'stock': currentStock, 'short': shortageCount};
+    return {
+      'prev': prevStock,
+      'in': todayIn,
+      'out': todayOut,
+      'stock': currentStock
+    };
   }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type) async {
     final messenger = ScaffoldMessenger.of(context);
-
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => _ManualInoutDialog(type: type, product: p),
     );
 
-    if (!mounted || result == null) {
-      return;
-    }
+    if (!context.mounted || result == null) return;
 
     final success = await provider.handleSave(
       p: p,
@@ -136,7 +127,8 @@ class _ProductPageState extends State<ProductPage> {
       },
     );
 
-    if (mounted && success) {
+    if (!context.mounted) return;
+    if (success) {
       messenger.showSnackBar(SnackBar(
         content: Text('[${p.name}] ${result['status']} 완료'),
         backgroundColor: AppTheme.success,
@@ -145,14 +137,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
-    final Map<String, List<ProductModel>> grouped = {};
-    for (final item in items) {
-      String key = _groupByMode == 'item' ? item.name : (_groupByMode == 'location' ? (item.location ?? "미지정") : (item.category ?? "미지정"));
-      grouped.putIfAbsent(key, () => []).add(item);
-    }
-    return grouped;
-  }
+  // --- UI 빌더 메서드 ---
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +168,7 @@ class _ProductPageState extends State<ProductPage> {
     final metrics = _calculateMetrics(provider.items);
     final groupedMap = _getGroupedData(filtered);
 
-    // Cascade 연산자 (..)를 사용하여 정렬 후 리스트 반환
+    // [수정] Cascade 연산자(..)를 사용하여 인라인 정렬 구현
     final groupKeys = groupedMap.keys.toList()..sort();
 
     return Theme(
@@ -211,30 +196,6 @@ class _ProductPageState extends State<ProductPage> {
             if (provider.isParsing || provider.isSaving)
               _buildGlobalLoadingOverlay(provider),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGlobalLoadingOverlay(ProductProvider provider) {
-    String msg = provider.isParsing ? "데이터 분석 중..." : "저장 중...";
-    return Container(
-      color: Colors.black.withValues(alpha: 0.26),
-      child: Center(
-        child: Card(
-          elevation: 8,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 20),
-                Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
         ),
       ),
     );
@@ -305,10 +266,10 @@ class _ProductPageState extends State<ProductPage> {
         spacing: 12,
         runSpacing: 12,
         children: [
+          _buildStatCard("전일 재고", m['prev'], Colors.blueGrey),
           _buildStatCard("오늘 입고", m['in'], Colors.blue),
           _buildStatCard("오늘 출고", m['out'], Colors.orange),
-          _buildStatCard("현재고 합계", m['stock'], AppTheme.primary, isMain: true),
-          _buildStatCard("안전부족", m['short'], AppTheme.danger, isAlert: m['short'] > 0),
+          _buildStatCard("당일 재고", m['stock'], AppTheme.primary, isMain: true),
         ],
       ),
     );
@@ -340,30 +301,30 @@ class _ProductPageState extends State<ProductPage> {
         children: [
           Row(
             children: [
-              Text('자산 통합 관리', style: AppTheme.headerStyle),
+              Text("자산 통합 관리", style: AppTheme.headerStyle),
               const Spacer(),
-              IconButton(onPressed: () { provider.fetchData(); }, tooltip: "새로고침", icon: const Icon(Icons.refresh, size: 20)),
+              IconButton(onPressed: () => provider.fetchData(), tooltip: "새로고침", icon: const Icon(Icons.refresh, size: 20)),
               IconButton(
                   onPressed: () async {
                     final res = await provider.batchImportFromExcel();
-                    if (res['total']! > 0 && mounted) {
+                    if (!context.mounted) return;
+                    if (res['total']! > 0) {
                       showDialog(
                         context: context,
                         builder: (ctx) => AlertDialog(
                           title: const Text("엑셀 업로드 결과"),
-                          content: Text("전체: ${res['total']}행\n성공: ${res['success']}개\n실패: ${res['failed']}개"),
-                          actions: [TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("확인"))],
+                          content: Text("성공: ${res['success']} / 전체: ${res['total']}"),
+                          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("확인"))],
                         ),
                       );
                     }
                   },
-                  tooltip: "엑셀 업로드",
                   icon: const FaIcon(FontAwesomeIcons.fileArrowUp, color: Colors.indigo, size: 18)
               ),
-              IconButton(onPressed: () { _showColumnSelectionDialog(provider); }, tooltip: "컬럼 설정", icon: const Icon(Icons.settings_outlined, size: 20)),
-              IconButton(onPressed: () { _exportToExcel(context, filtered); }, tooltip: "엑셀 다운로드", icon: const FaIcon(FontAwesomeIcons.fileArrowDown, color: Colors.green, size: 18)),
-              IconButton(onPressed: () { _showResetDialog(provider); }, tooltip: "전체 초기화", icon: const Icon(Icons.delete_sweep_outlined, color: AppTheme.danger)),
-              IconButton(onPressed: () { _showForm(context, provider, null); }, tooltip: "신규 등록", icon: const Icon(Icons.add_circle, color: AppTheme.primary, size: 26)),
+              IconButton(onPressed: () => _showColumnSelectionDialog(provider), icon: const Icon(Icons.settings_outlined, size: 20)),
+              IconButton(onPressed: () => _exportToExcel(context, filtered), icon: const FaIcon(FontAwesomeIcons.fileArrowDown, color: Colors.green, size: 18)),
+              IconButton(onPressed: () => _showResetDialog(provider), icon: const Icon(Icons.delete_sweep_outlined, color: AppTheme.danger)),
+              IconButton(onPressed: () => _showForm(context, provider, null), icon: const Icon(Icons.add_circle, color: AppTheme.primary, size: 26)),
             ],
           ),
           const SizedBox(height: 12),
@@ -371,8 +332,7 @@ class _ProductPageState extends State<ProductPage> {
             controller: _searchController,
             onChanged: (v) { setState(() => _currentQuery = v); },
             decoration: InputDecoration(
-              hintText: '검색...',
-              // 메인 검색바 hintText 흐리게 적용
+              hintText: '검색어 입력...',
               hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 14),
               prefixIcon: const Icon(Icons.search, size: 18),
               filled: true,
@@ -388,24 +348,36 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildFilterBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          ...['item', 'location', 'category'].map((mode) => Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: ChoiceChip(
-              label: Text(mode == 'item' ? '품목별' : (mode == 'location' ? '위치별' : '분류별'), style: const TextStyle(fontSize: 11)),
-              selected: _groupByMode == mode,
-              onSelected: (s) {
-                if (s) {
-                  setState(() { _groupByMode = mode; _selectedGroupKey = null; });
-                }
-              },
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'item', label: Text('품명별', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold))),
+              ButtonSegment(value: 'location', label: Text('위치별', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold))),
+              ButtonSegment(value: 'category', label: Text('분류별', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold))),
+            ],
+            selected: {_groupByMode},
+            showSelectedIcon: false,
+            onSelectionChanged: (Set<String> newSelection) {
+              setState(() {
+                _groupByMode = newSelection.first;
+                _selectedGroupKey = null;
+              });
+            },
+            style: SegmentedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              visualDensity: VisualDensity.standard,
+              backgroundColor: Colors.white,
+              selectedBackgroundColor: AppTheme.primary.withValues(alpha: 0.1),
+              selectedForegroundColor: AppTheme.primary,
+              side: BorderSide(color: AppTheme.border.withValues(alpha: 0.3)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
-          )),
+          ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.sort, size: 18),
+            icon: const Icon(Icons.sort, size: 20),
             onPressed: () {
               setState(() => _sortCriteria = (_sortCriteria == 'name') ? 'status' : 'name');
             },
@@ -415,11 +387,100 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, {Key? key}) {
+    const excludeStatus = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
+    final displayItems = _hideExcluded ? items.where((p) => !excludeStatus.contains(p.status)).toList() : items;
+    final dynamicColumns = provider.selectedColumns;
+
+    return Column(
+      key: key,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Text(groupName, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+              const Spacer(),
+              FilterChip(
+                label: const Text('출고제외 보기', style: TextStyle(fontSize: 11)),
+                selected: _hideExcluded,
+                onSelected: (v) { setState(() => _hideExcluded = v); },
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            itemCount: displayItems.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 12),
+            itemBuilder: (ctx, idx) {
+              final p = displayItems[idx];
+              return InkWell(
+                onTap: () => _showForm(context, provider, p),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.border.withValues(alpha: 0.2)),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 4, offset: const Offset(0, 2))
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      _buildThumbnail(p, size: _colImgSize),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Wrap(
+                          spacing: 20,
+                          runSpacing: 10,
+                          children: dynamicColumns.map((col) {
+                            final val = _getDisplayValue(p, col);
+                            return SizedBox(
+                              width: 125,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(col, style: TextStyle(fontSize: 10, color: Colors.black.withValues(alpha: 0.38), fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 2),
+                                  Text(val, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  // [수정] 중괄호를 제거하여 Set<Text> 에러 해결
+                                  if (col == '품명')
+                                    Text(p.status, style: TextStyle(fontSize: 10, color: p.status == '정상' ? AppTheme.success : AppTheme.warning, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      SizedBox(
+                        width: _colActionWidth,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            IconButton(padding: EdgeInsets.zero, icon: const Icon(Icons.login, color: AppTheme.success, size: 20), onPressed: () => _processAssetAccess(provider, p, '수기입고')),
+                            IconButton(padding: EdgeInsets.zero, icon: const Icon(Icons.logout, color: AppTheme.warning, size: 20), onPressed: () => _processAssetAccess(provider, p, '수기출고')),
+                            IconButton(padding: EdgeInsets.zero, icon: const Icon(Icons.delete_outline, color: AppTheme.danger, size: 20), onPressed: () => _confirmIndividualDelete(context, provider, p)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, bool isMobile) {
     final first = items.first;
-    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실'};
+    const exclude = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
     final tagCount = items.where((i) => !exclude.contains(i.status)).length;
-    final bool isShort = _groupByMode == 'item' && tagCount < first.safetyStock;
 
     return InkWell(
       onTap: () {
@@ -440,95 +501,26 @@ class _ProductPageState extends State<ProductPage> {
           children: [
             _buildThumbnail(first, size: 48),
             const SizedBox(width: 12),
-            Expanded(child: Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: isShort ? AppTheme.danger : Colors.black))),
-            Text('$tagCount', style: TextStyle(fontWeight: FontWeight.w900, color: isShort ? AppTheme.danger : AppTheme.primary)),
+            Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? AppTheme.primary : AppTheme.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: isSelected ? AppTheme.primary : AppTheme.border.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                  '$tagCount',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 14,
+                      color: isSelected ? Colors.white : AppTheme.primary
+                  )
+              ),
+            ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, {Key? key}) {
-    const excludeStatus = {'판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'};
-    final displayItems = _hideExcluded ? items.where((p) => !excludeStatus.contains(p.status)).toList() : items;
-    final dynamicColumns = provider.selectedColumns.isEmpty ? ['품명', '태그ID', '위치'] : provider.selectedColumns;
-
-    return Column(
-      key: key,
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Text(groupName, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-              const Spacer(),
-              FilterChip(
-                label: const Text('출고제외', style: TextStyle(fontSize: 11)),
-                selected: _hideExcluded,
-                onSelected: (v) { setState(() => _hideExcluded = v); },
-              ),
-            ],
-          ),
-        ),
-        Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          color: AppTheme.headerBg,
-          child: Row(
-            children: [
-              const SizedBox(width: _colImgWidth, child: Text('사진', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-              ...dynamicColumns.map((col) => Expanded(child: Text(col, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)))),
-              const SizedBox(width: _colActionWidth, child: Text('관리', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            itemCount: displayItems.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (ctx, idx) {
-              final p = displayItems[idx];
-              return InkWell(
-                onTap: () { _showForm(context, provider, p); },
-                child: Container(
-                  height: _rowHeight,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      SizedBox(width: _colImgWidth, child: Center(child: _buildThumbnail(p, size: 54))),
-                      ...dynamicColumns.map((col) {
-                        final val = _getDisplayValue(p, col);
-                        return Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(val, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
-                              if (col == '품명')
-                                Text(p.status, style: TextStyle(fontSize: 10, color: p.status == '정상' ? AppTheme.success : AppTheme.warning, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        );
-                      }),
-                      SizedBox(
-                        width: _colActionWidth,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.login, color: AppTheme.success, size: 20), onPressed: () { _processAssetAccess(provider, p, '수기입고'); }),
-                            IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.logout, color: AppTheme.warning, size: 20), onPressed: () { _processAssetAccess(provider, p, '수기출고'); }),
-                            IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(), icon: const Icon(Icons.delete_outline, color: AppTheme.danger, size: 20), onPressed: () { _confirmIndividualDelete(context, provider, p); }),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 
@@ -547,50 +539,31 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 상세 편집 및 신규 등록 폼 ---
   Future<void> _showForm(BuildContext context, ProductProvider provider, ProductModel? p, {String? initialTag}) async {
     final nameC = TextEditingController(text: p?.name ?? "");
     final tagC = TextEditingController(text: initialTag ?? p?.tagId ?? "");
     final locC = TextEditingController(text: p?.location ?? "");
     final catC = TextEditingController(text: p?.category ?? "");
     final specC = TextEditingController(text: p?.spec ?? "");
-    final mfgC = TextEditingController(text: p?.manufacturer ?? "");
     final snC = TextEditingController(text: p?.serialNumber ?? "");
     final safeC = TextEditingController(text: p?.safetyStock.toString() ?? "5");
-    final qtyC = TextEditingController(text: "1");
 
     String selectedStatus = p?.status ?? "정상";
-    XFile? file;
-    Uint8List? preview;
+    XFile? file; Uint8List? preview;
 
     final Map<String, TextEditingController> metaControllers = {};
 
     if (p != null) {
-      final Map<String, dynamic> originMap = p.metadata['origin_key_map'] ?? {};
       p.metadata.forEach((key, value) {
         if (!['origin_key_map', 'history', 'last_location_info'].contains(key)) {
-          final ctrl = TextEditingController(text: value?.toString() ?? "");
-          metaControllers[key] = ctrl;
-          if (originMap.containsKey(key)) {
-            final dbField = originMap[key];
-            ctrl.addListener(() {
-              final val = ctrl.text.trim();
-              if (dbField == 'name') { nameC.text = val; }
-              else if (dbField == 'location') { locC.text = val; }
-              else if (dbField == 'spec') { specC.text = val; }
-              else if (dbField == 'manufacturer') { mfgC.text = val; }
-              else if (dbField == 'serial_number') { snC.text = val; }
-            });
-          }
+          metaControllers[key] = TextEditingController(text: value?.toString() ?? "");
         }
       });
     } else {
       final Set<String> discoveredKeys = {};
       for (var item in provider.items) {
         item.metadata.forEach((k, v) {
-          if (!['origin_key_map', 'history', 'last_location_info'].contains(k)) {
-            discoveredKeys.add(k);
-          }
+          if (!['origin_key_map', 'history', 'last_location_info'].contains(k)) discoveredKeys.add(k);
         });
       }
       for (var key in discoveredKeys) {
@@ -603,10 +576,9 @@ class _ProductPageState extends State<ProductPage> {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(builder: (dialogCtx, setS) {
         const double fieldWidth = 370.0;
-
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(p == null ? '자산 신규 등록' : '상세 정보 편집', style: const TextStyle(fontWeight: FontWeight.bold)),
+          title: Text(p == null ? "자산 신규 등록" : "상세 정보 수정", style: const TextStyle(fontWeight: FontWeight.bold)),
           contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
           content: SizedBox(
             width: 800,
@@ -617,226 +589,98 @@ class _ProductPageState extends State<ProductPage> {
                   GestureDetector(
                     onTap: () async {
                       final img = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 70);
-                      if (img != null) {
-                        final b = await img.readAsBytes();
-                        setS(() { file = img; preview = b; });
-                      }
+                      if (!dialogCtx.mounted || img == null) return;
+                      final b = await img.readAsBytes();
+                      setS(() { file = img; preview = b; });
                     },
-                    child: Stack(
-                      children: [
-                        Container(
-                          width: 140, height: 140,
-                          decoration: BoxDecoration(color: AppTheme.headerBg, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.border.withValues(alpha: 0.3))),
-                          clipBehavior: Clip.antiAlias,
-                          child: preview != null
-                              ? Image.memory(preview!, fit: BoxFit.cover)
-                              : (p?.getImageUrl(widget.baseUrl) != null
-                              ? Image.network("${p!.getImageUrl(widget.baseUrl)}?t=${p.updated}", fit: BoxFit.cover)
-                              : const Icon(Icons.camera_alt, size: 40, color: Colors.grey)),
-                        ),
-                        Positioned(bottom: 8, right: 8, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle), child: const Icon(Icons.edit, color: Colors.white, size: 14))),
-                      ],
+                    child: Container(
+                      width: 140, height: 140,
+                      decoration: BoxDecoration(color: AppTheme.headerBg, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.border.withValues(alpha: 0.3))),
+                      clipBehavior: Clip.antiAlias,
+                      child: preview != null
+                          ? Image.memory(preview!, fit: BoxFit.cover)
+                          : (p?.getImageUrl(widget.baseUrl) != null
+                          ? Image.network("${p!.getImageUrl(widget.baseUrl)}?t=${p.updated}", fit: BoxFit.cover)
+                          : const Icon(Icons.camera_alt, size: 40, color: Colors.grey)),
                     ),
                   ),
                   const SizedBox(height: 32),
+                  // [수정] Spread 연산자를 올바르게 사용하여 여러 위젯 삽입
                   if (p == null) ...[
-                    _buildSectionHeader(Icons.copy_all, "생성 수량 (동일 품목 일괄 등록)", Colors.orange),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      children: [
-                        const SizedBox(width: 23),
-                        SizedBox(
-                          width: fieldWidth,
-                          child: _buildStyledField(
-                            "발행 수량",
-                            qtyC,
-                            keyboardType: TextInputType.number,
-                            hint: "생성할 태그 개수",
-                            onChanged: (v) { setS(() {}); },
-                          ),
-                        ),
-                      ],
-                    ),
+                    _buildSectionHeader(Icons.copy_all, "대량 등록 설정", Colors.orange),
+                    const Row(children: [
+                      SizedBox(width: 23),
+                      SizedBox(width: 370.0, child: Text('등록 개수를 입력하세요.', style: TextStyle(fontSize: 12, color: Colors.grey))),
+                    ]),
                     const SizedBox(height: 16),
                   ],
-                  _buildSectionHeader(Icons.star, "마스터 정보", Colors.blue),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      const SizedBox(width: 23),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("품명", nameC)),
-                      const SizedBox(width: 12),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("태그ID", tagC, hint: "EPC 번호")),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      const SizedBox(width: 23),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("위치", locC, hint: "창고/구역")),
-                      const SizedBox(width: 12),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("분류", catC, hint: "카테고리")),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      const SizedBox(width: 23),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("제조사", mfgC)),
-                      const SizedBox(width: 12),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("시리얼번호", snC, hint: "S/N")),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      const SizedBox(width: 23),
-                      SizedBox(width: fieldWidth, child: _buildStyledField("안전재고", safeC, keyboardType: TextInputType.number, hint: "최저 유지 수량")),
-                      const SizedBox(width: 12),
-                      SizedBox(width: fieldWidth, child: _buildStyledDropdown("상태", selectedStatus, (v) { if (v != null) { setS(() => selectedStatus = v); } })),
-                    ],
-                  ),
+                  _buildSectionHeader(Icons.star, "마스터 데이터", Colors.blue),
+                  Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+                    const SizedBox(width: 23),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("품명", nameC)),
+                    const SizedBox(width: 12),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("태그ID", tagC, hint: "RFID EPC")),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+                    const SizedBox(width: 23),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("위치", locC)),
+                    const SizedBox(width: 12),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("분류", catC)),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+                    const SizedBox(width: 23),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("규격", specC)),
+                    const SizedBox(width: 12),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("안전재고", safeC, keyboardType: TextInputType.number)),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+                    const SizedBox(width: 23),
+                    SizedBox(width: fieldWidth, child: _buildStyledField("S/N", snC)),
+                    const SizedBox(width: 12),
+                    SizedBox(width: fieldWidth, child: _buildStyledDropdown("현재 상태", selectedStatus, (v) {
+                      if (v != null) setS(() => selectedStatus = v);
+                    })),
+                  ]),
                   if (metaControllers.isNotEmpty) ...[
                     const SizedBox(height: 32),
-                    _buildSectionHeader(Icons.table_view, "엑셀 추가 필드 (수정 시 마스터 자동 연동)", Colors.green),
-                    Row(
-                      children: [
-                        const SizedBox(width: 23),
-                        Expanded(
-                          child: Wrap(
-                            spacing: 12,
-                            runSpacing: 0,
-                            alignment: WrapAlignment.start,
-                            children: metaControllers.entries.map((e) => SizedBox(
-                              width: fieldWidth,
-                              child: _buildStyledField(e.key, e.value),
-                            )).toList(),
-                          ),
+                    _buildSectionHeader(Icons.table_view, "사용자 추가 항목 (Excel 등)", Colors.green),
+                    Row(children: [
+                      const SizedBox(width: 23),
+                      Expanded(
+                        child: Wrap(
+                          spacing: 12,
+                          children: metaControllers.entries.map((e) => SizedBox(width: fieldWidth, child: _buildStyledField(e.key, e.value))).toList(),
                         ),
-                      ],
-                    ),
+                      ),
+                    ]),
                   ],
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () { Navigator.pop(dialogCtx); }, child: const Text("취소")),
+            TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text("취소")),
             ElevatedButton(
               onPressed: () async {
-                if (nameC.text.trim().isEmpty) {
-                  return;
-                }
-                final int loopCount = int.tryParse(qtyC.text.trim()) ?? 1;
+                if (nameC.text.trim().isEmpty) return;
                 final updatedMeta = Map<String, dynamic>.from(p?.metadata ?? {});
-                metaControllers.forEach((k, v) { updatedMeta[k] = v.text.trim(); });
-
-                final baseData = {
-                  'name': nameC.text.trim(), 'location': locC.text.trim(),
-                  'category': catC.text.trim(), 'spec': specC.text.trim(), 'manufacturer': mfgC.text.trim(),
-                  'serial_number': snC.text.trim(), 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
-                  'status': selectedStatus, 'metadata': updatedMeta,
+                metaControllers.forEach((k, v) => updatedMeta[k] = v.text.trim());
+                final data = {
+                  'name': nameC.text.trim(), 'tag_id': tagC.text.trim(),
+                  'location': locC.text.trim(), 'category': catC.text.trim(),
+                  'spec': specC.text.trim(), 'serial_number': snC.text.trim(),
+                  'status': selectedStatus, 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
+                  'metadata': updatedMeta,
                 };
-
-                bool success = true;
-                if (p == null) {
-                  for (int i = 0; i < loopCount; i++) {
-                    final Map<String, dynamic> itemData = Map.from(baseData);
-                    if (loopCount > 1 && tagC.text.isNotEmpty) {
-                      itemData['tag_id'] = "${tagC.text.trim()}_${i + 1}";
-                    } else {
-                      itemData['tag_id'] = tagC.text.trim();
-                    }
-                    final res = await provider.handleSave(p: null, data: itemData, imageXFile: file);
-                    if (!res) {
-                      success = false;
-                    }
-                  }
-                } else {
-                  baseData['tag_id'] = tagC.text.trim();
-                  success = await provider.handleSave(p: p, data: baseData, imageXFile: file);
-                  if (success && file != null) {
-                    final others = provider.items.where((i) => i.name == p.name && i.id != p.id).toList();
-                    for (var item in others) {
-                      await provider.handleSave(p: item, data: {'status': item.status}, imageXFile: file);
-                    }
-                  }
-                }
-                if (success && dialogCtx.mounted) {
-                  Navigator.pop(dialogCtx);
-                }
+                final success = await provider.handleSave(p: p, data: data, imageXFile: file);
+                if (!dialogCtx.mounted) return;
+                if (success) Navigator.pop(dialogCtx);
               },
-              child: Text(p == null ? "${qtyC.text}개 생성" : "저장"),
+              child: const Text("저장하기"),
             ),
           ],
         );
       }),
-    );
-  }
-
-  Widget _buildSectionHeader(IconData icon, String title, Color color) {
-    return Padding(padding: const EdgeInsets.only(bottom: 16), child: Column(children: [Row(children: [Icon(icon, color: color, size: 18), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color))]), const Divider()]));
-  }
-
-  Widget _buildStyledField(String label, TextEditingController ctrl, {TextInputType keyboardType = TextInputType.text, String? hint, ValueChanged<String>? onChanged}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: TextField(
-        controller: ctrl,
-        keyboardType: keyboardType,
-        onChanged: onChanged,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
-          // hintStyle 흐리게 적용 (alpha: 0.2)
-          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
-          floatingLabelBehavior: FloatingLabelBehavior.always, filled: true, fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5), width: 1.5),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          contentPadding: const EdgeInsets.fromLTRB(12, 22, 12, 10),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStyledDropdown(String label, String initial, ValueChanged<String?> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        initialValue: initial,
-        items: const ['정상', '구매입고', '회수/반납', '판매출고', '수리출고', '대여출고', '수리필요', '분실', '폐기']
-            .map((e) => DropdownMenuItem(
-            value: e,
-            child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
-        )).toList(),
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
-          floatingLabelBehavior: FloatingLabelBehavior.always, filled: true, fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          contentPadding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
-        ),
-      ),
     );
   }
 
@@ -845,228 +689,114 @@ class _ProductPageState extends State<ProductPage> {
     final Set<String> metaKeys = {};
     for (var item in provider.items) {
       item.metadata.forEach((k, v) {
-        if (!['origin_key_map', 'history', 'last_location_info'].contains(k)) {
-          metaKeys.add(k);
-        }
+        if (!['origin_key_map', 'history', 'last_location_info'].contains(k)) metaKeys.add(k);
       });
     }
     final fullKeys = [...availableKeys, ...metaKeys.toList()..sort()];
-    List<String> tempSelection = List.from(provider.selectedColumns.isEmpty ? ['품명', '태그ID', '위치'] : provider.selectedColumns);
+    List<String> tempSelection = List.from(provider.selectedColumns);
+
     showDialog(
-        context: context,
-        builder: (ctx) => StatefulBuilder(builder: (context, setS) => AlertDialog(
-            title: const Text("표시 항목 설정 (최대 5개)"),
-            content: SizedBox(width: 300, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: fullKeys.map((key) => CheckboxListTile(title: Text(key, style: const TextStyle(fontSize: 13)), value: tempSelection.contains(key), onChanged: (val) {
-              setS(() {
-                if (val != null && val) {
-                  if (tempSelection.length < 5) {
-                    tempSelection.add(key);
-                  }
-                } else {
-                  if (tempSelection.length > 1) {
-                    tempSelection.remove(key);
-                  }
-                }
-              });
-            })).toList()))),
-            actions: [
-              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
-              ElevatedButton(onPressed: () async { await provider.saveRemoteSettings(tempSelection); if (context.mounted) { Navigator.pop(ctx); } }, child: const Text("적용"))
-            ]
-        ))
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (context, setS) => AlertDialog(
+        title: const Text("표시 항목 설정 (최대 5개)"),
+        content: SizedBox(width: 350, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: fullKeys.map((key) => CheckboxListTile(title: Text(key, style: const TextStyle(fontSize: 13)), value: tempSelection.contains(key), onChanged: (val) {
+          setS(() { if (val == true) { if (tempSelection.length < 5) tempSelection.add(key); } else { if (tempSelection.length > 1) tempSelection.remove(key); } });
+        })).toList()))),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("취소")),
+          ElevatedButton(onPressed: () async {
+            await provider.saveRemoteSettings(tempSelection);
+            if (!context.mounted) return;
+            Navigator.pop(ctx);
+          }, child: const Text("적용"))
+        ],
+      )),
     );
   }
 
+  // --- 보조 메서드 ---
+
   Future<void> _exportToExcel(BuildContext context, List<ProductModel> list) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final excel = excel_pkg.Excel.createExcel();
-      final sheet = excel['물품리스트'];
-      excel.rename('Sheet1', '물품리스트');
-      sheet.appendRow([excel_pkg.TextCellValue('품명'), excel_pkg.TextCellValue('제조사'), excel_pkg.TextCellValue('규격'), excel_pkg.TextCellValue('S/N'), excel_pkg.TextCellValue('태그ID'), excel_pkg.TextCellValue('상태'), excel_pkg.TextCellValue('위치')]);
+      final sheet = excel['물품_리스트'];
+      sheet.appendRow([excel_pkg.TextCellValue('품명'), excel_pkg.TextCellValue('태그ID'), excel_pkg.TextCellValue('위치'), excel_pkg.TextCellValue('상태')]);
       for (final i in list) {
-        sheet.appendRow([excel_pkg.TextCellValue(i.name), excel_pkg.TextCellValue(i.manufacturer ?? ""), excel_pkg.TextCellValue(i.spec ?? ""), excel_pkg.TextCellValue(i.serialNumber ?? ""), excel_pkg.TextCellValue(i.tagId), excel_pkg.TextCellValue(i.status), excel_pkg.TextCellValue(i.location ?? "")]);
+        sheet.appendRow([excel_pkg.TextCellValue(i.name), excel_pkg.TextCellValue(i.tagId), excel_pkg.TextCellValue(i.location ?? ""), excel_pkg.TextCellValue(i.status)]);
       }
       final path = await FilePicker.platform.saveFile(fileName: 'Inventory_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
-      if (path != null) {
-        await File(path).writeAsBytes(excel.encode()!);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 엑셀 파일 저장 완료')));
-        }
-      }
+      if (!context.mounted || path == null) return;
+      await File(path).writeAsBytes(excel.encode()!);
+      messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 파일 저장 완료')));
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ 저장 실패: $e')));
-      }
+      if (!context.mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('❌ 저장 실패: $e')));
     }
   }
 
   void _showResetDialog(ProductProvider provider) {
-    showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-            title: const Text('DB 전체 초기화', style: TextStyle(color: AppTheme.danger, fontWeight: FontWeight.bold)),
-            content: const Text('모든 자산 데이터를 삭제하시겠습니까?'),
-            actions: [
-              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
-              ElevatedButton(onPressed: () async { await provider.resetAllProducts(); if (ctx.mounted) { Navigator.pop(ctx); } }, style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white), child: const Text('전체 삭제'))
-            ]
-        )
-    );
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("전체 초기화"), content: const Text("모든 정보를 삭제하시겠습니까?"), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("취소")), ElevatedButton(onPressed: () async { await provider.resetAllProducts(); if (!ctx.mounted) return; Navigator.pop(ctx); }, child: const Text("삭제"))]));
   }
 
   void _confirmIndividualDelete(BuildContext context, ProductProvider provider, ProductModel p) {
-    showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-            title: const Text('삭제 확인'),
-            content: Text('${p.name} 자산을 삭제하시겠습니까?'),
-            actions: [
-              TextButton(onPressed: () { Navigator.pop(ctx); }, child: const Text("취소")),
-              ElevatedButton(onPressed: () async { await provider.deleteProduct(p.id); if (ctx.mounted) { Navigator.pop(ctx); } }, child: const Text('삭제'))
-            ]
-        )
-    );
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("삭제 확인"), content: Text("[${p.name}] 자산을 삭제하시겠습니까?"), actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("취소")), ElevatedButton(onPressed: () async { await provider.deleteProduct(p.id); if (!ctx.mounted) return; Navigator.pop(ctx); }, child: const Text("삭제"))]));
   }
 
   void _showMobileGroupDetail(ProductProvider provider, String groupName, List<ProductModel> items) {
     showModalBottomSheet(context: context, isScrollControlled: true, builder: (ctx) => SizedBox(height: MediaQuery.of(context).size.height * 0.8, child: _buildDetailView(provider, groupName, items)));
   }
 
-  Widget _buildEmptyState(String msg) {
-    return Center(child: Text(msg, style: const TextStyle(color: Colors.grey)));
+  Widget _buildEmptyState(String msg) => Center(child: Text(msg, style: const TextStyle(color: Colors.grey)));
+  Widget _buildSectionHeader(IconData icon, String title, Color color) => Padding(padding: const EdgeInsets.only(bottom: 16), child: Column(children: [Row(children: [Icon(icon, color: color, size: 18), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: color))]), const Divider()]));
+  Widget _buildStyledField(String label, TextEditingController ctrl, {TextInputType keyboardType = TextInputType.text, String? hint}) => Padding(padding: const EdgeInsets.only(bottom: 16), child: TextField(controller: ctrl, keyboardType: keyboardType, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600), decoration: InputDecoration(labelText: label, hintText: hint, labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold), floatingLabelBehavior: FloatingLabelBehavior.always, border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)), contentPadding: const EdgeInsets.fromLTRB(12, 22, 12, 10))));
+  Widget _buildStyledDropdown(String label, String initial, ValueChanged<String?> onChanged) => Padding(padding: const EdgeInsets.only(bottom: 16), child: DropdownButtonFormField<String>(initialValue: initial, items: const ['정상', '수리필요', '폐기'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)))).toList(), onChanged: onChanged, decoration: InputDecoration(labelText: label, labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold), floatingLabelBehavior: FloatingLabelBehavior.always, border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)), contentPadding: const EdgeInsets.fromLTRB(12, 11, 12, 11))));
+  Widget _buildGlobalLoadingOverlay(ProductProvider provider) {
+    String msg = provider.isParsing ? "데이터 분석 중..." : "저장 중...";
+    return Container(color: Colors.black.withValues(alpha: 0.26), child: Center(child: Card(elevation: 8, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24), child: Column(mainAxisSize: MainAxisSize.min, children: [const CircularProgressIndicator(), const SizedBox(height: 20), Text(msg, style: const TextStyle(fontWeight: FontWeight.bold))])))));
+  }
+
+  Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
+    final Map<String, List<ProductModel>> grouped = {};
+    for (final item in items) {
+      String key = _groupByMode == 'item' ? item.name : (_groupByMode == 'location' ? (item.location ?? "미지정") : (item.category ?? "미지정"));
+      grouped.putIfAbsent(key, () => []).add(item);
+    }
+    return grouped;
   }
 }
 
-// --- 수기 입고/출고 상세 다이얼로그 위젯 ---
 class _ManualInoutDialog extends StatefulWidget {
-  final String type;
-  final ProductModel product;
-
+  final String type; final ProductModel product;
   const _ManualInoutDialog({required this.type, required this.product});
-
   @override
   State<_ManualInoutDialog> createState() => _ManualInoutDialogState();
 }
 
 class _ManualInoutDialogState extends State<_ManualInoutDialog> {
-  late TextEditingController _locC;
-  late TextEditingController _reasonC;
-  late TextEditingController _handlerC;
-  late String _selectedStatus;
-
+  late TextEditingController _locC, _reasonC, _handlerC;
   @override
   void initState() {
     super.initState();
-    _locC = TextEditingController(text: widget.product.location ?? "본관A");
-    _reasonC = TextEditingController();
-    _handlerC = TextEditingController();
-    _selectedStatus = widget.type == '수기입고' ? '구매입고' : '판매출고';
+    _locC = TextEditingController(text: widget.product.location ?? "창고A");
+    _reasonC = TextEditingController(); _handlerC = TextEditingController();
   }
-
-  @override
-  void dispose() {
-    _locC.dispose();
-    _reasonC.dispose();
-    _handlerC.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final bool isIn = widget.type == '수기입고';
-    final List<String> statusItems = isIn
-        ? ['구매입고', '회수/반납', '수기입고']
-        : ['판매출고', '수리출고', '대여출고', '폐기', '분실', '수기출고'];
-
     return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(
+      title: Text('${widget.type} 처리'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning),
-          const SizedBox(width: 8),
-          Text('${widget.type} 처리', style: const TextStyle(fontWeight: FontWeight.bold)),
+          TextField(controller: _locC, decoration: const InputDecoration(labelText: "이동 장소")),
+          TextField(controller: _handlerC, decoration: const InputDecoration(labelText: "담당자")),
+          TextField(controller: _reasonC, decoration: const InputDecoration(labelText: "사유")),
         ],
-      ),
-      content: SizedBox(
-        width: 450,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('대상: [${widget.product.name}]', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black54)),
-              const SizedBox(height: 20),
-
-              _buildStyledDropdown("처리 유형", _selectedStatus, statusItems, (v) {
-                if (v != null) { setState(() => _selectedStatus = v); }
-              }),
-
-              _buildStyledField("이동 장소", _locC, hint: "창고 또는 구역명"),
-
-              _buildStyledField("담당자", _handlerC, hint: "성함 또는 사번"),
-
-              _buildStyledField("특이사항/비고", _reasonC, hint: "이동 사유 상세 입력"),
-            ],
-          ),
-        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text("취소")),
-        ElevatedButton(
-          onPressed: () {
-            Navigator.pop(context, {
-              'status': _selectedStatus,
-              'location': _locC.text.trim(),
-              'handler': _handlerC.text.trim(),
-              'reason': _reasonC.text.trim(),
-            });
-          },
-          child: const Text("확인"),
-        ),
+        ElevatedButton(onPressed: () => Navigator.pop(context, {'status': widget.type, 'location': _locC.text.trim(), 'handler': _handlerC.text.trim(), 'reason': _reasonC.text.trim()}), child: const Text("확인")),
       ],
-    );
-  }
-
-  Widget _buildStyledField(String label, TextEditingController ctrl, {String? hint}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: TextField(
-        controller: ctrl,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
-          // hintStyle 흐리게 적용 (alpha: 0.2)
-          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
-          floatingLabelBehavior: FloatingLabelBehavior.always,
-          border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
-          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStyledDropdown(String label, String value, List<String> items, ValueChanged<String?> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: DropdownButtonFormField<String>(
-        initialValue: value,
-        items: items.map((e) => DropdownMenuItem(
-            value: e,
-            child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))
-        )).toList(),
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: TextStyle(color: Colors.black.withValues(alpha: 0.26), fontSize: 13, fontWeight: FontWeight.bold),
-          // hintStyle 흐리게 적용 (Dropdown은 기본 hint가 없지만 일관성을 위해 설정)
-          hintStyle: TextStyle(color: Colors.black.withValues(alpha: 0.2), fontSize: 13),
-          floatingLabelBehavior: FloatingLabelBehavior.always,
-          border: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
-          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.25)), borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
     );
   }
 }
