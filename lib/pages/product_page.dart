@@ -122,12 +122,7 @@ class _ProductPageState extends State<ProductPage> {
       }
       if (!excludeStock.contains(item.status)) { currentStock++; }
     }
-    return {
-      'prev': currentStock - todayIn + todayOut,
-      'in': todayIn,
-      'out': todayOut,
-      'stock': currentStock
-    };
+    return {'prev': currentStock - todayIn + todayOut, 'in': todayIn, 'out': todayOut, 'stock': currentStock};
   }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type) async {
@@ -205,7 +200,7 @@ class _ProductPageState extends State<ProductPage> {
             Column(
               children: [
                 _buildDashboard(metrics),
-                const Divider(), // 대시보드 하단 실선 추가
+                const Divider(),
                 if (provider.isLoading) ...[
                   const LinearProgressIndicator(minHeight: 2, color: AppTheme.primary)
                 ],
@@ -230,33 +225,38 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildDashboard(Map<String, dynamic> m) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       color: Colors.white,
       child: LayoutBuilder(builder: (ctx, constraints) {
-        bool isWide = constraints.maxWidth > 700;
+        bool isWide = constraints.maxWidth > 850;
         if (isWide) {
-          return Row(
-            children: [
-              _buildStatTile("전일 재고", m['prev'], Icons.history, Colors.blueGrey),
-              const SizedBox(width: 10),
-              _buildStatTile("금일 입고", m['in'], Icons.add_chart, Colors.blue),
-              const SizedBox(width: 10),
-              _buildStatTile("금일 출고", m['out'], Icons.trending_down, Colors.orange),
-              const SizedBox(width: 10),
-              _buildStatTile("현재 실재고", m['stock'], Icons.inventory, AppTheme.primary, isMain: true),
-            ],
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1400),
+              child: Row(
+                children: [
+                  Expanded(child: _buildStatTile("전일 재고", m['prev'], Icons.history, Colors.blueGrey)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildStatTile("금일 입고", m['in'], Icons.add_chart, Colors.blue)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildStatTile("금일 출고", m['out'], Icons.trending_down, Colors.orange)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildStatTile("현재 실재고", m['stock'], Icons.inventory, AppTheme.primary, isMain: true)),
+                ],
+              ),
+            ),
           );
         } else {
           return Column(
             children: [
               Row(
                 children: [
-                  _buildStatTile("입고", m['in'], Icons.add_chart, Colors.blue),
-                  const SizedBox(width: 8),
-                  _buildStatTile("출고", m['out'], Icons.trending_down, Colors.orange),
+                  Expanded(child: _buildStatTile("입고", m['in'], Icons.add_chart, Colors.blue)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildStatTile("출고", m['out'], Icons.trending_down, Colors.orange)),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               _buildStatTile("현재 실재고", m['stock'], Icons.inventory, AppTheme.primary, isMain: true, fullWidth: true),
             ],
           );
@@ -278,12 +278,21 @@ class _ProductPageState extends State<ProductPage> {
         children: [
           Icon(icon, color: isMain ? Colors.white : color, size: 24),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 11, color: isMain ? Colors.white70 : Colors.black45, fontWeight: FontWeight.bold)),
-              Text('$val', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isMain ? Colors.white : Colors.black87)),
-            ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label,
+                  style: TextStyle(fontSize: 11, color: isMain ? Colors.white70 : Colors.black45, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text('$val',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isMain ? Colors.white : Colors.black87),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -291,7 +300,7 @@ class _ProductPageState extends State<ProductPage> {
     if (fullWidth) {
       return SizedBox(width: double.infinity, child: card);
     } else {
-      return Expanded(child: card);
+      return card;
     }
   }
 
@@ -299,7 +308,7 @@ class _ProductPageState extends State<ProductPage> {
     return Row(
       children: [
         Container(
-          width: 380,
+          width: 420,
           color: Colors.white,
           child: Column(
             children: [
@@ -321,10 +330,11 @@ class _ProductPageState extends State<ProductPage> {
             ],
           ),
         ),
-        const VerticalDivider(), // 집계-상세 사이 수직선 추가
+        const VerticalDivider(),
         Expanded(
           child: Container(
             color: widget.uiConfig.surfaceColor,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: RepaintBoundary(
               child: _selectedGroupKey == null
                   ? _buildEmptyState("상세 분석을 위해 집계 내역을 선택하십시오.")
@@ -366,21 +376,25 @@ class _ProductPageState extends State<ProductPage> {
         children: [
           Row(
             children: [
-              _buildActionIcon(Icons.refresh, "새로고침", () { provider.fetchData(); }),
-              const SizedBox(width: 4),
-              _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 임포트", () async {
-                final res = await provider.batchImportFromExcel();
-                if (res['total']! > 0) {
-                  _showInfoDialog("임포트 완료", "성공: ${res['success']} / 전체: ${res['total']}");
-                }
-              }, color: Colors.indigo),
-              const SizedBox(width: 4),
-              _buildActionIcon(Icons.settings_outlined, "표시 설정", () { _showColumnSelectionDialog(provider); }),
-              const SizedBox(width: 4),
-              _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑셀 출력", () { _exportToExcel(context, filtered); }, color: Colors.green),
-              const SizedBox(width: 4),
-              _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () { _showResetDialog(provider); }, color: AppTheme.danger),
-              const Spacer(),
+              Expanded(
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  alignment: WrapAlignment.start,
+                  children: [
+                    _buildActionIcon(Icons.refresh, "새로고침", () { provider.fetchData(); }),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 임포트", () async {
+                      final res = await provider.batchImportFromExcel();
+                      if (res['total']! > 0) {
+                        _showInfoDialog("임포트 완료", "성공: ${res['success']} / 전체: ${res['total']}");
+                      }
+                    }, color: Colors.indigo),
+                    _buildActionIcon(Icons.settings_outlined, "표시 설정", () { _showColumnSelectionDialog(provider); }),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑셀 출력", () { _exportToExcel(context, filtered); }, color: Colors.green),
+                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () { _showResetDialog(provider); }, color: AppTheme.danger),
+                  ],
+                ),
+              ),
               _buildActionIcon(Icons.add_circle, "신규 등록", () { _showForm(context, provider, null); }, color: AppTheme.primary, isLarge: true),
             ],
           ),
@@ -555,51 +569,58 @@ class _ProductPageState extends State<ProductPage> {
     final normalCount = items.where((i) => i.status == '정상').length;
     final healthRatio = total > 0 ? normalCount / total : 0.0;
 
+    Color healthColor = healthRatio == 1.0
+        ? AppTheme.success
+        : (healthRatio > 0.4 ? Colors.orange : AppTheme.danger);
+
     return InkWell(
       onTap: () {
         if (isMobile) { _showMobileGroupDetail(provider, title, items); }
         else { setState(() { _selectedGroupKey = title; }); }
       },
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isSelected ? AppTheme.primary : Colors.transparent, width: 2),
+          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+          border: Border.all(
+              color: isSelected ? AppTheme.primary : healthColor.withValues(alpha: 0.6),
+              width: AppTheme.outlineWidth
+          ),
           boxShadow: isSelected ? [BoxShadow(color: AppTheme.primary.withValues(alpha: 0.1), blurRadius: 10)] : null,
         ),
-        child: Column(
+        child: Row(
           children: [
-            Row(
-              children: [
-                _buildThumbnail(items.first, size: 48),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
-                      const SizedBox(height: 2),
-                      Text('현재고: $inStock / 전체: $total', style: const TextStyle(fontSize: 11, color: Colors.black45)),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size: 22),
-                  tooltip: "일괄 삭제",
-                  onPressed: () { _confirmGroupDelete(context, provider, title, items); },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: healthRatio,
-                minHeight: 4,
-                backgroundColor: Colors.black.withValues(alpha: 0.05),
-                color: healthRatio > 0.8 ? AppTheme.success : (healthRatio > 0.4 ? Colors.orange : Colors.red),
+            _buildThumbnail(items.first, size: 48),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text('현재고: $inStock / 전체: $total', style: const TextStyle(fontSize: 11, color: Colors.black45)),
+                ],
               ),
+            ),
+            // [개선] 우측 수량 배지 (라운드 사각형) 추가
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: healthColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: healthColor.withValues(alpha: 0.2)),
+              ),
+              child: Text(
+                '$total',
+                style: TextStyle(color: healthColor, fontWeight: FontWeight.w900, fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size: 22),
+              tooltip: "일괄 삭제",
+              onPressed: () { _confirmGroupDelete(context, provider, title, items); },
             ),
           ],
         ),
@@ -621,7 +642,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [핵심] 100% Flat 스타일 버튼 빌더 (InkWell + Container) ---
+  // --- 100% Flat 스타일 버튼 빌더 (InkWell + Container) ---
   Widget _buildFlatButton({
     required String text,
     required VoidCallback onPressed,
@@ -634,7 +655,7 @@ class _ProductPageState extends State<ProductPage> {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
           decoration: BoxDecoration(
             color: bgColor ?? AppTheme.primary,
             borderRadius: BorderRadius.circular(8),
@@ -691,6 +712,9 @@ class _ProductPageState extends State<ProductPage> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text(p == null ? "신규 자산 마스터 등록" : "상세 제원 정보 수정", style: const TextStyle(fontWeight: FontWeight.bold)),
           contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
+          // [수정] 다이얼로그 버튼들을 중앙으로 배치
+          actionsAlignment: MainAxisAlignment.center,
+          actionsPadding: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
           content: SizedBox(
             width: sw > 850 ? 800 : sw * 0.95,
             child: SingleChildScrollView(
@@ -783,18 +807,18 @@ class _ProductPageState extends State<ProductPage> {
             ),
           ),
           actions: [
-            // [Flat 적용] 직접 만든 커스텀 FlatButton 사용
             _buildFlatButton(
               text: "취소",
               bgColor: Colors.transparent,
               textColor: Colors.black54,
               onPressed: () { Navigator.pop(dialogCtx); },
             ),
+            const SizedBox(width: 12),
             _buildFlatButton(
               text: "데이터 저장",
               onPressed: () async {
                 if (nameC.text.trim().isEmpty) { return; }
-                final nav = Navigator.of(dialogCtx);
+                final navigator = Navigator.of(dialogCtx);
                 final int loopCount = int.tryParse(qtyC.text.trim()) ?? 1;
                 final updatedMeta = Map<String, dynamic>.from(p?.metadata ?? {});
                 metaControllers.forEach((k, v) => updatedMeta[k] = v.text.trim());
@@ -811,7 +835,7 @@ class _ProductPageState extends State<ProductPage> {
                   final data = {'name': nameC.text.trim(), 'tag_id': tagC.text.trim(), 'location': locC.text.trim(), 'category': catC.text.trim(), 'spec': specC.text.trim(), 'serial_number': snC.text.trim(), 'status': selectedStatus, 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5, 'metadata': updatedMeta};
                   allSuccess = await provider.handleSave(p: p, data: data, imageXFile: file);
                 }
-                if (allSuccess) { nav.pop(); }
+                if (allSuccess) { navigator.pop(); }
               },
             ),
           ],
@@ -832,6 +856,7 @@ class _ProductPageState extends State<ProductPage> {
         builder: (ctx) => StatefulBuilder(
             builder: (context, setS) => AlertDialog(
                 title: const Text("표시 항목 설정"),
+                actionsAlignment: MainAxisAlignment.center,
                 content: SizedBox(
                     width: 350,
                     child: SingleChildScrollView(
@@ -855,12 +880,13 @@ class _ProductPageState extends State<ProductPage> {
                     textColor: Colors.black54,
                     onPressed: () { Navigator.pop(ctx); },
                   ),
+                  const SizedBox(width: 8),
                   _buildFlatButton(
                     text: "적용",
                     onPressed: () async {
-                      final nav = Navigator.of(ctx);
+                      final navigator = Navigator.of(ctx);
                       await provider.saveRemoteSettings(temp);
-                      nav.pop();
+                      navigator.pop();
                     },
                   ),
                 ])));
@@ -891,6 +917,7 @@ class _ProductPageState extends State<ProductPage> {
         builder: (ctx) => AlertDialog(
             title: const Text("그룹 일괄 삭제"),
             content: Text("[$groupName] 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?"),
+            actionsAlignment: MainAxisAlignment.center,
             actions: [
               _buildFlatButton(
                 text: "취소",
@@ -898,14 +925,15 @@ class _ProductPageState extends State<ProductPage> {
                 textColor: Colors.black54,
                 onPressed: () { Navigator.pop(ctx); },
               ),
+              const SizedBox(width: 8),
               _buildFlatButton(
                 text: "일괄 삭제",
                 bgColor: AppTheme.danger,
                 onPressed: () async {
-                  final nav = Navigator.of(ctx);
+                  final navigator = Navigator.of(ctx);
                   await provider.deleteMultipleProducts(items.map((e) => e.id).toList());
                   setState(() { _selectedGroupKey = null; });
-                  nav.pop();
+                  navigator.pop();
                 },
               ),
             ]));
@@ -914,46 +942,56 @@ class _ProductPageState extends State<ProductPage> {
   void _showResetDialog(ProductProvider provider) {
     showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(title: const Text("전체 초기화"), content: const Text("모든 정보를 삭제하고 설정을 리셋하시겠습니까?"), actions: [
-          _buildFlatButton(
-            text: "취소",
-            bgColor: Colors.transparent,
-            textColor: Colors.black54,
-            onPressed: () { Navigator.pop(ctx); },
-          ),
-          _buildFlatButton(
-            text: "삭제",
-            bgColor: AppTheme.danger,
-            onPressed: () async {
-              final nav = Navigator.of(ctx);
-              await provider.resetAllProducts();
-              setState(() { _selectedGroupKey = null; });
-              nav.pop();
-            },
-          ),
-        ]));
+        builder: (ctx) => AlertDialog(
+            title: const Text("전체 초기화"),
+            content: const Text("모든 정보를 삭제하고 설정을 리셋하시겠습니까?"),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              _buildFlatButton(
+                text: "취소",
+                bgColor: Colors.transparent,
+                textColor: Colors.black54,
+                onPressed: () { Navigator.pop(ctx); },
+              ),
+              const SizedBox(width: 8),
+              _buildFlatButton(
+                text: "삭제",
+                bgColor: AppTheme.danger,
+                onPressed: () async {
+                  final navigator = Navigator.of(ctx);
+                  await provider.resetAllProducts();
+                  setState(() { _selectedGroupKey = null; });
+                  navigator.pop();
+                },
+              ),
+            ]));
   }
 
   void _confirmIndividualDelete(BuildContext context, ProductProvider provider, ProductModel p) {
     showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(title: const Text("삭제 확인"), content: Text("[${p.name}] 자산을 삭제하시겠습니까?"), actions: [
-          _buildFlatButton(
-            text: "취소",
-            bgColor: Colors.transparent,
-            textColor: Colors.black54,
-            onPressed: () { Navigator.pop(ctx); },
-          ),
-          _buildFlatButton(
-            text: "삭제",
-            bgColor: AppTheme.danger,
-            onPressed: () async {
-              final nav = Navigator.of(ctx);
-              await provider.deleteMultipleProducts([p.id]);
-              nav.pop();
-            },
-          ),
-        ]));
+        builder: (ctx) => AlertDialog(
+            title: const Text("삭제 확인"),
+            content: Text("[${p.name}] 자산을 삭제하시겠습니까?"),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              _buildFlatButton(
+                text: "취소",
+                bgColor: Colors.transparent,
+                textColor: Colors.black54,
+                onPressed: () { Navigator.pop(ctx); },
+              ),
+              const SizedBox(width: 8),
+              _buildFlatButton(
+                text: "삭제",
+                bgColor: AppTheme.danger,
+                onPressed: () async {
+                  final navigator = Navigator.of(ctx);
+                  await provider.deleteMultipleProducts([p.id]);
+                  navigator.pop();
+                },
+              ),
+            ]));
   }
 
   void _showMobileGroupDetail(ProductProvider provider, String groupName, List<ProductModel> items) {
@@ -967,9 +1005,20 @@ class _ProductPageState extends State<ProductPage> {
   void _showInfoDialog(String title, String msg) {
     showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(title: Text(title), content: Text(msg), actions: [
-          _buildFlatButton(text: "확인", onPressed: () { Navigator.pop(ctx); })
-        ]));
+        builder: (ctx) => AlertDialog(
+            title: Text(title),
+            content: Text(msg),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              _buildFlatButton(text: "확인", onPressed: () { Navigator.pop(ctx); })
+            ]));
+  }
+
+  Widget _buildSectionHeader(IconData icon, String title, Color color) {
+    return Column(children: [
+      Row(children: [Icon(icon, color: color, size: 20), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13))]),
+      const Divider(),
+    ]);
   }
 
   Widget _buildEmptyState(String msg) {
@@ -979,13 +1028,6 @@ class _ProductPageState extends State<ProductPage> {
           const SizedBox(height: 16),
           Text(msg, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))
         ]));
-  }
-
-  Widget _buildSectionHeader(IconData icon, String title, Color color) {
-    return Column(children: [
-      Row(children: [Icon(icon, color: color, size: 20), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13))]),
-      const Divider(),
-    ]);
   }
 
   Widget _buildStyledField(String label, TextEditingController ctrl, {TextInputType keyboardType = TextInputType.text, String? hint}) {
@@ -999,23 +1041,15 @@ class _ProductPageState extends State<ProductPage> {
             keyboardType: keyboardType,
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             decoration: InputDecoration(
-              labelText: label,
-              hintText: hint,
-              hintStyle: widget.uiConfig.hintStyle,
-              labelStyle: widget.uiConfig.labelStyle,
-              floatingLabelBehavior: FloatingLabelBehavior.always,
-              filled: true,
-              fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: widget.uiConfig.inputBorderColor),
-              ),
-              contentPadding: const EdgeInsets.fromLTRB(12, 22, 12, 10),
-            ),
+                labelText: label,
+                labelStyle: widget.uiConfig.labelStyle,
+                hintText: hint,
+                hintStyle: widget.uiConfig.hintStyle,
+                filled: true,
+                fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
           );
         }),
       );
@@ -1023,40 +1057,29 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Widget _buildStyledDropdown(String label, String initial, List<String> items, ValueChanged<String?> onChanged) {
-    return StatefulBuilder(
-        builder: (context, setStateField) {
-          return Focus(
-            onFocusChange: (hasFocus) { setStateField(() {}); },
-            child: Builder(
-                builder: (ctx) {
-                  final bool hasFocus = Focus.of(ctx).hasFocus;
-                  return DropdownButtonFormField<String>(
-                    initialValue: initial,
-                    items: items.map((e) {
-                      return DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)));
-                    }).toList(),
-                    onChanged: onChanged,
-                    decoration: InputDecoration(
-                        labelText: label,
-                        labelStyle: widget.uiConfig.labelStyle,
-                        filled: true,
-                        fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-                    ),
-                  );
-                }
-            ),
+    return StatefulBuilder(builder: (context, setStateField) {
+      return Focus(
+        onFocusChange: (hasFocus) { setStateField(() {}); },
+        child: Builder(builder: (ctx) {
+          final bool hasFocus = Focus.of(ctx).hasFocus;
+          return DropdownButtonFormField<String>(
+            initialValue: initial,
+            items: items.map((e) {
+              return DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)));
+            }).toList(),
+            onChanged: onChanged,
+            decoration: InputDecoration(
+                labelText: label,
+                labelStyle: widget.uiConfig.labelStyle,
+                filled: true,
+                fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
           );
-        }
-    );
+        }),
+      );
+    });
   }
 
   Widget _buildGlobalLoadingOverlay(ProductProvider provider) {
@@ -1119,6 +1142,8 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Row(children: [Icon(isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning), const SizedBox(width: 10), Text('${widget.type} 처리')]),
+      // [수정] 다이얼로그 버튼 중앙 정렬
+      actionsAlignment: MainAxisAlignment.center,
       content: SizedBox(
           width: 450,
           child: SingleChildScrollView(
@@ -1136,13 +1161,13 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                 _buildStyledField("비고", _reasonC)
               ]))),
       actions: [
-        // [Flat 적용] 커스텀 빌더 호출
         _buildFlatButton(
           text: "취소",
           bgColor: Colors.transparent,
           textColor: Colors.black54,
           onPressed: () { Navigator.pop(context); },
         ),
+        const SizedBox(width: 12),
         _buildFlatButton(
           text: "확인",
           onPressed: () {
@@ -1153,7 +1178,6 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
     );
   }
 
-  // 내부 커스텀 Flat 버튼 빌더
   Widget _buildFlatButton({
     required String text,
     required VoidCallback onPressed,
@@ -1166,7 +1190,7 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
           decoration: BoxDecoration(
             color: bgColor ?? AppTheme.primary,
             borderRadius: BorderRadius.circular(8),
@@ -1197,7 +1221,7 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                   labelStyle: widget.uiConfig.labelStyle,
                   filled: true,
                   fillColor: hasFocus ? widget.uiConfig.inputFocusColor : widget.uiConfig.inputFillColor,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: hasFocus ? AppTheme.primary : widget.uiConfig.inputBorderColor)),
                   enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: widget.uiConfig.inputBorderColor)),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16)
               )
