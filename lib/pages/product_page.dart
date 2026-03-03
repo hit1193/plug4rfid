@@ -218,24 +218,31 @@ class _ProductPageState extends State<ProductPage> {
         backgroundColor: widget.uiConfig.surfaceColor,
         body: Stack(
           children: [
-            Column(
-              children: [
-                _buildDashboard(metrics),
-                const Divider(),
-                if (provider.isLoading) ...[
-                  const LinearProgressIndicator(minHeight: 2, color: AppTheme.primary)
+            // [최상위 부모] 좌우 10픽셀 여백 적용
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Column(
+                children: [
+                  _buildDashboard(metrics),
+                  // [수정 사항] 수평선도 양쪽 끝에서 추가로 20픽셀 더 들어오도록 설정
+                  const Divider(indent: 20, endIndent: 20),
+                  if (provider.isLoading) ...[
+                    const LinearProgressIndicator(minHeight: 2, color: AppTheme.primary)
+                  ],
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: LayoutBuilder(builder: (ctx, constraints) {
+                        if (constraints.maxWidth > 950 && !widget.isMobile) {
+                          return _buildSplitLayout(provider, groupedMap, groupKeys, filtered);
+                        }
+                        return _buildMobileLayout(provider, groupedMap, groupKeys);
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
                 ],
-                Expanded(
-                  child: LayoutBuilder(builder: (ctx, constraints) {
-                    if (constraints.maxWidth > 950 && !widget.isMobile) {
-                      return _buildSplitLayout(provider, groupedMap, groupKeys, filtered);
-                    }
-                    return _buildMobileLayout(provider, groupedMap, groupKeys);
-                  }),
-                ),
-                // [개선] 화면 하단에 2칸(24px) 정도의 물리적 여백을 두어 카드가 바닥에 붙지 않게 함
-                const SizedBox(height: 24),
-              ],
+              ),
             ),
             if (provider.isParsing || provider.isSaving) ...[
               _buildGlobalLoadingOverlay(provider)
@@ -342,7 +349,6 @@ class _ProductPageState extends State<ProductPage> {
               Expanded(
                 child: RepaintBoundary(
                   child: ListView.separated(
-                    // [개선] 집계 리스트 하단 여유 공간 증대 (60px)
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 60),
                     itemCount: groupKeys.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -360,7 +366,7 @@ class _ProductPageState extends State<ProductPage> {
         Expanded(
           child: Container(
             color: widget.uiConfig.surfaceColor,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.only(left: 16),
             child: RepaintBoundary(
               child: _selectedGroupKey == null
                   ? _buildEmptyState("상세 분석을 위해 집계 내역을 선택하십시오.")
@@ -381,7 +387,6 @@ class _ProductPageState extends State<ProductPage> {
         Expanded(
           child: RepaintBoundary(
             child: ListView.separated(
-              // [개선] 모바일 하단 여백 추가 (80px)
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
               itemCount: groupKeys.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -529,7 +534,6 @@ class _ProductPageState extends State<ProductPage> {
         ),
         Expanded(
           child: ListView.separated(
-            // [개선] 상세 목록 스크롤 끝단 여백 대폭 확대 (100px) - 조작성 향상
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
             cacheExtent: 1000,
             itemCount: displayItems.length,
@@ -1212,7 +1216,7 @@ class _ProductPageState extends State<ProductPage> {
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
     final Map<String, List<ProductModel>> grouped = {};
     for (final item in items) {
-      String key = _groupByMode == 'item' ? item.name : (_groupByMode == 'location' ? (item.location ?? "미지정") : (item.category ?? "미지정"));
+      String key = _groupByMode == 'item' ? item.name : (_groupByMode == 'location' ? (item.location ?? "미지정") : (item.category ?? "미정"));
       grouped.putIfAbsent(key, () => []).add(item);
     }
     return grouped;
