@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'pages/main_page.dart';
 import 'providers/person_provider.dart';
+import 'providers/product_provider.dart';
 import 'providers/device_provider.dart';
 
 void main() async {
@@ -13,27 +14,29 @@ void main() async {
   if (Platform.isWindows) {
     await windowManager.ensureInitialized();
 
-    // 1920x1080 (125%) 환경 최적화 설정
     WindowOptions windowOptions = const WindowOptions(
       size: Size(1440, 760),
-      // [수정] 최소 폭을 400으로 낮추어 모바일 모드(650px 이하) 전환 테스트가 가능하게 합니다.
       minimumSize: Size(400, 600),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.hidden,
+      fullScreen: true,
     );
 
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
+      await windowManager.setFullScreen(true);
     });
   }
 
   runApp(
+    // [핵심] C++Builder의 Global DataModule처럼 모든 Provider를 앱 최상단에 배치합니다.
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => PersonProvider()),
+        ChangeNotifierProvider(create: (_) => ProductProvider()),
         ChangeNotifierProvider(create: (_) => DeviceProvider()),
       ],
       child: const MyApp(),
@@ -54,11 +57,7 @@ class MyApp extends StatelessWidget {
         fontFamily: 'Pretendard',
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF4F46E5),
-          surface: const Color(0xFFF1F5F9),
-        ),
-        textTheme: const TextTheme(
-          bodyLarge: TextStyle(fontSize: 18.0, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
-          bodyMedium: TextStyle(fontSize: 16.0, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+          surface: Colors.white,
         ),
       ),
       home: const MainPage(),
