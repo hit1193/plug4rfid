@@ -38,17 +38,17 @@ class _ProductPageState extends State<ProductPage> {
   String _activeMetricFilter = "전체";
   final String _sortCriteria = 'name';
 
-  // 성능 최적화를 위한 타이머 및 필터 캐시
+  // 성능 최적화를 위한 타이머 및 필터 데이터 캐시
   Timer? _debounceTimer;
   List<ProductModel> _filteredCache = [];
   int _lastRawItemCount = -1;
   String _lastActiveFilter = "";
 
-  // UI 레이아웃 상수
+  // UI 레이아웃 상수 (미니멀리즘 키오스크 스타일)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
-  // [해결] Undefined name '_inboundStatuses' 및 공정 상태 정의
+  // [상태 정의] FA/RFID 공정 단계별 상태 분류 세트
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
@@ -60,7 +60,7 @@ class _ProductPageState extends State<ProductPage> {
   };
   static const Set<String> _exceptionStatuses = {'폐기', '분실'};
 
-  // [해결] Undefined name '_statusIcons' 선언 복구
+  // 상태별 아이콘 데이터
   static final Map<String, IconData> _statusIcons = {
     '보유중': Icons.inventory, '수동입고': Icons.input, '자동입고': Icons.nfc,
     '생산입고': Icons.factory_outlined, '구매입고': Icons.shopping_cart, '적치완료': Icons.shelves,
@@ -72,7 +72,7 @@ class _ProductPageState extends State<ProductPage> {
     '폐기': Icons.delete_forever, '분실': Icons.search_off,
   };
 
-  // [해결] Undefined name '_excludedSystemKeys' 선언 복구
+  // 시스템 필드 제외 리스트 (동적 메타데이터 필드 생성 시 사용)
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
@@ -109,7 +109,7 @@ class _ProductPageState extends State<ProductPage> {
     });
   }
 
-  // --- 실시간 필터링 엔진 ---
+  // --- 실시간 데이터 필터링 엔진 ---
   void _syncFiltering(List<ProductModel> rawItems) {
     final String q = _currentQuery.trim().toLowerCase();
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -185,6 +185,8 @@ class _ProductPageState extends State<ProductPage> {
                   },
                 ),
               ),
+              // 하단 전역 여백 확보
+              const SizedBox(height: 20),
             ],
           ),
           if (provider.isParsing || provider.isSaving) ...[
@@ -195,7 +197,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [복구] 글로벌 로딩 오버레이 ---
+  // --- [구현] 글로벌 로딩 오버레이 ---
   Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
     return Container(
       color: Colors.black.withValues(alpha: 0.1),
@@ -226,7 +228,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 상단 상황판 타일 ---
+  // --- 상단 현황판 섹션 ---
   Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -289,6 +291,7 @@ class _ProductPageState extends State<ProductPage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 좌측: 집계 리스트 영역
         Container(
           width: 420,
           color: theme.scaffoldBackgroundColor,
@@ -297,53 +300,66 @@ class _ProductPageState extends State<ProductPage> {
               _buildHeader(provider, theme),
               _buildFilterBar(theme),
               Expanded(
-                child: groupKeys.isEmpty
-                    ? _buildEmptyState("검색 결과가 없습니다.")
-                    : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
-                  itemCount: groupKeys.length,
-                  separatorBuilder: (ctx, idx) => const SizedBox(height: 10),
-                  itemBuilder: (ctx, idx) => _buildGroupTile(provider, groupKeys[idx], groupedMap[groupKeys[idx]]!, _selectedGroupKey == groupKeys[idx], theme, false),
+                child: Padding(
+                  // [복구] 부모 컨테이너 하단 20px 여백 적용
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: groupKeys.isEmpty
+                      ? _buildEmptyState("검색 결과가 없습니다.")
+                      : ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: groupKeys.length,
+                    separatorBuilder: (ctx, idx) => const SizedBox(height: 10),
+                    itemBuilder: (ctx, idx) => _buildGroupTile(provider, groupKeys[idx], groupedMap[groupKeys[idx]]!, _selectedGroupKey == groupKeys[idx], theme, false),
+                  ),
                 ),
               ),
             ],
           ),
         ),
         VerticalDivider(width: 1, color: theme.dividerTheme.color),
+        // 우측: 상세 정보 영역
         Expanded(
           child: Container(
             color: theme.scaffoldBackgroundColor,
             padding: const EdgeInsets.only(left: 12),
-            child: _selectedGroupKey == null
-                ? _buildEmptyState("항목을 선택하여 상세 정보를 확인하세요.")
-                : _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? [], theme),
+            child: Padding(
+              // [복구] 부모 컨테이너 하단 20px 여백 적용
+              padding: const EdgeInsets.only(bottom: 20),
+              child: _selectedGroupKey == null
+                  ? _buildEmptyState("항목을 선택하여 상세 정보를 확인하세요.")
+                  : _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? [], theme),
+            ),
           ),
         ),
       ],
     );
   }
 
-  // --- [복구] 모바일 레이아웃 ---
+  // --- 모바일 레이아웃 ---
   Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Column(
       children: [
         _buildHeader(provider, theme),
         _buildFilterBar(theme),
         Expanded(
-          child: groupKeys.isEmpty
-              ? _buildEmptyState("항목이 없습니다.")
-              : ListView.separated(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 50),
-            itemCount: groupKeys.length,
-            separatorBuilder: (ctx, idx) => const SizedBox(height: 10),
-            itemBuilder: (ctx, idx) => _buildGroupTile(provider, groupKeys[idx], groupedMap[groupKeys[idx]]!, false, theme, true),
+          child: Padding(
+            // [복구] 부모 컨테이너 하단 20px 여백 적용
+            padding: const EdgeInsets.only(bottom: 20),
+            child: groupKeys.isEmpty
+                ? _buildEmptyState("항목이 없습니다.")
+                : ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: groupKeys.length,
+              separatorBuilder: (ctx, idx) => const SizedBox(height: 10),
+              itemBuilder: (ctx, idx) => _buildGroupTile(provider, groupKeys[idx], groupedMap[groupKeys[idx]]!, false, theme, true),
+            ),
           ),
         ),
       ],
     );
   }
 
-  // --- 상세 리스트 뷰 ---
+  // --- 상세 리스트 뷰 (PersonPage 스타일 연동) ---
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -362,7 +378,7 @@ class _ProductPageState extends State<ProductPage> {
         ),
         Expanded(
           child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 70),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: items.length,
             separatorBuilder: (ctx, idx) => const SizedBox(height: 12),
             itemBuilder: (ctx, idx) {
@@ -491,6 +507,32 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  // --- 집계 필터 바 ('분류별' 복구) ---
+  Widget _buildFilterBar(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+      child: SizedBox(
+        width: double.infinity,
+        child: SegmentedButton<String>(
+          style: SegmentedButton.styleFrom(selectedBackgroundColor: AppTheme.primary, selectedForegroundColor: Colors.white),
+          segments: const [
+            ButtonSegment(value: 'item', label: Text('품명별')),
+            ButtonSegment(value: 'location', label: Text('위치별')),
+            ButtonSegment(value: 'category', label: Text('분류별')),
+          ],
+          selected: {_groupByMode},
+          onSelectionChanged: (v) {
+            setState(() {
+              _groupByMode = v.first;
+              _selectedGroupKey = null;
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  // --- 집계 리스트 타일 (이미지 박스 복구) ---
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, ThemeData theme, bool isMobile) {
     final double healthRatio = items.isEmpty ? 0.0 : items.where((i) => !i.status.contains('출고')).length / items.length;
     final Color hCol = healthRatio == 1.0 ? AppTheme.success : (healthRatio > 0.4 ? AppTheme.warning : AppTheme.danger);
@@ -514,9 +556,10 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
           children: [
-            Icon(Icons.folder_open, color: isSelected ? AppTheme.primary : Colors.grey[400], size: 22),
+            // [복구] 집계 리스트 이미지 썸네일
+            _buildThumbnail(items.first, theme, size: 52),
             const SizedBox(width: 16),
-            Expanded(child: Text(title, style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15))),
+            Expanded(child: Text(title, style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15, color: isSelected ? AppTheme.primary : null))),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(color: hCol.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
@@ -533,48 +576,8 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [복구] 상세 설정 관련 헬퍼 위젯 (ColumnSelection용) ---
-  Widget _buildColumnGroupHeader(String title) {
-    return Row(
-      children: [
-        Container(width: 4, height: 16, decoration: BoxDecoration(color: Colors.blueGrey, borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 10),
-        Text(title, style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.blueGrey, fontSize: 14, letterSpacing: -0.5)),
-      ],
-    );
-  }
+  // --- 유틸리티 및 보조 UI 빌더 ---
 
-  Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged) {
-    final bool isSelected = currentList.contains(label);
-    return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: InkWell(
-            onTap: () {
-              if (isSelected) {
-                if (currentList.length > 1) { currentList.remove(label); }
-              } else {
-                if (currentList.length < 5) { currentList.add(label); }
-              }
-              onChanged(null);
-            },
-            borderRadius: BorderRadius.circular(8),
-            child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(color: isSelected ? AppTheme.primary.withValues(alpha: 0.05) : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: isSelected ? AppTheme.primary : Colors.black12, width: 2.5)),
-                child: Row(
-                    children: [
-                      Icon(isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 20, color: isSelected ? AppTheme.primary : Colors.black26),
-                      const SizedBox(width: 16),
-                      Expanded(child: Text(label, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: isSelected ? AppTheme.primary : Colors.black45)))
-                    ]
-                )
-            )
-        )
-    );
-  }
-
-  // --- 유틸리티 및 데이터 헬퍼 ---
   Widget _buildThumbnail(ProductModel p, ThemeData theme, {double size = 44}) {
     final String url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
     final Uri? uri = Uri.tryParse(url);
@@ -583,7 +586,11 @@ class _ProductPageState extends State<ProductPage> {
     if (url.isEmpty || uri == null || !uri.hasScheme || !uri.hasAuthority) {
       return Container(
         width: size, height: size,
-        decoration: BoxDecoration(color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5), borderRadius: BorderRadius.circular(14), border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)),
+        decoration: BoxDecoration(
+          color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5),
+        ),
         child: const Icon(Icons.inventory_2_outlined, color: Colors.black12, size: 24),
       );
     }
@@ -593,7 +600,11 @@ class _ProductPageState extends State<ProductPage> {
 
     return Container(
       width: size, height: size,
-      decoration: BoxDecoration(color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5), borderRadius: BorderRadius.circular(14), border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)),
+      decoration: BoxDecoration(
+        color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Image.network(
         fullUrl,
@@ -604,10 +615,10 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Color _getStatusColor(String status) {
-    if (_inboundStatuses.contains(status)) return AppTheme.success;
-    if (_processStatuses.contains(status)) return Colors.blueAccent;
-    if (_exceptionStatuses.contains(status)) return AppTheme.danger;
-    if (_outboundStatuses.contains(status)) return Colors.grey;
+    if (_inboundStatuses.contains(status)) { return AppTheme.success; }
+    if (_processStatuses.contains(status)) { return Colors.blueAccent; }
+    if (_exceptionStatuses.contains(status)) { return AppTheme.danger; }
+    if (_outboundStatuses.contains(status)) { return Colors.grey; }
     return AppTheme.warning;
   }
 
@@ -628,30 +639,8 @@ class _ProductPageState extends State<ProductPage> {
     return Tooltip(message: tip, child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(10), child: Container(width: 52, height: 52, alignment: Alignment.center, child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24))));
   }
 
-  Widget _buildFilterBar(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-      child: SizedBox(
-        width: double.infinity,
-        child: SegmentedButton<String>(
-          style: SegmentedButton.styleFrom(selectedBackgroundColor: AppTheme.primary, selectedForegroundColor: Colors.white),
-          segments: const [
-            ButtonSegment(value: 'item', label: Text('품명별')),
-            ButtonSegment(value: 'location', label: Text('위치별')),
-          ],
-          selected: {_groupByMode},
-          onSelectionChanged: (v) {
-            setState(() {
-              _groupByMode = v.first;
-              _selectedGroupKey = null;
-            });
-          },
-        ),
-      ),
-    );
-  }
+  // --- 비동기 안전 로직 (Async Gap 해결 패턴) ---
 
-  // --- 비동기 안전 로직 (Async Gap 해결) ---
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
@@ -661,7 +650,7 @@ class _ProductPageState extends State<ProductPage> {
       builder: (ctx) => _ManualInoutDialog(type: type, product: p, statusIcons: _statusIcons),
     );
 
-    if (result == null || !mounted) return;
+    if (result == null || !mounted) { return; }
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     final bool isApproved = result['is_approved'] ?? true;
@@ -870,6 +859,48 @@ class _ProductPageState extends State<ProductPage> {
     )));
   }
 
+  // [구현] 칼럼 설정 헤더 빌더
+  Widget _buildColumnGroupHeader(String title) {
+    return Row(
+      children: [
+        Container(width: 4, height: 16, decoration: BoxDecoration(color: Colors.blueGrey, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.blueGrey, fontSize: 14, letterSpacing: -0.5)),
+      ],
+    );
+  }
+
+  // [구현] 칼럼 선택 아이템 빌더
+  Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged) {
+    final bool isSelected = currentList.contains(label);
+    return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: InkWell(
+            onTap: () {
+              if (isSelected) {
+                if (currentList.length > 1) { currentList.remove(label); }
+              } else {
+                if (currentList.length < 5) { currentList.add(label); }
+              }
+              onChanged(null);
+            },
+            borderRadius: BorderRadius.circular(8),
+            child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(color: isSelected ? AppTheme.primary.withValues(alpha: 0.05) : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: isSelected ? AppTheme.primary : Colors.black12, width: 2.5)),
+                child: Row(
+                    children: [
+                      Icon(isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 20, color: isSelected ? AppTheme.primary : Colors.black26),
+                      const SizedBox(width: 16),
+                      Expanded(child: Text(label, style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: isSelected ? AppTheme.primary : Colors.black45)))
+                    ]
+                )
+            )
+        )
+    );
+  }
+
   void _showResetDialog(ProductProvider provider, ThemeData theme) {
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
@@ -906,19 +937,8 @@ class _ProductPageState extends State<ProductPage> {
     })]));
   }
 
-  // --- 유틸리티 UI ---
+  // --- 유틸리티 UI 헬퍼 ---
   Widget _buildEmptyState(String msg) => Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.inventory_2_outlined, size: 48, color: Colors.black12), const SizedBox(height: 16), Text(msg, style: const TextStyle(color: Colors.black26, fontWeight: FontWeight.bold))]));
-
-  Widget _buildIconicDropdown({required String label, required String initialValue, required List<String> items, required Map<String, IconData> statusIcons, required ValueChanged<String?> onChanged, required BuildContext context}) {
-    final List<String> safeItems = List.from(items);
-    if (!safeItems.contains(initialValue)) { safeItems.add(initialValue); }
-    return DropdownButtonFormField<String>(
-        initialValue: initialValue,
-        decoration: AppTheme.inputDecoration(label: label, context: context),
-        items: safeItems.map((v) => DropdownMenuItem(value: v, child: Row(children: [Icon(statusIcons[v] ?? Icons.help_outline, size: 18), const SizedBox(width: 12), Text(v, style: const TextStyle(fontWeight: FontWeight.w600))]))).toList(),
-        onChanged: onChanged
-    );
-  }
 
   Widget _buildSectionHeader(IconData icon, String title, Color color) {
     return Column(children: [Row(children: [Icon(icon, color: color, size: 20), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13))]), const Divider(color: Colors.black12)]);
@@ -931,9 +951,15 @@ class _ProductPageState extends State<ProductPage> {
       final lastDate = item.updated ?? item.created ?? "";
       final bool isOut = _outboundStatuses.contains(item.status) || _exceptionStatuses.contains(item.status);
       if (lastDate.startsWith(todayStr)) {
-        if (!isOut) { todayIn++; } else { todayOut++; }
+        if (!isOut) {
+          todayIn++;
+        } else {
+          todayOut++;
+        }
       }
-      if (!isOut) { currentStock++; }
+      if (!isOut) {
+        currentStock++;
+      }
     }
     return {'in': todayIn, 'out': todayOut, 'stock': currentStock};
   }
@@ -941,15 +967,27 @@ class _ProductPageState extends State<ProductPage> {
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
     final Map<String, List<ProductModel>> grouped = {};
     for (var i in items) {
-      String key = _groupByMode == 'item' ? i.name : (i.location ?? "미지정");
+      String key = _groupByMode == 'item' ? i.name : (_groupByMode == 'location' ? (i.location ?? "미지정") : (i.category ?? "미정"));
       if (!grouped.containsKey(key)) { grouped[key] = []; }
       grouped[key]!.add(i);
     }
     return grouped;
   }
+
+  Widget _buildIconicDropdown({required String label, required String initialValue, required List<String> items, required Map<String, IconData> statusIcons, required ValueChanged<String?> onChanged, required BuildContext context}) {
+    final List<String> safeItems = List.from(items);
+    if (!safeItems.contains(initialValue)) { safeItems.add(initialValue); }
+    return DropdownButtonFormField<String>(
+        initialValue: initialValue,
+        decoration: AppTheme.inputDecoration(label: label, context: context),
+        items: safeItems.map((v) => DropdownMenuItem(value: v, child: Row(children: [Icon(statusIcons[v] ?? Icons.help_outline, size: 18), const SizedBox(width: 12), Text(v, style: const TextStyle(fontWeight: FontWeight.w600))]))).toList(),
+        onChanged: onChanged
+    );
+  }
 }
 
-// --- [해결] 수동 입출고 다이얼로그 및 context 갭 해결 ---
+// --- 수동 입출고 다이얼로그 (BOLD 스타일 복구) ---
+
 class _ManualInoutDialog extends StatefulWidget {
   final String type; final ProductModel product; final Map<String, IconData> statusIcons;
   const _ManualInoutDialog({required this.type, required this.product, required this.statusIcons});
@@ -982,7 +1020,10 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
             items: (isIn
                 ? ['보유중', '수동입고', '회수/반납', '생산입고', '구매입고']
                 : ['수동출고', '판매/배송출고', '대여출고', '수리출고', '폐기', '분실']
-            ).map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+            ).map((v) => DropdownMenuItem(
+                value: v,
+                child: Text(v, style: const TextStyle(fontWeight: FontWeight.bold))
+            )).toList(),
             onChanged: (v) { if (v != null) { setState(() => _selS = v); } },
           ),
           const SizedBox(height: 16),
@@ -991,7 +1032,13 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
           Autocomplete<String>(
             optionsBuilder: (val) => workerList.where((o) => o.contains(val.text)),
             onSelected: (s) => _selectedHandler = s,
-            fieldViewBuilder: (ctx, ctrl, focus, __) => TextField(controller: ctrl, focusNode: focus, style: AppTheme.itemValueStyle(context), decoration: AppTheme.inputDecoration(label: "담당 작업자", context: context, hasFocus: focus.hasFocus)),
+            fieldViewBuilder: (ctx, ctrl, focus, __) => TextField(
+                controller: ctrl,
+                focusNode: focus,
+                // [복구] 작업자 선택 텍스트 Bold 적용
+                style: AppTheme.itemValueStyle(context).copyWith(fontWeight: FontWeight.bold),
+                decoration: AppTheme.inputDecoration(label: "담당 작업자", context: context, hasFocus: focus.hasFocus)
+            ),
           ),
           const SizedBox(height: 20),
           Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
