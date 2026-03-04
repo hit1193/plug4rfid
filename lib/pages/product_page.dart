@@ -106,6 +106,7 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
+  // --- 실시간 검색 및 필터링 엔진 ---
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
       _debounceTimer!.cancel();
@@ -203,6 +204,7 @@ class _ProductPageState extends State<ProductPage> {
               const SizedBox(height: 20),
             ],
           ),
+          // [해결] Collection-if 내부의 중괄호를 제거하여 Set 타입 에러 수정
           if (provider.isParsing || provider.isSaving)
             _buildGlobalLoadingOverlay(provider, theme),
         ],
@@ -228,7 +230,6 @@ class _ProductPageState extends State<ProductPage> {
       case 'S/N':
         return p.serialNumber ?? "-";
       default:
-      // 메타데이터에서 키를 찾아 반환
         return p.metadata[label]?.toString() ?? "-";
     }
   }
@@ -278,6 +279,7 @@ class _ProductPageState extends State<ProductPage> {
                                 Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18)),
                                 const SizedBox(width: 12),
                                 _buildStatusBadge(p.status),
+                                // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                                 if (!p.isApproved)
                                   Padding(
                                     padding: const EdgeInsets.only(left: 8),
@@ -286,7 +288,6 @@ class _ProductPageState extends State<ProductPage> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            // 설정에서 선택된 컬럼들만 동적으로 렌더링
                             Wrap(
                               spacing: 20,
                               runSpacing: 10,
@@ -467,6 +468,7 @@ class _ProductPageState extends State<ProductPage> {
                     children: [
                       SizedBox(width: 460, child: _buildTextField(snC, "시리얼 번호 (S/N)", theme, context)),
                       SizedBox(width: 460, child: _buildTextField(safeC, "안전 재고 임계치 (숫자만 입력)", theme, context)),
+                      // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                       if (p == null)
                         SizedBox(width: 460, child: _buildTextField(qtyC, "생성 수량 (일괄 생성 개수)", theme, context)),
                     ],
@@ -474,6 +476,7 @@ class _ProductPageState extends State<ProductPage> {
                   const SizedBox(height: 40),
                   _buildSectionHeader(Icons.add_to_photos_rounded, "추가 확장 정보 (Metadata)", Colors.green),
                   const SizedBox(height: 20),
+                  // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                   if (metaControllers.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 20),
@@ -485,7 +488,7 @@ class _ProductPageState extends State<ProductPage> {
                     children: metaControllers.entries.map((e) {
                       return SizedBox(
                           width: 460,
-                          child: _buildTextField(e.value, "속성: ${e.key}", theme, context)
+                          child: _buildTextField(e.value, e.key, theme, context)
                       );
                     }).toList(),
                   ),
@@ -1037,17 +1040,14 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [수정] 표시 항목 설정 다이얼로그 (내부 필드 필터링 강화) ---
   void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
     final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
     final Set<String> metaKeySet = {};
 
-    // 데이터셋의 상위 항목들로부터 메타데이터 키 추출
     for (var item in provider.items.take(100)) {
       for (var entry in item.metadata.entries) {
         final k = entry.key;
         final v = entry.value;
-        // 시스템 제외 키, internal 접미사 필드, Map/List 구조의 복잡 필드 제외
         if (!_excludedSystemKeys.contains(k) &&
             !k.endsWith('_internal') &&
             v is! Map &&
@@ -1081,6 +1081,7 @@ class _ProductPageState extends State<ProductPage> {
                             const SizedBox(height: 32),
                             _buildColumnGroupHeader("추가 확장 정보"),
                             const SizedBox(height: 12),
+                            // [해결] Collection-if/else 내부의 중괄호를 제거하여 Set 타입 에러 수정
                             if (metaFields.isEmpty)
                               const Text("추가된 메타데이터가 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard))
                             else
