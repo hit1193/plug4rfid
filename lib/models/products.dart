@@ -21,14 +21,13 @@ class ProductModel {
   final String? serialNumber;
   final String? manufacturer;
 
-  // [출입 승인 필드] - PocketBase 최상위 필드와 동기화
+  // [출입 승인 필드]
   final bool isApproved;
 
   // [시스템 필드]
   final DateTime? lastSeen;
 
-  /// [핵심] 변경 이력 및 사용자 정의 데이터가 저장되는 필드
-  /// 이력은 metadata['history'] 에 List 형태로 저장됩니다.
+  /// [핵심] 실제 사용자 정의 데이터만 저장되는 필드
   final Map<String, dynamic> metadata;
 
   final String? image;
@@ -48,12 +47,12 @@ class ProductModel {
     this.location,
     this.spec,
     this.category,
-    this.status = '정상',
+    this.status = '보유중',
     this.remarks,
     this.unit = 'ea',
     this.serialNumber,
     this.manufacturer,
-    this.isApproved = true, // 기본값은 승인 상태
+    this.isApproved = true,
     this.lastSeen,
     this.metadata = const {},
     this.image,
@@ -62,7 +61,6 @@ class ProductModel {
     this.originKeyMap = const {},
   });
 
-  /// [보탬] 변경 이력만 따로 뽑아주는 Getter (UI에서 리스트로 뿌릴 때 사용)
   List<Map<String, dynamic>> get history {
     if (metadata.containsKey('history') && metadata['history'] is List) {
       return List<Map<String, dynamic>>.from(metadata['history']);
@@ -70,7 +68,6 @@ class ProductModel {
     return [];
   }
 
-  /// 시스템이 기본적으로 알고 있는 별칭들
   static const Map<String, List<String>> _aliasDefinition = {
     'name': ['품명', '제품명', '자산명', 'Item Name'],
     'tag_id': ['태그ID', 'RFID', 'EPC', 'Barcode'],
@@ -85,15 +82,19 @@ class ProductModel {
   };
 
   factory ProductModel.fromJson(Map<String, dynamic> json) {
-    final Map<String, dynamic> meta = Map<String, dynamic>.from(json['metadata'] ?? json);
+    // [수정] metadata가 없을 때 전체 json을 대입하지 않도록 방어 (시스템 필드 혼입 방지)
+    final Map<String, dynamic> meta = (json['metadata'] is Map)
+        ? Map<String, dynamic>.from(json['metadata'])
+        : {};
+
     final Map<String, String> usedKeys = {};
 
     String? findValue(String systemKey) {
-      final aliases = _aliasDefinition[systemKey] ?? [];
-      if (json.containsKey(systemKey)) {
+      if (json.containsKey(systemKey) && json[systemKey] != null) {
         usedKeys[systemKey] = systemKey;
-        return json[systemKey]?.toString();
+        return json[systemKey].toString();
       }
+      final aliases = _aliasDefinition[systemKey] ?? [];
       for (var alias in aliases) {
         if (meta.containsKey(alias)) {
           usedKeys[systemKey] = alias;
@@ -103,7 +104,6 @@ class ProductModel {
       return null;
     }
 
-    // 승인 상태 추출 (JSON 루트 우선, 없으면 metadata, 그마저도 없으면 true)
     final dynamic approvedJson = json['is_approved'];
     final bool approvedValue = approvedJson is bool
         ? approvedJson
@@ -119,7 +119,7 @@ class ProductModel {
       location: findValue('location'),
       spec: findValue('spec'),
       category: findValue('category'),
-      status: findValue('status') ?? '정상',
+      status: findValue('status') ?? '보유중',
       remarks: findValue('remarks'),
       unit: findValue('unit') ?? 'ea',
       serialNumber: findValue('serial_number'),
@@ -136,23 +136,6 @@ class ProductModel {
 
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> syncedMeta = Map<String, dynamic>.from(metadata);
-
-    void sync(String systemKey, dynamic value) {
-      final originKey = originKeyMap[systemKey] ?? systemKey;
-      syncedMeta[originKey] = value;
-    }
-
-    sync('name', name);
-    if (location != null) sync('location', location);
-    if (spec != null) sync('spec', spec);
-    if (category != null) sync('category', category);
-    if (status != '정상') sync('status', status);
-    if (remarks != null) sync('remarks', remarks);
-    if (manufacturer != null) sync('manufacturer', manufacturer);
-    if (serialNumber != null) sync('serial_number', serialNumber);
-    if (unit != null) sync('unit', unit);
-    sync('is_approved', isApproved);
-
     return {
       'name': name,
       'tag_id': tagId,
@@ -173,30 +156,8 @@ class ProductModel {
     };
   }
 
-  String getValue(String key) {
-    switch (key) {
-      case '품명': return name;
-      case 'TAG ID': return tagId;
-      case '수량': return "$quantity $unit";
-      case '상태': return status;
-      case '위치': return location ?? "-";
-      case '규격': return spec ?? "-";
-      case '제조사': return manufacturer ?? "-";
-      case 'S/N': return serialNumber ?? "-";
-      case '비고': return remarks ?? "-";
-      case '승인여부': return isApproved ? "승인" : "미승인";
-      default:
-        if (metadata.containsKey(key)) {
-          return metadata[key].toString();
-        }
-        return "-";
-    }
-  }
-
-  String? getImageUrl(String baseUrl, {String thumb = ''}) {
-    if (image == null || image!.isEmpty || id.isEmpty) {
-      return null;
-    }
+  String getImageUrl(String baseUrl, {String thumb = ''}) {
+    if (image == null || image!.isEmpty || id.isEmpty) return '';
     return '$baseUrl/api/files/$collectionId/$id/$image${thumb.isNotEmpty ? '?thumb=$thumb' : ''}';
   }
 
