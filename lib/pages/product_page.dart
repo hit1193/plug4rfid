@@ -204,7 +204,6 @@ class _ProductPageState extends State<ProductPage> {
               const SizedBox(height: 20),
             ],
           ),
-          // [해결] Collection-if 내부의 중괄호를 제거하여 Set 타입 에러 수정
           if (provider.isParsing || provider.isSaving)
             _buildGlobalLoadingOverlay(provider, theme),
         ],
@@ -234,7 +233,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  // --- 상세 리스트 뷰 ---
+  // --- 상세 리스트 뷰 (품명 19px로 키움) ---
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -276,10 +275,10 @@ class _ProductPageState extends State<ProductPage> {
                           children: [
                             Row(
                               children: [
-                                Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18)),
+                                // [수정] 품명 글자 크기를 17에서 19로 키워 시인성을 극대화함
+                                Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
                                 const SizedBox(width: 12),
                                 _buildStatusBadge(p.status),
-                                // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                                 if (!p.isApproved)
                                   Padding(
                                     padding: const EdgeInsets.only(left: 8),
@@ -468,7 +467,6 @@ class _ProductPageState extends State<ProductPage> {
                     children: [
                       SizedBox(width: 460, child: _buildTextField(snC, "시리얼 번호 (S/N)", theme, context)),
                       SizedBox(width: 460, child: _buildTextField(safeC, "안전 재고 임계치 (숫자만 입력)", theme, context)),
-                      // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                       if (p == null)
                         SizedBox(width: 460, child: _buildTextField(qtyC, "생성 수량 (일괄 생성 개수)", theme, context)),
                     ],
@@ -476,7 +474,6 @@ class _ProductPageState extends State<ProductPage> {
                   const SizedBox(height: 40),
                   _buildSectionHeader(Icons.add_to_photos_rounded, "추가 확장 정보 (Metadata)", Colors.green),
                   const SizedBox(height: 20),
-                  // [해결] 중괄호를 제거하여 Set 타입 에러 수정
                   if (metaControllers.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 20),
@@ -1015,7 +1012,10 @@ class _ProductPageState extends State<ProductPage> {
                                         TextSpan(text: '위치: ', style: AppTheme.itemLabelStyle(context)),
                                         TextSpan(text: '${log['location'] ?? '-'}  ', style: const TextStyle(fontWeight: FontWeight.w600)),
                                         TextSpan(text: '담당: ', style: AppTheme.itemLabelStyle(context)),
-                                        TextSpan(text: '${log['handler'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        TextSpan(
+                                            text: '${log['handler'] ?? '-'}',
+                                            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.blueGrey)
+                                        ),
                                       ]
                                   )
                               ),
@@ -1081,7 +1081,6 @@ class _ProductPageState extends State<ProductPage> {
                             const SizedBox(height: 32),
                             _buildColumnGroupHeader("추가 확장 정보"),
                             const SizedBox(height: 12),
-                            // [해결] Collection-if/else 내부의 중괄호를 제거하여 Set 타입 에러 수정
                             if (metaFields.isEmpty)
                               const Text("추가된 메타데이터가 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard))
                             else
@@ -1467,7 +1466,9 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
             const SizedBox(height: 16),
             Autocomplete<String>(
               optionsBuilder: (val) => workerList.where((o) => o.contains(val.text)),
-              onSelected: (s) => _selectedHandler = s,
+              onSelected: (s) {
+                _selectedHandler = s;
+              },
               fieldViewBuilder: (ctx, ctrl, focus, __) => TextField(controller: ctrl, focusNode: focus, style: AppTheme.itemValueStyle(context).copyWith(fontWeight: FontWeight.bold), decoration: AppTheme.inputDecoration(label: "담당 작업자", context: context, hasFocus: focus.hasFocus)),
             ),
             const SizedBox(height: 20),
