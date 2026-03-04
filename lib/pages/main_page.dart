@@ -84,7 +84,7 @@ class _MainPageState extends State<MainPage> {
               if (!isMobile) ...[
                 _buildSidebar(isDesktop),
               ],
-              // 메인 컨텐츠 영역 (0px 시작)
+              // 메인 컨텐츠 영역
               Expanded(
                 child: Container(
                   margin: EdgeInsets.zero,
@@ -116,7 +116,7 @@ class _MainPageState extends State<MainPage> {
       ),
       child: Column(
         children: [
-          // [핵심 추가] 사이드바 최상단 로고 이미지
+          // 사이드바 최상단 로고 이미지
           _buildSidebarLogo(extended),
 
           Expanded(
@@ -129,14 +129,13 @@ class _MainPageState extends State<MainPage> {
             ),
           ),
 
-          // 하단 시스템 제어 (최소화, 종료 등)
+          // 하단 시스템 제어 (키오스크 모드 전환 및 종료)
           _buildSidebarSystemActions(extended),
         ],
       ),
     );
   }
 
-  // [신규] 로고 빌더 (PLUG4ASSET.png 사용)
   Widget _buildSidebarLogo(bool extended) {
     return Container(
       padding: EdgeInsets.symmetric(vertical: extended ? 40 : 20, horizontal: 10),
@@ -148,7 +147,6 @@ class _MainPageState extends State<MainPage> {
           child: Image.asset(
             'assets/images/PLUG4ASSET.png',
             fit: BoxFit.contain,
-            // 이미지 로드 실패 시 대체 아이콘 (C++Builder의 OnError 처리와 동일)
             errorBuilder: (ctx, err, stack) => Icon(
               Icons.api_rounded,
               size: extended ? 60 : 30,
@@ -168,17 +166,7 @@ class _MainPageState extends State<MainPage> {
       ),
       child: Column(
         children: [
-          if (Platform.isWindows) ...[
-            _buildSidebarActionButton(
-              icon: Icons.minimize,
-              label: "창 최소화",
-              extended: extended,
-              onTap: () async {
-                await windowManager.minimize();
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+          // [수정] 창 최소화 버튼 제거됨
           _buildSidebarActionButton(
             icon: Icons.lock_open,
             label: "KIOSK MODE",

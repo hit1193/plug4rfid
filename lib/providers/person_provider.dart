@@ -99,7 +99,6 @@ class PersonProvider extends ChangeNotifier {
       if (e.statusCode == 404) {
         debugPrint("ℹ️ 서버에 저장된 설정이 없습니다. 기본 설정을 사용합니다.");
       } else {
-        // e.message 대신 e.toString() 또는 e.response['message'] 사용
         debugPrint("❌ 설정 로드 중 통신 오류: ${e.toString()}");
       }
     } catch (e) {
@@ -152,7 +151,7 @@ class PersonProvider extends ChangeNotifier {
     }
   }
 
-  /// [엑셀 임포트] 컬럼이 달라도 metadata/original_row_data에 모두 보존함
+  /// [엑셀 임포트] 매핑 키워드 강화 (부서->담당부서, 사원번호->사번/ID)
   Future<int> batchImportFromExcel() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -192,13 +191,15 @@ class PersonProvider extends ChangeNotifier {
           String name = _getExcelValue(row, ['성명', '이름', 'Name', 'name']);
           if (name.isEmpty) continue;
 
-          String code = _getExcelValue(row, ['사번', '코드', 'Code', 'code']);
+          // [수정] '사원번호' 키워드 추가
+          String code = _getExcelValue(row, ['사원번호', '사번', '코드', 'Code', 'code']);
           if (code.isEmpty) code = "T-${DateTime.now().millisecondsSinceEpoch % 100000}";
 
           final body = {
             'name': name,
             'code': code,
-            'department': _getExcelValue(row, ['부서', '소속', 'Dept']),
+            // [수정] '부서'가 포함된 정보를 담당부서로 인식하도록 우선순위 조정
+            'department': _getExcelValue(row, ['담당부서', '부서', '소속', 'Dept']),
             'tag_id': _getExcelValue(row, ['태그', 'EPC', 'RFID', 'tag_id']),
             'is_active': true,
             'role': 'Operator',

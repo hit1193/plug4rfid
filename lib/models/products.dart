@@ -21,6 +21,9 @@ class ProductModel {
   final String? serialNumber;
   final String? manufacturer;
 
+  // [출입 승인 필드] - PocketBase 최상위 필드와 동기화
+  final bool isApproved;
+
   // [시스템 필드]
   final DateTime? lastSeen;
 
@@ -50,6 +53,7 @@ class ProductModel {
     this.unit = 'ea',
     this.serialNumber,
     this.manufacturer,
+    this.isApproved = true, // 기본값은 승인 상태
     this.lastSeen,
     this.metadata = const {},
     this.image,
@@ -77,6 +81,7 @@ class ProductModel {
     'unit': ['단위', 'Unit'],
     'quantity': ['수량', '재고', 'Qty'],
     'safety_stock': ['안전재고', '기준재고', 'Min Stock'],
+    'is_approved': ['승인여부', '승인상태', 'Approval'],
   };
 
   factory ProductModel.fromJson(Map<String, dynamic> json) {
@@ -98,6 +103,12 @@ class ProductModel {
       return null;
     }
 
+    // 승인 상태 추출 (JSON 루트 우선, 없으면 metadata, 그마저도 없으면 true)
+    final dynamic approvedJson = json['is_approved'];
+    final bool approvedValue = approvedJson is bool
+        ? approvedJson
+        : (meta['last_approval_status'] ?? true);
+
     return ProductModel(
       id: json['id'] ?? '',
       collectionId: json['collectionId'] ?? 'products',
@@ -113,6 +124,7 @@ class ProductModel {
       unit: findValue('unit') ?? 'ea',
       serialNumber: findValue('serial_number'),
       manufacturer: findValue('manufacturer'),
+      isApproved: approvedValue,
       lastSeen: json['last_seen'] != null ? DateTime.tryParse(json['last_seen']) : null,
       metadata: meta,
       originKeyMap: usedKeys,
@@ -139,6 +151,7 @@ class ProductModel {
     if (manufacturer != null) sync('manufacturer', manufacturer);
     if (serialNumber != null) sync('serial_number', serialNumber);
     if (unit != null) sync('unit', unit);
+    sync('is_approved', isApproved);
 
     return {
       'name': name,
@@ -153,6 +166,7 @@ class ProductModel {
       'unit': unit,
       'serial_number': serialNumber,
       'manufacturer': manufacturer,
+      'is_approved': isApproved,
       'last_seen': lastSeen?.toIso8601String(),
       'metadata': syncedMeta,
       'origin_key_map': originKeyMap,
@@ -170,14 +184,19 @@ class ProductModel {
       case '제조사': return manufacturer ?? "-";
       case 'S/N': return serialNumber ?? "-";
       case '비고': return remarks ?? "-";
+      case '승인여부': return isApproved ? "승인" : "미승인";
       default:
-        if (metadata.containsKey(key)) return metadata[key].toString();
+        if (metadata.containsKey(key)) {
+          return metadata[key].toString();
+        }
         return "-";
     }
   }
 
   String? getImageUrl(String baseUrl, {String thumb = ''}) {
-    if (image == null || image!.isEmpty || id.isEmpty) return null;
+    if (image == null || image!.isEmpty || id.isEmpty) {
+      return null;
+    }
     return '$baseUrl/api/files/$collectionId/$id/$image${thumb.isNotEmpty ? '?thumb=$thumb' : ''}';
   }
 
