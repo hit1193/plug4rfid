@@ -38,7 +38,6 @@ class _ProductPageState extends State<ProductPage> {
   String _activeMetricFilter = "전체";
   final String _sortCriteria = 'name';
 
-  // 성능 최적화 및 필터링 캐시
   Timer? _debounceTimer;
   List<ProductModel> _filteredCache = [];
   int _lastRawItemCount = -1;
@@ -47,7 +46,7 @@ class _ProductPageState extends State<ProductPage> {
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
-  // FA/RFID 공정 상태 정의
+  // FA/RFID 공정 단계별 상태 분류 세트
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
@@ -85,10 +84,11 @@ class _ProductPageState extends State<ProductPage> {
     '분실': Icons.search_off,
   };
 
+  // 시스템 내부 관리용 키 정의 (사용자 노출 제외)
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
-    'origin_key_map', 'history', 'last_location_info',
+    'origin_key_map', 'history', 'last_location_info', 'is_approved',
     'last_handler', 'last_manual_reason', 'last_processed_at', 'last_approval_status'
   };
 
@@ -106,7 +106,6 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
-  // --- 실시간 검색 엔진 ---
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
       _debounceTimer!.cancel();
@@ -208,6 +207,127 @@ class _ProductPageState extends State<ProductPage> {
             _buildGlobalLoadingOverlay(provider, theme),
         ],
       ),
+    );
+  }
+
+  // --- 설정된 컬럼에 따른 데이터 매핑 로직 ---
+  String _getAttributeValue(String label, ProductModel p) {
+    switch (label) {
+      case '품명':
+        return p.name;
+      case '태그ID':
+        return p.tagId;
+      case '위치':
+        return p.location ?? "-";
+      case '상태':
+        return p.status;
+      case '규격':
+        return p.spec ?? "-";
+      case '분류':
+        return p.category ?? "-";
+      case 'S/N':
+        return p.serialNumber ?? "-";
+      default:
+      // 메타데이터에서 키를 찾아 반환
+        return p.metadata[label]?.toString() ?? "-";
+    }
+  }
+
+  // --- 상세 리스트 뷰 ---
+  Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          alignment: Alignment.centerLeft,
+          child: Row(
+            children: [
+              Container(width: 4, height: 20, color: AppTheme.primary),
+              const SizedBox(width: 12),
+              Text(groupName, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18)),
+              const Spacer(),
+              Text('총 ${items.length}개 항목', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: items.length,
+            separatorBuilder: (ctx, idx) => const SizedBox(height: 12),
+            itemBuilder: (ctx, idx) {
+              final p = items[idx];
+              final statusColor = _getStatusColor(p.status);
+
+              return InkWell(
+                onTap: () => _showForm(provider, p, theme),
+                borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: AppTheme.listItemDecoration(context, isSelected: false, statusColor: statusColor),
+                  child: Row(
+                    children: [
+                      _buildThumbnail(p, theme, size: _colImgSize),
+                      const SizedBox(width: 20),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18)),
+                                const SizedBox(width: 12),
+                                _buildStatusBadge(p.status),
+                                if (!p.isApproved)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // 설정에서 선택된 컬럼들만 동적으로 렌더링
+                            Wrap(
+                              spacing: 20,
+                              runSpacing: 10,
+                              children: provider.selectedColumns.map((colName) {
+                                if (colName == '품명') {
+                                  return const SizedBox.shrink();
+                                }
+                                return _buildKeyValue(colName, _getAttributeValue(colName, p), context);
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              p.metadata['last_location_info']?['full_name'] ?? "최근 위치 기록 없음",
+                              style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        width: _colActionWidth,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () => _showHistoryDialog(context, p, theme)),
+                            const SizedBox(width: 12),
+                            _buildCircleAction(Icons.login, AppTheme.success, "입고", () => _processAssetAccess(provider, p, '수기입고', theme)),
+                            const SizedBox(width: 12),
+                            _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () => _processAssetAccess(provider, p, '수기출고', theme)),
+                            const SizedBox(width: 12),
+                            _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () => _confirmIndividualDelete(provider, p, theme)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -441,121 +561,17 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 보조 UI 빌더 ---
+  // --- 보조 UI 빌더 메서드 ---
 
-  Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme, BuildContext ctx) {
-    return TextField(
-        controller: ctrl,
-        style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w600),
-        decoration: AppTheme.inputDecoration(label: label, context: ctx)
-    );
-  }
-
-  Widget _buildSectionHeader(IconData icon, String title, Color color) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(width: 10),
-            Text(
-                title,
-                style: TextStyle(
-                    fontFamily: AppTheme.fontPretendard,
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                    fontSize: 15,
-                    letterSpacing: -0.5
-                )
-            )
-          ],
-        ),
-        const SizedBox(height: 8),
-        Divider(color: color.withValues(alpha: 0.2), thickness: 2),
-      ],
-    );
-  }
-
-  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.3),
-      child: Center(
-        child: Card(
-          elevation: 10,
-          color: theme.cardTheme.color,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
-                const SizedBox(height: 25),
-                Text(
-                  provider.isParsing ? "데이터 분석 중..." : "서버 통신 중...",
-                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      color: theme.scaffoldBackgroundColor,
-      child: Row(
+  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
+    return SizedBox(
+      width: 140,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: _buildStatTile("자산 마스터", totalCount, Icons.list_alt, Colors.blueGrey, theme, filterKey: "전체")),
-          const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("금일 입고", m['in'] as int, Icons.add_business_outlined, AppTheme.success, theme, filterKey: "금일 입고")),
-          const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("금일 출고", m['out'] as int, Icons.local_shipping_outlined, AppTheme.warning, theme, filterKey: "금일 출고")),
-          const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("현재 실재고", m['stock'] as int, Icons.inventory_2_outlined, AppTheme.primary, theme, filterKey: "현재 실재고")),
+          Text(label, style: AppTheme.itemLabelStyle(ctx)),
+          Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 14), overflow: TextOverflow.ellipsis),
         ],
-      ),
-    );
-  }
-
-  Widget _buildStatTile(String label, int val, IconData icon, Color color, ThemeData theme, {required String filterKey}) {
-    final bool isSelected = _activeMetricFilter == filterKey;
-    final bool isDark = theme.brightness == Brightness.dark;
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _activeMetricFilter = _activeMetricFilter == filterKey ? "전체" : filterKey;
-          _selectedGroupKey = null;
-        });
-      },
-      borderRadius: BorderRadius.circular(12),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: isDark ? 0.15 : 0.08) : theme.cardTheme.color,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isSelected ? color : color.withValues(alpha: 0.4), width: isSelected ? 3.0 : 1.8),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(width: 12),
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(label, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
-                  Text('$val', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 22, fontWeight: FontWeight.w900, color: color), overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -707,112 +723,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          alignment: Alignment.centerLeft,
-          child: Row(
-            children: [
-              Container(width: 4, height: 20, color: AppTheme.primary),
-              const SizedBox(width: 12),
-              Text(groupName, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18)),
-              const Spacer(),
-              Text('총 ${items.length}개 항목', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: items.length,
-            separatorBuilder: (ctx, idx) => const SizedBox(height: 12),
-            itemBuilder: (ctx, idx) {
-              final p = items[idx];
-              final statusColor = _getStatusColor(p.status);
-              return InkWell(
-                onTap: () => _showForm(provider, p, theme),
-                borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: AppTheme.listItemDecoration(context, isSelected: false, statusColor: statusColor),
-                  child: Row(
-                    children: [
-                      _buildThumbnail(p, theme, size: _colImgSize),
-                      const SizedBox(width: 20),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18)),
-                                const SizedBox(width: 12),
-                                _buildStatusBadge(p.status),
-                                if (!p.isApproved) ...[
-                                  const SizedBox(width: 8),
-                                  const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
-                                ]
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 20,
-                              runSpacing: 8,
-                              children: [
-                                _buildKeyValue("위치", p.location ?? "-", context),
-                                _buildKeyValue("태그ID", p.tagId, context),
-                                _buildKeyValue("규격", p.spec ?? "-", context),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              p.metadata['last_location_info']?['full_name'] ?? "최근 위치 기록 없음",
-                              style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(
-                        width: _colActionWidth,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () => _showHistoryDialog(context, p, theme)),
-                            const SizedBox(width: 12),
-                            _buildCircleAction(Icons.login, AppTheme.success, "입고", () => _processAssetAccess(provider, p, '수기입고', theme)),
-                            const SizedBox(width: 12),
-                            _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () => _processAssetAccess(provider, p, '수기출고', theme)),
-                            const SizedBox(width: 12),
-                            _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () => _confirmIndividualDelete(provider, p, theme)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
-    return SizedBox(
-      width: 140,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: AppTheme.itemLabelStyle(ctx)),
-          Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 14), overflow: TextOverflow.ellipsis),
-        ],
-      ),
-    );
-  }
-
   Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Column(
       children: [
@@ -923,7 +833,38 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 비즈니스 로직 ---
+  Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme, BuildContext ctx) {
+    return TextField(
+        controller: ctrl,
+        style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w600),
+        decoration: AppTheme.inputDecoration(label: label, context: ctx)
+    );
+  }
+
+  Widget _buildSectionHeader(IconData icon, String title, Color color) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(width: 10),
+            Text(
+                title,
+                style: TextStyle(
+                    fontFamily: AppTheme.fontPretendard,
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                    fontSize: 15,
+                    letterSpacing: -0.5
+                )
+            )
+          ],
+        ),
+        const SizedBox(height: 8),
+        Divider(color: color.withValues(alpha: 0.2), thickness: 2),
+      ],
+    );
+  }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -938,7 +879,6 @@ class _ProductPageState extends State<ProductPage> {
     }
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-    // 승인 스위치가 제거되었으므로 항상 승인됨(true)으로 처리하거나 다이얼로그에서 반환된 값을 사용함
     final bool isApproved = result['is_approved'] ?? true;
 
     List<dynamic> history = p.metadata['history'] is List ? List.from(p.metadata['history']) : [];
@@ -1097,14 +1037,27 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  // --- [수정] 표시 항목 설정 다이얼로그 (내부 필드 필터링 강화) ---
   void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
     final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
     final Set<String> metaKeySet = {};
+
+    // 데이터셋의 상위 항목들로부터 메타데이터 키 추출
     for (var item in provider.items.take(100)) {
-      metaKeySet.addAll(item.metadata.keys);
+      for (var entry in item.metadata.entries) {
+        final k = entry.key;
+        final v = entry.value;
+        // 시스템 제외 키, internal 접미사 필드, Map/List 구조의 복잡 필드 제외
+        if (!_excludedSystemKeys.contains(k) &&
+            !k.endsWith('_internal') &&
+            v is! Map &&
+            v is! List) {
+          metaKeySet.add(k);
+        }
+      }
     }
 
-    final List<String> metaFields = metaKeySet.where((k) => !_excludedSystemKeys.contains(k)).toList()..sort();
+    final List<String> metaFields = metaKeySet.toList()..sort();
     final List<String> temp = List.from(provider.selectedColumns);
 
     showDialog(
@@ -1320,6 +1273,90 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      color: theme.scaffoldBackgroundColor,
+      child: Row(
+        children: [
+          Expanded(child: _buildStatTile("자산 마스터", totalCount, Icons.list_alt, Colors.blueGrey, theme, filterKey: "전체")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("금일 입고", m['in'] as int, Icons.add_business_outlined, AppTheme.success, theme, filterKey: "금일 입고")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("금일 출고", m['out'] as int, Icons.local_shipping_outlined, AppTheme.warning, theme, filterKey: "금일 출고")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("현재 실재고", m['stock'] as int, Icons.inventory_2_outlined, AppTheme.primary, theme, filterKey: "현재 실재고")),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatTile(String label, int val, IconData icon, Color color, ThemeData theme, {required String filterKey}) {
+    final bool isSelected = _activeMetricFilter == filterKey;
+    final bool isDark = theme.brightness == Brightness.dark;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _activeMetricFilter = _activeMetricFilter == filterKey ? "전체" : filterKey;
+          _selectedGroupKey = null;
+        });
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: isDark ? 0.15 : 0.08) : theme.cardTheme.color,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: isSelected ? color : color.withValues(alpha: 0.4), width: isSelected ? 3.0 : 1.8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                  Text('$val', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 22, fontWeight: FontWeight.w900, color: color), overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.3),
+      child: Center(
+        child: Card(
+          elevation: 10,
+          color: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                const SizedBox(height: 25),
+                Text(
+                  provider.isParsing ? "데이터 분석 중..." : "서버 통신 중...",
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmptyState(String msg) {
     return Center(
         child: Column(
@@ -1432,7 +1469,6 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
               onSelected: (s) => _selectedHandler = s,
               fieldViewBuilder: (ctx, ctrl, focus, __) => TextField(controller: ctrl, focusNode: focus, style: AppTheme.itemValueStyle(context).copyWith(fontWeight: FontWeight.bold), decoration: AppTheme.inputDecoration(label: "담당 작업자", context: context, hasFocus: focus.hasFocus)),
             ),
-            // [수정] 승인 스위치 UI를 삭제하여 처리 과정을 단순화함 (기본적으로 승인된 것으로 처리)
             const SizedBox(height: 20),
           ],
         ),
@@ -1446,7 +1482,7 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
               'location': _locC.text,
               'handler': _selectedHandler,
               'reason': _reasonC.text,
-              'is_approved': true // 스위치가 없으므로 항상 승인(true)으로 반환
+              'is_approved': true
             })
         )
       ],
