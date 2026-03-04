@@ -7,6 +7,8 @@ import 'pages/main_page.dart';
 import 'providers/person_provider.dart';
 import 'providers/product_provider.dart';
 import 'providers/device_provider.dart';
+import 'providers/theme_provider.dart'; // [추가] 테마 프로바이더 임포트
+import 'theme/app_theme.dart'; // [추가] 테마 설정 임포트
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,9 +34,10 @@ void main() async {
   }
 
   runApp(
-    // [핵심] C++Builder의 Global DataModule처럼 모든 Provider를 앱 최상단에 배치합니다.
+    // [핵심] ThemeProvider를 추가하여 앱 전체에서 테마 상태를 공유합니다.
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()), // 테마 제어 추가
         ChangeNotifierProvider(create: (_) => PersonProvider()),
         ChangeNotifierProvider(create: (_) => ProductProvider()),
         ChangeNotifierProvider(create: (_) => DeviceProvider()),
@@ -49,17 +52,20 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // [핵심] ThemeProvider의 상태를 감시(Watch)하여 변경 시 앱 전체를 리렌더링합니다.
+    final themeProvider = context.watch<ThemeProvider>();
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'RFID FA Solution',
-      theme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'Pretendard',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4F46E5),
-          surface: Colors.white,
-        ),
-      ),
+
+      // 우리가 정립한 AppTheme의 라이트/다크 설정을 연결합니다.
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+
+      // 현재 선택된 테마 모드 (System, Light, Dark)를 결정합니다.
+      themeMode: themeProvider.themeMode,
+
       home: const MainPage(),
     );
   }
