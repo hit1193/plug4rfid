@@ -1,33 +1,23 @@
 import 'package:flutter/material.dart';
 
-/// 앱 전체의 디자인 시스템을 관장하는 클래스
 class AppTheme {
-  // 핵심 포인트 컬러 (Vibrant Indigo FA 테마)
   static const Color primary = Color(0xFF6366F1);
   static const Color success = Color(0xFF36B37E);
   static const Color warning = Color(0xFFFFAB00);
   static const Color danger = Color(0xFFFF5630);
 
-  // 전역 폰트 설정 (Pretendard)
   static const String fontPretendard = 'Pretendard';
 
-  // --- [중앙 제어 색상 설정] ---
-
-  // 실제 데이터 값 컬러 (Charcoal Gray)
   static Color dataColor(bool isDark) => isDark
       ? Colors.white.withValues(alpha: 0.85)
       : const Color(0xFF454545);
 
-  // 레이블 항목명 컬러 (Silver)
   static Color labelColor(bool isDark) => isDark
       ? const Color(0xFFC0C0C0).withValues(alpha: 0.7)
       : const Color(0xFFC0C0C0);
 
   static const double cardRadius = 12.0;
 
-  // --- [중앙 제어 스타일 메서드] ---
-
-  // 데이터 값 폰트 스타일링 (Pretendard + w900)
   static TextStyle itemValueStyle(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
@@ -38,7 +28,6 @@ class AppTheme {
     );
   }
 
-  // 레이블 항목명 폰트 스타일링 (Pretendard + Silver)
   static TextStyle itemLabelStyle(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
@@ -49,7 +38,6 @@ class AppTheme {
     );
   }
 
-  // 다이얼로그 타이틀 빌더
   static Widget dialogTitle(String text, IconData icon, {Color? color}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -69,26 +57,39 @@ class AppTheme {
     );
   }
 
-  // 리스트 아이템 카드 데코레이션
+  // --- [수정] 리스트 아이템 데코레이션: 상태색을 테두리(Outline)에 적용 ---
   static BoxDecoration listItemDecoration(BuildContext context, {
     required bool isSelected,
     required Color statusColor,
   }) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    // 선택되지 않았을 때 테두리에 상태색을 은은하게 적용 (알파값 조절로 고급스러움 유지)
+    final Color borderColor = isSelected
+        ? theme.colorScheme.primary
+        : statusColor.withValues(alpha: isDark ? 0.6 : 0.5);
+
     return BoxDecoration(
       color: isSelected
           ? theme.colorScheme.primary.withValues(alpha: 0.02)
           : theme.cardTheme.color,
       borderRadius: BorderRadius.circular(cardRadius),
       border: Border.all(
-        color: isSelected ? theme.colorScheme.primary : (isDark ? const Color(0xFF333846) : const Color(0xFFE9ECEF)),
-        width: isSelected ? 2.5 : 1.5,
+        color: borderColor,
+        width: isSelected ? 2.5 : 1.8, // 상태 구분을 위해 기본 두께를 1.8로 소폭 상향
       ),
+      // 키오스크 느낌을 위한 미세한 그림자 효과 추가
+      boxShadow: [
+        BoxShadow(
+          color: statusColor.withValues(alpha: 0.05),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        )
+      ],
     );
   }
 
-  // 통합 입력창 스타일 (InputDecoration)
   static InputDecoration inputDecoration({
     required String label,
     required BuildContext context,
@@ -122,7 +123,6 @@ class AppTheme {
     );
   }
 
-  // 공통 액션 버튼
   static Widget actionButton({
     required String label,
     required VoidCallback onPressed,
@@ -156,7 +156,6 @@ class AppTheme {
     );
   }
 
-  // [수정] CardTheme를 CardThemeData로 변경하여 타입 에러 해결
   static final ThemeData lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
@@ -164,7 +163,7 @@ class AppTheme {
     scaffoldBackgroundColor: Colors.white,
     colorScheme: ColorScheme.fromSeed(seedColor: primary, primary: primary, surface: Colors.white),
     dividerTheme: const DividerThemeData(color: Color(0xFFF1F3F5), thickness: 1),
-    cardTheme: const CardThemeData( // 명확하게 CardThemeData 사용
+    cardTheme: const CardThemeData(
       elevation: 0,
       color: Colors.white,
       margin: EdgeInsets.zero,
@@ -182,7 +181,7 @@ class AppTheme {
     scaffoldBackgroundColor: const Color(0xFF12141C),
     colorScheme: const ColorScheme.dark(primary: primary, surface: Color(0xFF1E212A), onSurface: Colors.white),
     dividerTheme: const DividerThemeData(color: Color(0xFF333846), thickness: 1),
-    cardTheme: const CardThemeData( // 명확하게 CardThemeData 사용
+    cardTheme: const CardThemeData(
       elevation: 0,
       color: Color(0xFF1E212A),
       margin: EdgeInsets.zero,
