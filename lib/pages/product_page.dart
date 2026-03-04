@@ -72,7 +72,7 @@ class _ProductPageState extends State<ProductPage> {
     '폐기': Icons.delete_forever, '분실': Icons.search_off,
   };
 
-  // 시스템 필드 제외 리스트 (동적 메타데이터 필드 생성 시 사용)
+  // 시스템 필드 제외 리스트
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
@@ -133,20 +133,33 @@ class _ProductPageState extends State<ProductPage> {
         }
       }
 
-      if (!isMatch) return false;
-      if (_activeMetricFilter == "전체") return true;
+      if (!isMatch) {
+        return false;
+      }
+
+      if (_activeMetricFilter == "전체") {
+        return true;
+      }
 
       final String lastDate = p.updated ?? p.created ?? "";
       final bool isOut = _outboundStatuses.contains(p.status) || _exceptionStatuses.contains(p.status);
 
-      if (_activeMetricFilter == "금일 입고") return lastDate.startsWith(todayStr) && _inboundStatuses.contains(p.status);
-      if (_activeMetricFilter == "금일 출고") return lastDate.startsWith(todayStr) && isOut;
-      if (_activeMetricFilter == "현재 실재고") return !isOut;
+      if (_activeMetricFilter == "금일 입고") {
+        return lastDate.startsWith(todayStr) && _inboundStatuses.contains(p.status);
+      }
+      if (_activeMetricFilter == "금일 출고") {
+        return lastDate.startsWith(todayStr) && isOut;
+      }
+      if (_activeMetricFilter == "현재 실재고") {
+        return !isOut;
+      }
       return true;
     }).toList();
 
     if (_sortCriteria == 'name') {
-      result.sort((a, b) => a.name.compareTo(b.name));
+      result.sort((a, b) {
+        return a.name.compareTo(b.name);
+      });
     }
 
     _filteredCache = result;
@@ -185,7 +198,7 @@ class _ProductPageState extends State<ProductPage> {
                   },
                 ),
               ),
-              // 하단 전역 여백 확보
+              // [복구] 하단 전역 여백 확보
               const SizedBox(height: 20),
             ],
           ),
@@ -197,7 +210,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- [구현] 글로벌 로딩 오버레이 ---
+  // --- 글로벌 로딩 오버레이 ---
   Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
     return Container(
       color: Colors.black.withValues(alpha: 0.1),
@@ -359,7 +372,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 상세 리스트 뷰 (PersonPage 스타일 연동) ---
+  // --- 상세 리스트 뷰 ---
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -556,7 +569,7 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
           children: [
-            // [복구] 집계 리스트 이미지 썸네일
+            // [복구] 집계 리스트 이미지 썸네일 박스
             _buildThumbnail(items.first, theme, size: 52),
             const SizedBox(width: 16),
             Expanded(child: Text(title, style: TextStyle(fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15, color: isSelected ? AppTheme.primary : null))),
@@ -780,7 +793,7 @@ class _ProductPageState extends State<ProductPage> {
             int count = int.tryParse(qtyC.text.trim()) ?? 1;
             for(int i=0; i<count; i++) {
               String finalTag = tagC.text.trim();
-              if (count > 1) { finalTag = "${finalTag}_${i+1}"; }
+              if (count > 1) finalTag = "${finalTag}_${i+1}";
               if (!await provider.handleSave(p: null, data: {...baseData, 'tag_id': finalTag}, imageXFile: file)) { ok = false; }
             }
           } else {
@@ -808,25 +821,76 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
+  // --- [복구 완료] 자산 상세 이력 추적 다이얼로그 (원형 양식 복구) ---
   void _showHistoryDialog(BuildContext context, ProductModel p, ThemeData theme) {
     showDialog(context: context, builder: (ctx) => AlertDialog(
         title: AppTheme.dialogTitle("자산 상세 이력 추적", Icons.history),
         content: SizedBox(
-          width: 500, height: 600,
+          width: 550, height: 600,
           child: p.history.isEmpty
               ? _buildEmptyState("이력이 없습니다.")
               : ListView.separated(
+            padding: const EdgeInsets.symmetric(vertical: 10),
             itemCount: p.history.length,
-            separatorBuilder: (c, i) => const Divider(),
+            separatorBuilder: (c, i) => const SizedBox(height: 10),
             itemBuilder: (ctx, idx) {
               final log = p.history[idx];
-              return ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(log['type'] ?? "-", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                subtitle: Text("${log['time']} | 위치: ${log['location'] ?? '-'} | 담당: ${log['handler'] ?? '-'}", style: const TextStyle(fontSize: 12)),
-                leading: CircleAvatar(
-                  backgroundColor: AppTheme.primary.withValues(alpha: 0.1),
-                  child: Icon(_statusIcons[log['type']] ?? Icons.history, size: 18, color: AppTheme.primary),
+              final String type = log['type'] ?? "-";
+              final String time = log['time'] ?? "-";
+              final bool approved = log['is_approved'] ?? true;
+              final Color statusColor = approved ? _getStatusColor(type) : AppTheme.danger;
+
+              // 시니어 개발자님의 원형 디자인: 테두리가 있는 커스텀 컨테이너 카드
+              return Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                    color: theme.cardTheme.color,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: statusColor.withValues(alpha: 0.15), width: 1.0)
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 상태 색상 원형 인디케이터
+                    Container(
+                        width: 10, height: 10,
+                        margin: const EdgeInsets.only(top: 6, right: 16),
+                        decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // 시간 (모노스페이스 굵은 글씨)
+                              Text(time, style: const TextStyle(fontFamily: 'monospace', fontSize: 15, fontWeight: FontWeight.bold, color: Colors.black87)),
+                              // 상태 유형 배지
+                              Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                                  child: Text(type, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 12))
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // 위치 및 담당자 정보 (Silver 레이블 / Dark Gray 데이터 위계)
+                          RichText(
+                              text: TextSpan(
+                                  style: const TextStyle(fontSize: 14, color: Colors.black87),
+                                  children: [
+                                    TextSpan(text: '위치: ', style: AppTheme.itemLabelStyle(context)),
+                                    TextSpan(text: '${log['location'] ?? '-'}  ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    TextSpan(text: '담당: ', style: AppTheme.itemLabelStyle(context)),
+                                    TextSpan(text: '${log['handler'] ?? '-'}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                  ]
+                              )
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               );
             },
@@ -859,7 +923,7 @@ class _ProductPageState extends State<ProductPage> {
     )));
   }
 
-  // [구현] 칼럼 설정 헤더 빌더
+  // 칼럼 설정 다이얼로그용 보조 위젯
   Widget _buildColumnGroupHeader(String title) {
     return Row(
       children: [
@@ -870,7 +934,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // [구현] 칼럼 선택 아이템 빌더
   Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged) {
     final bool isSelected = currentList.contains(label);
     return Padding(
@@ -951,15 +1014,9 @@ class _ProductPageState extends State<ProductPage> {
       final lastDate = item.updated ?? item.created ?? "";
       final bool isOut = _outboundStatuses.contains(item.status) || _exceptionStatuses.contains(item.status);
       if (lastDate.startsWith(todayStr)) {
-        if (!isOut) {
-          todayIn++;
-        } else {
-          todayOut++;
-        }
+        if (!isOut) { todayIn++; } else { todayOut++; }
       }
-      if (!isOut) {
-        currentStock++;
-      }
+      if (!isOut) { currentStock++; }
     }
     return {'in': todayIn, 'out': todayOut, 'stock': currentStock};
   }
@@ -967,27 +1024,15 @@ class _ProductPageState extends State<ProductPage> {
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
     final Map<String, List<ProductModel>> grouped = {};
     for (var i in items) {
-      String key = _groupByMode == 'item' ? i.name : (_groupByMode == 'location' ? (i.location ?? "미지정") : (i.category ?? "미정"));
+      String key = _groupByMode == 'item' ? i.name : (i.location ?? "미지정");
       if (!grouped.containsKey(key)) { grouped[key] = []; }
       grouped[key]!.add(i);
     }
     return grouped;
   }
-
-  Widget _buildIconicDropdown({required String label, required String initialValue, required List<String> items, required Map<String, IconData> statusIcons, required ValueChanged<String?> onChanged, required BuildContext context}) {
-    final List<String> safeItems = List.from(items);
-    if (!safeItems.contains(initialValue)) { safeItems.add(initialValue); }
-    return DropdownButtonFormField<String>(
-        initialValue: initialValue,
-        decoration: AppTheme.inputDecoration(label: label, context: context),
-        items: safeItems.map((v) => DropdownMenuItem(value: v, child: Row(children: [Icon(statusIcons[v] ?? Icons.help_outline, size: 18), const SizedBox(width: 12), Text(v, style: const TextStyle(fontWeight: FontWeight.w600))]))).toList(),
-        onChanged: onChanged
-    );
-  }
 }
 
 // --- 수동 입출고 다이얼로그 (BOLD 스타일 복구) ---
-
 class _ManualInoutDialog extends StatefulWidget {
   final String type; final ProductModel product; final Map<String, IconData> statusIcons;
   const _ManualInoutDialog({required this.type, required this.product, required this.statusIcons});
@@ -1024,7 +1069,7 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                 value: v,
                 child: Text(v, style: const TextStyle(fontWeight: FontWeight.bold))
             )).toList(),
-            onChanged: (v) { if (v != null) { setState(() => _selS = v); } },
+            onChanged: (v) { if (v != null) setState(() => _selS = v); },
           ),
           const SizedBox(height: 16),
           TextField(controller: _locC, style: AppTheme.itemValueStyle(context), decoration: AppTheme.inputDecoration(label: "처리 위치", context: context)),
@@ -1035,7 +1080,6 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
             fieldViewBuilder: (ctx, ctrl, focus, __) => TextField(
                 controller: ctrl,
                 focusNode: focus,
-                // [복구] 작업자 선택 텍스트 Bold 적용
                 style: AppTheme.itemValueStyle(context).copyWith(fontWeight: FontWeight.bold),
                 decoration: AppTheme.inputDecoration(label: "담당 작업자", context: context, hasFocus: focus.hasFocus)
             ),
