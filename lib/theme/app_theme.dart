@@ -1,119 +1,143 @@
 import 'package:flutter/material.dart';
 
-/// 앱 전체에서 사용할 디자인 시스템 상수 및 테마 정의
-/// Material 3의 특성인 입체감(Elevation/Tint)을 FA 환경에 맞게 원천 차단합니다.
 class AppTheme {
-  // 폰트 및 기본 색상 정의
-  static const String fontPretendard = 'Pretendard';
-  static const Color primary = Color(0xFF6366F1);
+  static const Color primary = Color(0xFF0052CC);
+  static const Color success = Color(0xFF36B37E);
+  static const Color warning = Color(0xFFFFAB00);
+  static const Color danger = Color(0xFFFF5630);
   static const Color surface = Colors.white;
-  static const Color border = Color(0xFF94A3B8);
-  static const Color headerBg = Color(0xFFF1F5F9);
-  static const Color danger = Color(0xFFEF4444);
-  static const Color success = Color(0xFF10B981);
-  static const Color warning = Color(0xFFF59E0B);
 
-  static const Color dividerColor = Color(0xFFE9ECEF);
+  static const String fontPretendard = 'Pretendard';
 
-  // --- UX 세부 설정 상수 ---
-  static const TextStyle inputHintStyle = TextStyle(
-    color: Colors.black12,
-    fontWeight: FontWeight.normal,
-  );
+  static const double cardRadius = 10.0;
+  static const double dialogRadius = 12.0;
+  static const double outlineWidth = 1.8;
+
+  static const Color inputFillColor = Colors.white;
+  static const Color inputFocusColor = Colors.white;
+  static const Color inputBorderColor = Color(0xFFADB5BD);
 
   static const TextStyle inputLabelStyle = TextStyle(
-    color: Colors.black38,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: FontWeight.bold,
+    color: Colors.black87,
   );
 
-  static const Color inputFillColor = Color(0xFFF8F9FA);
-  static const Color inputFocusColor = Colors.white;
-  static const Color inputBorderColor = Colors.black26;
-  static const double buttonElevation = 0.0;
-  static const double outlineWidth = 2.0;
-  static const double cardRadius = 16.0;
-
-  static TextStyle get headerStyle => const TextStyle(
-    fontSize: 20,
-    fontWeight: FontWeight.w900,
-    fontFamily: fontPretendard,
-    color: Colors.black,
+  static const TextStyle inputHintStyle = TextStyle(
+    fontSize: 14,
+    color: Colors.black38,
   );
 
-  /// MaterialApp의 theme 속성에 할당할 수 있는 ThemeData 객체
-  static ThemeData get lightTheme {
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
-        primary: primary,
-        surface: surface,
-        error: danger,
+  /// [보정] 힌트 텍스트 가려짐 방지를 위한 패딩 및 베젤 조정
+  static InputDecoration inputDecoration({
+    required String label,
+    String? hint,
+    IconData? prefixIcon,
+    bool hasFocus = false,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: inputLabelStyle.copyWith(
+        color: hasFocus ? primary : Colors.black54,
       ),
-      fontFamily: fontPretendard,
-      scaffoldBackgroundColor: Colors.white,
-
-      // 구분선 테마
-      dividerTheme: const DividerThemeData(
-        color: dividerColor,
-        thickness: 1.0,
-        space: 1.0,
+      hintText: hint,
+      hintStyle: inputHintStyle,
+      prefixIcon: prefixIcon != null ? Icon(prefixIcon, size: 20) : null,
+      filled: true,
+      fillColor: inputFillColor,
+      // [수정] 수직 패딩을 16으로 조정하여 텍스트가 잘리지 않게 함
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      // 라벨이 위로 올라갔을 때 힌트와 겹치지 않게 처리
+      floatingLabelBehavior: FloatingLabelBehavior.auto,
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: inputBorderColor, width: 1.5),
       ),
-
-      // SegmentedButton 테마 (Pill 스타일)
-      segmentedButtonTheme: SegmentedButtonThemeData(
-        style: SegmentedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-          side: const BorderSide(color: primary, width: outlineWidth),
-          backgroundColor: Colors.white,
-          selectedBackgroundColor: primary,
-          selectedForegroundColor: Colors.white,
-          foregroundColor: Colors.black54,
-        ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: primary, width: 2.5),
       ),
-
-      // 입력창 테마
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: inputFillColor,
-        labelStyle: inputLabelStyle,
-        hintStyle: inputHintStyle,
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: inputBorderColor, width: 1.0),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: primary, width: 2.0),
-        ),
-      ),
-
-      // [핵심 수정] 모든 상태에서 입체감 효과(Shadow/Tint)를 제거하여 완벽한 Flat 스타일 구현
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
-          elevation: 0,                   // 고정 그림자 제거
-          shadowColor: Colors.transparent, // 그림자 색상 제거 (잔상 방지)
-          surfaceTintColor: Colors.transparent, // Material 3 특유의 푸르스름한 색조 제거
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
-
-      // 텍스트 버튼 (취소용)
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: Colors.black54,
-          elevation: 0,
-          shadowColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
+      // 에러 시에도 레이아웃 유지
+      alignLabelWithHint: true,
     );
   }
+
+  static Widget actionButton({
+    required String label,
+    required VoidCallback onPressed,
+    Color? color,
+    Color? textColor,
+    IconData? icon,
+    bool isFullWidth = false,
+  }) {
+    final button = ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color ?? primary,
+        foregroundColor: textColor ?? Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: color == Colors.transparent
+              ? const BorderSide(color: Colors.black12, width: 1.5)
+              : BorderSide.none,
+        ),
+        elevation: 0,
+        shadowColor: Colors.transparent,
+      ),
+      onPressed: onPressed,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 18),
+            const SizedBox(width: 8),
+          ],
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+        ],
+      ),
+    );
+
+    if (isFullWidth) {
+      return SizedBox(width: double.infinity, child: button);
+    }
+    return button;
+  }
+
+  static Widget dialogTitle(String title, IconData icon, {Color? color}) {
+    return Row(
+      children: [
+        Icon(icon, color: color ?? primary, size: 24),
+        const SizedBox(width: 12),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+      ],
+    );
+  }
+
+  static final ThemeData lightTheme = ThemeData(
+    useMaterial3: true,
+    fontFamily: fontPretendard,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: primary,
+      primary: primary,
+      surface: surface,
+    ),
+    scaffoldBackgroundColor: surface,
+    dialogTheme: const DialogThemeData(
+      elevation: 0,
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(dialogRadius)),
+        side: BorderSide(color: Colors.black12, width: 1.2),
+      ),
+    ),
+    cardTheme: const CardThemeData(
+      elevation: 0,
+      color: Colors.white,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(cardRadius)),
+        side: BorderSide(color: Colors.black12, width: 1.2),
+      ),
+    ),
+  );
 }
