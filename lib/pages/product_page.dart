@@ -41,6 +41,10 @@ class _ProductPageState extends State<ProductPage> {
   static const double _colImgSize = 65.0;
   static const double _colActionWidth = 220.0;
 
+  // 세련되고 밝은 Indigo 색상 정의
+  static const Color _stylishColor = Color(0xFF6366F1);
+
+  // [상태 정의]
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
@@ -145,7 +149,6 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type) async {
-    // [Async Gap 방어] 비동기 작업 전 필요한 객체 스냅샷 캡처
     final messenger = ScaffoldMessenger.of(context);
 
     final result = await showDialog<Map<String, dynamic>>(
@@ -181,7 +184,6 @@ class _ProductPageState extends State<ProductPage> {
     });
 
     if (success && mounted) {
-      // [수정] 캡처한 messenger 사용
       messenger.showSnackBar(SnackBar(
         content: Text('[${p.name}] 처리 완료'),
         backgroundColor: isApproved ? AppTheme.success : AppTheme.danger,
@@ -409,14 +411,26 @@ class _ProductPageState extends State<ProductPage> {
         TextField(
           controller: _searchController,
           onChanged: (v) { setState(() => _currentQuery = v); },
-          decoration: AppTheme.inputDecoration(label: "품명, 로케이션, 분류 또는 초성 검색...", prefixIcon: Icons.search),
+          decoration: AppTheme.inputDecoration(label: "품명, 위치, 분류 또는 초성 검색...", prefixIcon: Icons.search),
         ),
       ]),
     );
   }
 
   Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, {Color? color, bool isLarge = false}) {
-    return Tooltip(message: tip, child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(8), child: Container(width: 48, height: 48, alignment: Alignment.center, child: Icon(icon, color: color ?? Colors.black54, size: isLarge ? 30 : 22))));
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                child: Icon(icon, color: color ?? Colors.black54, size: isLarge ? 30 : 22)
+            )
+        )
+    );
   }
 
   Widget _buildFilterBar() {
@@ -495,64 +509,231 @@ class _ProductPageState extends State<ProductPage> {
     return Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)), child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w900)));
   }
 
+  // [고도화] 상세 추적 이력 다이얼로그
   void _showHistoryDialog(BuildContext context, ProductModel p) {
     showDialog(context: context, builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)),
-      elevation: 0,
       title: AppTheme.dialogTitle('[${p.name}] 상세 추적 이력', Icons.history, color: Colors.blueGrey),
-      content: SizedBox(width: 550, height: 600, child: p.history.isEmpty ? _buildEmptyState("이력이 없습니다.") : ListView.separated(padding: const EdgeInsets.symmetric(vertical: 10), itemCount: p.history.length, separatorBuilder: (c, i) => const Divider(height: 24, color: Color(0xFFF1F3F5)), itemBuilder: (c, i) {
+      content: SizedBox(width: 550, height: 600, child: p.history.isEmpty ? _buildEmptyState("이력이 없습니다.") : ListView.separated(padding: const EdgeInsets.symmetric(vertical: 10), itemCount: p.history.length, separatorBuilder: (c, i) => const SizedBox(height: 10), itemBuilder: (c, i) {
         final log = p.history[i]; final String type = log['type'] ?? "-"; final String time = log['time'] ?? "-"; final bool approved = log['is_approved'] ?? true;
-        final statusColor = _getStatusColor(type);
-        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: approved ? statusColor : AppTheme.danger, shape: BoxShape.circle)),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(time, style: const TextStyle(fontFamily: 'monospace', fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
-              Row(children: [
-                if (!approved) ...[
-                  const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 14), const SizedBox(width: 4),
-                  const Text("미승인", style: TextStyle(color: AppTheme.danger, fontSize: 10, fontWeight: FontWeight.bold)), const SizedBox(width: 8)
-                ],
-                Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)), child: Text(type, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 11)))
-              ])
-            ]),
-            const SizedBox(height: 4), Text("위치: ${log['location'] ?? '-'} | 담당: ${log['handler'] ?? '-'}", style: const TextStyle(color: Colors.blueGrey, fontSize: 13, fontWeight: FontWeight.w600)),
-            if (log['reason']?.toString().isNotEmpty == true) ...[
-              Text("상세비고: ${log['reason']}", style: const TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic))
-            ]
-          ]))
-        ]);
+        final statusColor = approved ? _getStatusColor(type) : AppTheme.danger;
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: statusColor.withValues(alpha: 0.15), width: 1.0),
+          ),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text(time, style: const TextStyle(fontFamily: 'monospace', fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
+                Row(children: [
+                  if (!approved) ...[
+                    const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 14), const SizedBox(width: 4),
+                    const Text("미승인", style: TextStyle(color: AppTheme.danger, fontSize: 10, fontWeight: FontWeight.bold)), const SizedBox(width: 8)
+                  ],
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)), child: Text(type, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold, fontSize: 11)))
+                ])
+              ]),
+              const SizedBox(height: 6),
+              Text("위치: ${log['location'] ?? '-'} | 담당: ${log['handler'] ?? '-'}", style: const TextStyle(color: Colors.blueGrey, fontSize: 13, fontWeight: FontWeight.w600)),
+              if (log['reason']?.toString().isNotEmpty == true) ...[
+                const SizedBox(height: 4),
+                Text("상세비고: ${log['reason']}", style: const TextStyle(color: Colors.grey, fontSize: 12, fontStyle: FontStyle.italic))
+              ]
+            ]))
+          ]),
+        );
       })),
       actions: [AppTheme.actionButton(label: "닫기", color: Colors.transparent, textColor: Colors.black54, onPressed: () { Navigator.pop(ctx); })],
     ));
   }
 
   void _showColumnSelectionDialog(ProductProvider provider) {
-    final navigator = Navigator.of(context);
-    final base = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+    final baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
     final Set<String> metaKeySet = {};
     int count = provider.items.length > 100 ? 100 : provider.items.length;
     for (int i = 0; i < count; i++) {
       metaKeySet.addAll(provider.items[i].metadata.keys);
     }
-    final metaKeys = metaKeySet.where((k) => !_excludedSystemKeys.contains(k)).toList()..sort();
-    final all = [...base, ...metaKeys]; List<String> temp = List.from(provider.selectedColumns);
-    showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setS) => AlertDialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)), elevation: 0, title: AppTheme.dialogTitle("표시 항목 설정", Icons.settings), content: SizedBox(width: 350, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: all.map((k) => CheckboxListTile(title: Text(k, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), activeColor: AppTheme.primary, value: temp.contains(k), onChanged: (v) { setS(() { if (v == true) { if (temp.length < 5) { temp.add(k); } } else { if (temp.length > 1) { temp.remove(k); } } }); })).toList()))), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { Navigator.pop(ctx); }), const SizedBox(width: 8), AppTheme.actionButton(label: "적용", onPressed: () async { await provider.saveRemoteSettings(temp); if (mounted) { navigator.pop(); } })])));
+    final metaFields = metaKeySet.where((k) => !_excludedSystemKeys.contains(k)).toList()..sort();
+    final List<String> temp = List.from(provider.selectedColumns);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (context, setS) {
+        final navigator = Navigator.of(ctx);
+
+        return AlertDialog(
+          title: AppTheme.dialogTitle("표시 항목 설정", Icons.view_column_rounded),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  _buildColumnGroupHeader("기본 제원 정보"),
+                  const SizedBox(height: 12),
+                  ...baseFields.map((k) => _buildSelectionListItem(k, temp, (v) => setS(() => v))),
+                  const SizedBox(height: 32),
+                  _buildColumnGroupHeader("추가 확장 정보 (메타데이터)"),
+                  const SizedBox(height: 12),
+                  if (metaFields.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 8),
+                      child: Text("추가된 메타데이터가 없습니다.", style: TextStyle(color: Colors.black26, fontSize: 13, fontStyle: FontStyle.italic)),
+                    )
+                  else
+                    ...metaFields.map((k) => _buildSelectionListItem(k, temp, (v) => setS(() => v))),
+                  const SizedBox(height: 24),
+                  const Divider(color: Colors.black12),
+                  Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 14, color: AppTheme.danger),
+                      const SizedBox(width: 8),
+                      Text("최대 5개 항목 선택 가능 (현재: ${temp.length}/5)",
+                          style: const TextStyle(color: AppTheme.danger, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { navigator.pop(); }),
+            const SizedBox(width: 8),
+            AppTheme.actionButton(
+                label: "설정 적용",
+                color: _stylishColor,
+                onPressed: () async {
+                  await provider.saveRemoteSettings(temp);
+                  if (mounted) {
+                    navigator.pop();
+                  }
+                }
+            )
+          ],
+        );
+      }),
+    );
+  }
+
+  Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged) {
+    final bool isSelected = currentList.contains(label);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: InkWell(
+        onTap: () {
+          if (isSelected) {
+            if (currentList.length > 1) { currentList.remove(label); }
+          } else {
+            if (currentList.length < 5) { currentList.add(label); }
+          }
+          onChanged(null);
+        },
+        borderRadius: BorderRadius.circular(8),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isSelected ? _stylishColor.withValues(alpha: 0.05) : Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected ? _stylishColor : Colors.black.withValues(alpha: 0.15),
+              width: isSelected ? 2.5 : 1.0,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked,
+                size: 20,
+                color: isSelected ? _stylishColor : Colors.black26,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? _stylishColor : Colors.black45,
+                  ),
+                ),
+              ),
+              if (isSelected)
+                const Icon(Icons.star_rounded, size: 16, color: _stylishColor),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildColumnGroupHeader(String title) {
+    return Row(
+      children: [
+        Container(width: 4, height: 16, decoration: BoxDecoration(color: Colors.blueGrey, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 10),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.blueGrey, fontSize: 14, letterSpacing: -0.5)),
+      ],
+    );
+  }
+
+  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(25),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            shape: BoxShape.circle,
+            border: Border.all(color: color.withValues(alpha: 0.15), width: 1.2),
+          ),
+          child: Icon(icon, color: color, size: 22),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThumbnail(ProductModel p, {double size = 44}) {
+    final url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
+    return Container(width: size, height: size, decoration: BoxDecoration(color: const Color(0xFFF1F3F5), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.black12, width: 1)), clipBehavior: Clip.antiAlias, child: url != null ? Image.network("$url?t=${p.updated}", fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 18, color: Colors.black12)) : const Icon(Icons.inventory_2_outlined, color: Colors.black12, size: 22));
+  }
+
+  Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, bool isMobile) {
+    final healthRatio = items.isEmpty ? 0.0 : items.where((i) => _inboundStatuses.contains(i.status)).length / items.length;
+    Color hCol = healthRatio == 1.0 ? AppTheme.success : (healthRatio > 0.4 ? AppTheme.warning : AppTheme.danger);
+    return InkWell(onTap: () { if (isMobile) { _showMobileGroupDetail(provider, title, items); } else { setState(() => _selectedGroupKey = title); } }, child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(AppTheme.cardRadius), border: Border.all(color: isSelected ? AppTheme.primary : Colors.black12, width: isSelected ? 2.5 : 1.5)), child: Row(children: [
+      _buildThumbnail(items.first, size: 48), const SizedBox(width: 12),
+      Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14))),
+      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6), decoration: BoxDecoration(color: hCol.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: hCol.withValues(alpha: 0.4), width: 1.2)), child: Text('${items.length}', style: TextStyle(color: hCol, fontWeight: FontWeight.w900, fontSize: 13))),
+      const SizedBox(width: 8), IconButton(icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size: 22), onPressed: () { _confirmGroupDelete(context, provider, title, items); })
+    ])));
   }
 
   void _confirmGroupDelete(BuildContext ctx, ProductProvider provider, String name, List<ProductModel> items) {
     final navigator = Navigator.of(ctx);
-    showDialog(context: ctx, builder: (c) => AlertDialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)), elevation: 0, title: AppTheme.dialogTitle("그룹 일괄 삭제", Icons.warning, color: AppTheme.danger), content: Text("[$name] 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { Navigator.pop(c); }), const SizedBox(width: 8), AppTheme.actionButton(label: "일괄 삭제", color: AppTheme.danger, onPressed: () async { await provider.deleteMultipleProducts(items.map((e) => e.id).toList()); if (mounted) { navigator.pop(); } })]));
+    showDialog(context: ctx, builder: (c) => AlertDialog(title: AppTheme.dialogTitle("그룹 일괄 삭제", Icons.warning, color: AppTheme.danger), content: Text("[$name] 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { navigator.pop(); }), const SizedBox(width: 8), AppTheme.actionButton(label: "일괄 삭제", color: AppTheme.danger, onPressed: () async { await provider.deleteMultipleProducts(items.map((e) => e.id).toList()); if (mounted) { navigator.pop(); } })]));
   }
 
   void _showResetDialog(ProductProvider provider) {
     final navigator = Navigator.of(context);
-    showDialog(context: context, builder: (ctx) => AlertDialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)), elevation: 0, title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger), content: const Text("모든 정보를 삭제하고 설정을 리셋하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { Navigator.pop(ctx); }), const SizedBox(width: 8), AppTheme.actionButton(label: "삭제", color: AppTheme.danger, onPressed: () async { await provider.resetAllProducts(); if (mounted) { navigator.pop(); } })]));
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger), content: const Text("모든 정보를 삭제하고 설정을 리셋하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { navigator.pop(); }), const SizedBox(width: 8), AppTheme.actionButton(label: "삭제", color: AppTheme.danger, onPressed: () async { await provider.resetAllProducts(); if (mounted) { navigator.pop(); } })]));
   }
 
   void _confirmIndividualDelete(BuildContext ctx, ProductProvider provider, ProductModel p) {
     final navigator = Navigator.of(ctx);
-    showDialog(context: ctx, builder: (c) => AlertDialog(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)), elevation: 0, title: AppTheme.dialogTitle("삭제 확인", Icons.delete), content: Text("[${p.name}] 자산을 삭제하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { Navigator.pop(c); }), const SizedBox(width: 8), AppTheme.actionButton(label: "삭제", color: AppTheme.danger, onPressed: () async { await provider.deleteMultipleProducts([p.id]); if (mounted) { navigator.pop(); } })]));
+    showDialog(context: ctx, builder: (c) => AlertDialog(title: AppTheme.dialogTitle("삭제 확인", Icons.delete), content: Text("[${p.name}] 자산을 삭제하시겠습니까?"), actions: [AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () { navigator.pop(c); }), const SizedBox(width: 8), AppTheme.actionButton(label: "삭제", color: AppTheme.danger, onPressed: () async { await provider.deleteMultipleProducts([p.id]); if (mounted) { navigator.pop(); } })]));
   }
 
   void _showInfoDialog(String title, String msg) {
@@ -567,7 +748,6 @@ class _ProductPageState extends State<ProductPage> {
     return Column(children: [Row(children: [Icon(icon, color: color, size: 20), const SizedBox(width: 8), Text(title, style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13))]), const Divider(color: Colors.black12)]);
   }
 
-  // [구현] 누락되었던 공통 엠티 스테이트 위젯
   Widget _buildEmptyState(String msg) {
     return Center(
       child: Column(
@@ -593,7 +773,6 @@ class _ProductPageState extends State<ProductPage> {
       if (path != null) {
         await File(path).writeAsBytes(excel.encode()!);
         if (mounted) {
-          // [수정] 캡처한 messenger 사용하여 스낵바 출력
           messenger.showSnackBar(const SnackBar(content: Text('✅ 데이터 내보내기 성공'), elevation: 0));
         }
       }
@@ -608,11 +787,8 @@ class _ProductPageState extends State<ProductPage> {
     final nameC = TextEditingController(text: p?.name ?? ""), tagC = TextEditingController(text: initialTag ?? p?.tagId ?? ""), locC = TextEditingController(text: p?.location ?? ""), catC = TextEditingController(text: p?.category ?? ""), specC = TextEditingController(text: p?.spec ?? ""), snC = TextEditingController(text: p?.serialNumber ?? ""), safeC = TextEditingController(text: p?.safetyStock.toString() ?? "5"), qtyC = TextEditingController(text: "1");
     String selStatus = p?.status ?? "보유중"; bool isApproved = p?.isApproved ?? true; XFile? file; Uint8List? preview;
     final Map<String, TextEditingController> metaC = {};
-    if (p != null) {
-      p.metadata.forEach((k, v) { if (!_excludedSystemKeys.contains(k)) { metaC[k] = TextEditingController(text: v?.toString() ?? ""); } });
-    } else {
-      for (var k in provider.items.expand((i) => i.metadata.keys).toSet()) { if (!_excludedSystemKeys.contains(k)) { metaC[k] = TextEditingController(); } }
-    }
+    if (p != null) { p.metadata.forEach((k, v) { if (!_excludedSystemKeys.contains(k)) { metaC[k] = TextEditingController(text: v?.toString() ?? ""); } }); }
+    else { for (var k in provider.items.expand((i) => i.metadata.keys).toSet()) { if (!_excludedSystemKeys.contains(k)) { metaC[k] = TextEditingController(); } } }
 
     await showDialog(context: context, barrierDismissible: false, builder: (ctx) => StatefulBuilder(builder: (dialogCtx, setS) => AlertDialog(
       title: AppTheme.dialogTitle(p == null ? '자산 마스터 신규 등록' : '마스터 제원 상세 수정', p == null ? Icons.add_box : Icons.edit),
@@ -696,26 +872,6 @@ class _ProductPageState extends State<ProductPage> {
       );
     })));
   }
-
-  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
-    return Tooltip(message: tip, child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(20), child: Container(width: 44, height: 44, decoration: BoxDecoration(color: color.withValues(alpha: 0.08), shape: BoxShape.circle), child: Icon(icon, color: color, size: 20))));
-  }
-
-  Widget _buildThumbnail(ProductModel p, {double size = 44}) {
-    final url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
-    return Container(width: size, height: size, decoration: BoxDecoration(color: const Color(0xFFF1F3F5), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.black12, width: 1)), clipBehavior: Clip.antiAlias, child: url != null ? Image.network("$url?t=${p.updated}", fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 18, color: Colors.black12)) : const Icon(Icons.inventory_2_outlined, color: Colors.black12, size: 22));
-  }
-
-  Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, bool isMobile) {
-    final healthRatio = items.isEmpty ? 0.0 : items.where((i) => _inboundStatuses.contains(i.status)).length / items.length;
-    Color hCol = healthRatio == 1.0 ? AppTheme.success : (healthRatio > 0.4 ? AppTheme.warning : AppTheme.danger);
-    return InkWell(onTap: () { if (isMobile) { _showMobileGroupDetail(provider, title, items); } else { setState(() => _selectedGroupKey = title); } }, child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(AppTheme.cardRadius), border: Border.all(color: isSelected ? AppTheme.primary : Colors.black12, width: isSelected ? 2.5 : 1.5)), child: Row(children: [
-      _buildThumbnail(items.first, size: 48), const SizedBox(width: 12),
-      Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14))),
-      Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6), decoration: BoxDecoration(color: hCol.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20), border: Border.all(color: hCol.withValues(alpha: 0.4), width: 1.2)), child: Text('${items.length}', style: TextStyle(color: hCol, fontWeight: FontWeight.w900, fontSize: 13))),
-      const SizedBox(width: 8), IconButton(icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.danger, size: 22), onPressed: () { _confirmGroupDelete(context, provider, title, items); })
-    ])));
-  }
 }
 
 class _ManualInoutDialog extends StatefulWidget {
@@ -767,7 +923,8 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
       child: AlertDialog(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.dialogRadius), side: const BorderSide(color: Colors.black12, width: 1.5)),
-        title: AppTheme.dialogTitle('${widget.type} - ${widget.product.name}', isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning),
+        // [사용자 요청] 타이틀 형식 보정: 처리명 -> 물품명
+        title: AppTheme.dialogTitle('${isIn ? "입고처리" : "출고처리"} -> ${widget.product.name}', isIn ? Icons.login : Icons.logout, color: isIn ? AppTheme.success : AppTheme.warning),
         content: SizedBox(width: 450, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           const SizedBox(height: 8),
           _buildIconicDropdown(label: "수행할 작업 선택", initialValue: _selS, items: items, statusIcons: widget.statusIcons, onChanged: (v) { if (v != null) { setState(() => _selS = v); } }),
