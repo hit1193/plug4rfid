@@ -233,7 +233,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  // --- 상세 리스트 뷰 ---
+  // --- 상세 리스트 뷰 (타이틀 디자인 정제) ---
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -244,7 +244,17 @@ class _ProductPageState extends State<ProductPage> {
             children: [
               Container(width: 4, height: 20, color: AppTheme.primary),
               const SizedBox(width: 12),
-              Text(groupName, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18)),
+              // [수정] 너무 두꺼웠던 FontWeight를 w800으로 낮추고 폰트 크기를 최적화함
+              Text(
+                groupName,
+                style: TextStyle(
+                  fontFamily: AppTheme.fontPretendard,
+                  fontWeight: FontWeight.w800, // w900에서 한 단계 낮추어 세련되게 변경
+                  fontSize: 20, // 22에서 20으로 조정하여 공간감 확보
+                  color: AppTheme.dataColor(theme.brightness == Brightness.dark),
+                  letterSpacing: -0.4, // 자간을 미세하게 조정하여 눈의 피로도 감소
+                ),
+              ),
               const Spacer(),
               Text('총 ${items.length}개 항목', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
             ],
