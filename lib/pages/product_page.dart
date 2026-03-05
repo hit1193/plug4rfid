@@ -14,6 +14,12 @@ import '../providers/product_provider.dart';
 import '../providers/person_provider.dart';
 import '../theme/app_theme.dart';
 
+/// ---------------------------------------------------------------------------
+/// [물품 관리 페이지]
+/// 메인 화면(MainPage)의 우측 영역에 표출되는 물품 관리 통합 관제 화면입니다.
+/// ProductProvider를 구독하여 데이터를 화면에 렌더링하고,
+/// 미니멀리즘 디자인을 기반으로 다양한 필터링 및 엑셀 입출력 기능을 제공합니다.
+/// ---------------------------------------------------------------------------
 class ProductPage extends StatefulWidget {
   final String searchQuery;
   final bool isMobile;
@@ -31,6 +37,7 @@ class ProductPage extends StatefulWidget {
 }
 
 class _ProductPageState extends State<ProductPage> {
+  // UI 상태 관리를 위한 컨트롤러 및 변수들
   final TextEditingController _searchController = TextEditingController();
   String _currentQuery = "";
   String _groupByMode = 'item';
@@ -43,10 +50,15 @@ class _ProductPageState extends State<ProductPage> {
   int _lastRawItemCount = -1;
   String _lastActiveFilter = "";
 
+  // 스크린 전체를 덮는 다이얼로그(초기화, 엑셀) 실행 중일 때
+  // 기존의 부분 오버레이(Stack)가 중복으로 표출되는 것을 막는 플래그입니다.
+  bool _isFullScreenLoading = false;
+
+  // 레이아웃 고정 치수 상수 정의 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
-  // FA/RFID 공정 단계별 상태 분류 세트
+  // FA/RFID 공정 단계별 상태 분류 세트 (Enum Set과 유사한 역할)
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
@@ -58,6 +70,7 @@ class _ProductPageState extends State<ProductPage> {
   };
   static const Set<String> _exceptionStatuses = {'폐기', '분실'};
 
+  // 상태별 아이콘 매핑
   static final Map<String, IconData> _statusIcons = {
     '보유중': Icons.inventory,
     '수동입고': Icons.input,
@@ -84,7 +97,7 @@ class _ProductPageState extends State<ProductPage> {
     '분실': Icons.search_off,
   };
 
-  // 시스템 내부 관리용 키 정의 (사용자 노출 제외)
+  // 시스템 내부 관리용 키 정의 (사용자 UI 노출 제외 목록)
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
@@ -106,7 +119,10 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
-  // --- 실시간 검색 및 필터링 엔진 ---
+  /// ---------------------------------------------------------------------------
+  /// [실시간 검색 및 필터링 엔진]
+  /// 사용자의 입력을 감지하여 데이터를 즉시 필터링합니다. (Debounce 적용)
+  /// ---------------------------------------------------------------------------
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
       _debounceTimer!.cancel();
@@ -145,11 +161,14 @@ class _ProductPageState extends State<ProductPage> {
       if (!isMatch) {
         return false;
       }
+
+      // 상단 대시보드(지표) 필터 검증
       if (_activeMetricFilter == "전체") {
         return true;
       }
       final String lastDate = p.updated ?? p.created ?? "";
       final bool isOut = _outboundStatuses.contains(p.status) || _exceptionStatuses.contains(p.status);
+
       if (_activeMetricFilter == "금일 입고") {
         return lastDate.startsWith(todayStr) && _inboundStatuses.contains(p.status);
       }
@@ -162,6 +181,7 @@ class _ProductPageState extends State<ProductPage> {
       return true;
     }).toList();
 
+    // 기본 이름 오름차순 정렬
     if (_sortCriteria == 'name') {
       result.sort((a, b) => a.name.compareTo(b.name));
     }
@@ -175,10 +195,12 @@ class _ProductPageState extends State<ProductPage> {
     final provider = context.watch<ProductProvider>();
     final theme = Theme.of(context);
 
+    // 원본 데이터가 변경되었거나 필터가 변경된 경우 캐시 동기화
     if (_lastRawItemCount != provider.items.length || _lastActiveFilter != _activeMetricFilter) {
       _syncFiltering(provider.items);
     }
 
+    // 그룹화 및 지표 계산
     final Map<String, dynamic> metrics = _calculateMetrics(provider.items);
     final Map<String, List<ProductModel>> groupedMap = _getGroupedData(_filteredCache);
     final List<String> groupKeys = groupedMap.keys.toList()..sort();
@@ -204,14 +226,19 @@ class _ProductPageState extends State<ProductPage> {
               const SizedBox(height: 20),
             ],
           ),
-          if (provider.isParsing || provider.isSaving)
+
+          // 단일 수정 등 가벼운 작업 시에만 표출되는 우측 영역 한정 오버레이
+          // 전체 화면(풀스크린) 다이얼로그가 떠 있을 때는 이중 표출되지 않도록 차단합니다.
+          if ((provider.isParsing || provider.isSaving) && !_isFullScreenLoading)
             _buildGlobalLoadingOverlay(provider, theme),
         ],
       ),
     );
   }
 
-  // --- 설정된 컬럼에 따른 데이터 매핑 로직 ---
+  /// ---------------------------------------------------------------------------
+  /// [설정된 컬럼에 따른 데이터 매핑 로직]
+  /// ---------------------------------------------------------------------------
   String _getAttributeValue(String label, ProductModel p) {
     switch (label) {
       case '품명':
@@ -233,7 +260,9 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  // --- 상세 리스트 뷰 ---
+  /// ---------------------------------------------------------------------------
+  /// [상세 리스트 뷰 영역] - (좌측 정렬 완벽 개선 패치 적용)
+  /// ---------------------------------------------------------------------------
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -284,7 +313,13 @@ class _ProductPageState extends State<ProductPage> {
                           children: [
                             Row(
                               children: [
-                                Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
+                                Text(
+                                    p.name,
+                                    style: AppTheme.itemValueStyle(context).copyWith(
+                                        fontSize: 19,
+                                        color: p.name == '형식에 맞지 않는 건' ? AppTheme.danger : null
+                                    )
+                                ),
                                 const SizedBox(width: 12),
                                 _buildStatusBadge(p.status),
                                 if (!p.isApproved)
@@ -295,20 +330,17 @@ class _ProductPageState extends State<ProductPage> {
                               ],
                             ),
                             const SizedBox(height: 12),
+                            // [핵심 개선 포인트] Wrap의 자식에서 크기가 0인 항목이 spacing을 먹어버리는 버그 방지
                             Wrap(
                               spacing: 20,
                               runSpacing: 10,
-                              children: provider.selectedColumns.map((colName) {
-                                if (colName == '품명') {
-                                  return const SizedBox.shrink();
-                                }
-                                return _buildKeyValue(colName, _getAttributeValue(colName, p), context);
-                              }).toList(),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              p.metadata['last_location_info']?['full_name'] ?? "최근 위치 기록 없음",
-                              style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500),
+                              alignment: WrapAlignment.start,
+                              crossAxisAlignment: WrapCrossAlignment.start,
+                              // '품명'은 제외(필터링)한 뒤 화면에 그립니다.
+                              children: provider.selectedColumns
+                                  .where((colName) => colName != '품명')
+                                  .map((colName) => _buildKeyValue(colName, _getAttributeValue(colName, p), context))
+                                  .toList(),
                             ),
                           ],
                         ),
@@ -339,7 +371,9 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // --- 통합 등록 및 수정 폼 ---
+  /// ---------------------------------------------------------------------------
+  /// [통합 등록 및 수정 폼 다이얼로그]
+  /// ---------------------------------------------------------------------------
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
     final nameC = TextEditingController(text: p?.name ?? "");
     final tagC = TextEditingController(text: p?.tagId ?? "");
@@ -548,12 +582,12 @@ class _ProductPageState extends State<ProductPage> {
                       if (count > 1) {
                         finalTag = "${finalTag}_${i + 1}";
                       }
-                      if (!await provider.handleSave(p: null, data: {...baseData, 'tag_id': finalTag}, imageXFile: file)) {
+                      if (!await provider.handleSave(product: null, data: {...baseData, 'tag_id': finalTag}, imageXFile: file)) {
                         ok = false;
                       }
                     }
                   } else {
-                    ok = await provider.handleSave(p: p, data: baseData, imageXFile: file);
+                    ok = await provider.handleSave(product: p, data: baseData, imageXFile: file);
                   }
 
                   if (ok && context.mounted) {
@@ -573,14 +607,24 @@ class _ProductPageState extends State<ProductPage> {
 
   // --- 보조 UI 빌더 메서드 ---
 
+  /// [핵심 개선 2] 텍스트가 어떤 해상도에서도 절대 우측이나 중앙으로 흔들리지 않게 Align으로 강제 고정
   Widget _buildKeyValue(String label, String value, BuildContext ctx) {
     return SizedBox(
-      width: 140,
+      width: 150, // 글자 크기가 커짐에 따라 텍스트가 잘리지 않도록 할당 너비를 살짝 넓혔습니다 (140 -> 150)
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: AppTheme.itemLabelStyle(ctx)),
-          Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 14), overflow: TextOverflow.ellipsis),
+          Align(
+            alignment: Alignment.centerLeft,
+            // 라벨의 폰트 사이즈도 명시적으로 13으로 고정하여 비율을 맞춥니다
+            child: Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13), textAlign: TextAlign.left),
+          ),
+          const SizedBox(height: 2), // 라벨과 값 사이의 시각적 여유 공간 추가
+          Align(
+            alignment: Alignment.centerLeft,
+            // 실제 데이터 값의 폰트 사이즈를 기존 14에서 16으로 시원하게 키우고, 굵기도 살짝 보강했습니다
+            child: Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis, textAlign: TextAlign.left),
+          ),
         ],
       ),
     );
@@ -630,6 +674,9 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [상단 헤더 툴바 생성]
+  /// ---------------------------------------------------------------------------
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -643,12 +690,7 @@ class _ProductPageState extends State<ProductPage> {
                   runSpacing: 8,
                   children: [
                     _buildActionIconButton(Icons.refresh, "새로고침", () => provider.fetchData(), theme),
-                    _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "임포트", () async {
-                      final Map<String, int> res = await provider.batchImportFromExcel();
-                      if (mounted && (res['total'] ?? 0) > 0) {
-                        _showInfoDialog("임포트 완료", "성공: ${res['success']} / 전체: ${res['total']}", theme);
-                      }
-                    }, theme, color: Colors.indigo),
+                    _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "엑셀 일괄 임포트", () => _handleBatchImport(provider, theme), theme, color: Colors.indigo),
                     _buildActionIconButton(FontAwesomeIcons.fileArrowDown, "엑스포트", () => _exportToExcel(context, _filteredCache), theme, color: Colors.green),
                     _buildActionIconButton(Icons.settings_outlined, "표시 설정", () => _showColumnSelectionDialog(provider, theme), theme),
                     _buildActionIconButton(Icons.delete_sweep_outlined, "리셋", () => _showResetDialog(provider, theme), theme, color: AppTheme.danger),
@@ -732,8 +774,6 @@ class _ProductPageState extends State<ProductPage> {
       ),
     );
   }
-
-  // --- 미아로 남았던 괄호를 제거하고 정상적으로 클래스 내부에 합류시킨 함수들 ---
 
   Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Column(
@@ -903,7 +943,7 @@ class _ProductPageState extends State<ProductPage> {
       'is_approved': isApproved
     });
 
-    final bool success = await provider.handleSave(p: p, data: {
+    final bool success = await provider.handleSave(product: p, data: {
       'status': result['status'],
       'location': result['location'],
       'is_approved': isApproved,
@@ -1195,13 +1235,58 @@ class _ProductPageState extends State<ProductPage> {
                   label: "삭제",
                   color: AppTheme.danger,
                   onPressed: () async {
-                    final navigator = Navigator.of(ctx);
+                    Navigator.pop(ctx);
                     final messenger = ScaffoldMessenger.of(context);
-                    await provider.resetAllProducts();
-                    if (context.mounted) {
+
+                    setState(() { _isFullScreenLoading = true; });
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      barrierColor: Colors.black.withValues(alpha: 0.5),
+                      builder: (loadingCtx) => PopScope(
+                        canPop: false,
+                        child: Center(
+                          child: Card(
+                            elevation: 10,
+                            color: theme.cardTheme.color,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const CircularProgressIndicator(color: AppTheme.danger, strokeWidth: 5),
+                                  const SizedBox(height: 25),
+                                  const Text(
+                                    "안전 데이터베이스 초기화 중...\n(창을 닫지 마세요)",
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+
+                    try {
+                      await provider.resetAllProducts();
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isFullScreenLoading = false;
+                          _selectedGroupKey = null;
+                          _currentQuery = "";
+                        });
+                        _searchController.clear();
+                        Navigator.of(context).pop();
+                      }
+                    }
+
+                    if (mounted) {
                       _syncFiltering(provider.items);
-                      navigator.pop();
-                      messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+                      messenger.showSnackBar(const SnackBar(content: Text('전체 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
                     }
                   }
               )
@@ -1280,6 +1365,11 @@ class _ProductPageState extends State<ProductPage> {
                     final messenger = ScaffoldMessenger.of(ctx);
                     await provider.deleteMultipleProducts(items.map((e) => e.id).toList());
                     if (context.mounted) {
+                      setState(() {
+                        if (_selectedGroupKey == name) {
+                          _selectedGroupKey = null;
+                        }
+                      });
                       _syncFiltering(provider.items);
                       navigator.pop();
                       messenger.showSnackBar(const SnackBar(content: Text("일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
@@ -1350,7 +1440,7 @@ class _ProductPageState extends State<ProductPage> {
 
   Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
     return Container(
-      color: Colors.black.withValues(alpha: 0.3),
+      color: Colors.black.withValues(alpha: 0.1),
       child: Center(
         child: Card(
           elevation: 10,
@@ -1364,8 +1454,9 @@ class _ProductPageState extends State<ProductPage> {
                 const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
                 const SizedBox(height: 25),
                 Text(
-                  provider.isParsing ? "데이터 분석 중..." : "서버 통신 중...",
-                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                  provider.isParsing ? "데이터 분석 중..." : "데이터베이스 통신 중...",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
                 ),
               ],
             ),
@@ -1422,7 +1513,308 @@ class _ProductPageState extends State<ProductPage> {
     }
     return grouped;
   }
-} // 이 위치에서 _ProductPageState 클래스가 완벽하게 닫힙니다.
+
+  Future<void> _handleBatchImport(ProductProvider provider, ThemeData theme) async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
+        withData: true,
+      );
+
+      if (result == null || !context.mounted) return;
+
+      Uint8List? bytes = result.files.single.bytes;
+      if (bytes == null && result.files.single.path != null) {
+        bytes = await File(result.files.single.path!).readAsBytes();
+      }
+
+      if (bytes == null) {
+        if (context.mounted) _showInfoDialog("오류", "파일을 읽을 수 없습니다.", theme);
+        return;
+      }
+
+      final excel = excel_pkg.Excel.decodeBytes(bytes);
+      String targetSheet = excel.tables.keys.first;
+
+      if (excel.tables.keys.contains('물품리스트')) {
+        targetSheet = '물품리스트';
+      } else if (excel.tables.keys.contains('Sheet1')) {
+        targetSheet = 'Sheet1';
+      }
+
+      final sheet = excel.tables[targetSheet];
+      if (sheet == null || sheet.maxRows <= 1) {
+        if (context.mounted) _showInfoDialog("알림", "데이터가 없거나 헤더만 존재합니다.", theme);
+        return;
+      }
+
+      List<String> headers = [];
+      final headerRow = sheet.row(0);
+      for (var cell in headerRow) {
+        headers.add(_extractString(cell));
+      }
+
+      bool hasNameHeader = false;
+      for (String h in headers) {
+        String ch = h.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+        if (ch.contains('품명') || ch.contains('제품명') || ch.contains('자산명') ||
+            ch.contains('이름') || ch.contains('명칭') || ch.contains('물품명') ||
+            ch.contains('품목명') || ch.contains('기기명') || ch.contains('장비명') ||
+            ch.contains('관리대상')) {
+          hasNameHeader = true;
+          break;
+        }
+      }
+
+      if (!hasNameHeader) {
+        if (context.mounted) {
+          _showInfoDialog(
+              "엑셀 양식 오류 (헤더 누락)",
+              "엑셀 파일의 1번째 줄(Row 1)에서 '품명', '제품명', '관리대상' 등의 필수 항목명을 찾을 수 없습니다.\n\n"
+                  "💡 [해결 방법]\n"
+                  "데이터 영역만 복사하신 경우, 1번째 줄에 항목명(예: 품명, 위치, 규격 등)을 반드시 타이핑해 넣으신 뒤 다시 업로드해 주세요.",
+              theme
+          );
+        }
+        return;
+      }
+
+      int actualValidRows = 0;
+      for (int i = 1; i < sheet.maxRows; i++) {
+        bool hasData = false;
+        for (var cell in sheet.row(i)) {
+          if (_extractString(cell).isNotEmpty) {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) actualValidRows++;
+      }
+
+      ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+
+      setState(() { _isFullScreenLoading = true; });
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withValues(alpha: 0.5),
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: Center(
+            child: Card(
+              elevation: 10,
+              color: theme.cardTheme.color,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                child: ValueListenableBuilder<int>(
+                  valueListenable: currentCountNotifier,
+                  builder: (context, currentCount, child) {
+                    final double progress = actualValidRows > 0 ? currentCount / actualValidRows : 0.0;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            SizedBox(
+                              width: 80,
+                              height: 80,
+                              child: CircularProgressIndicator(
+                                value: progress,
+                                color: AppTheme.primary,
+                                backgroundColor: theme.dividerTheme.color?.withValues(alpha: 0.3),
+                                strokeWidth: 8,
+                              ),
+                            ),
+                            Text(
+                              '${(progress * 100).toInt()}%',
+                              style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 25),
+                        const Text(
+                          "대량 데이터 전송 중...",
+                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "총 $actualValidRows건 중 $currentCount건 처리 완료\n(창을 닫거나 새로고침하지 마세요)",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      int successCount = 0;
+      int errorCount = 0;
+      int failCount = 0;
+      int totalCount = 0;
+
+      bool hasCriticalError = false;
+      String criticalErrorMsg = "";
+
+      try {
+        for (int i = 1; i < sheet.maxRows; i++) {
+          final row = sheet.row(i);
+          if (row.isEmpty) continue;
+
+          String name = "";
+          String tagId = "";
+          String loc = "미지정";
+          String spec = "";
+          String cat = "";
+          String sn = "";
+          Map<String, dynamic> metadata = {};
+
+          bool hasData = false;
+
+          for (int colIdx = 0; colIdx < row.length; colIdx++) {
+            if (colIdx >= headers.length) break;
+
+            String rawHeader = headers[colIdx];
+            String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+
+            String val = _extractString(row[colIdx]);
+            if (val.isNotEmpty) hasData = true;
+
+            if (cleanHeader.contains('품명') || cleanHeader.contains('제품명') || cleanHeader.contains('자산명') ||
+                cleanHeader.contains('이름') || cleanHeader.contains('명칭') || cleanHeader.contains('물품명') ||
+                cleanHeader.contains('품목명') || cleanHeader.contains('기기명') || cleanHeader.contains('장비명') ||
+                cleanHeader.contains('관리대상')) {
+              name = val;
+            } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid') || cleanHeader.contains('epc') || cleanHeader.contains('tag')) {
+              tagId = val;
+            } else if (cleanHeader.contains('위치') || cleanHeader.contains('로케이션') || cleanHeader.contains('장소') || cleanHeader.contains('보관') || cleanHeader.contains('구역')) {
+              loc = val;
+            } else if (cleanHeader.contains('규격') || cleanHeader.contains('사양') || cleanHeader.contains('스펙') || cleanHeader.contains('spec') || cleanHeader.contains('모델')) {
+              spec = val;
+            } else if (cleanHeader.contains('분류') || cleanHeader.contains('카테고리') || cleanHeader.contains('종류') || cleanHeader.contains('그룹') || cleanHeader.contains('유형')) {
+              cat = val;
+            } else if (cleanHeader.contains('시리얼') || cleanHeader.contains('s/n') || cleanHeader.contains('일련번호') || cleanHeader.contains('serial')) {
+              sn = val;
+            } else {
+              if (rawHeader.isNotEmpty && val.isNotEmpty) {
+                metadata[rawHeader] = val;
+              }
+            }
+          }
+
+          if (!hasData) continue;
+
+          bool isFormatError = false;
+
+          if (name.isEmpty) {
+            name = "형식에 맞지 않는 건";
+            metadata['import_source'] = 'excel_error';
+            metadata['error_reason'] = '품명/명칭/관리대상 항목 누락';
+            errorCount++;
+            isFormatError = true;
+          } else {
+            metadata['import_source'] = 'excel';
+          }
+
+          if (tagId.isEmpty) {
+            tagId = "PTAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+          }
+
+          final data = {
+            'name': name,
+            'tag_id': tagId,
+            'location': loc,
+            'spec': spec,
+            'category': cat,
+            'serial_number': sn,
+            'safety_stock': 5,
+            'status': name == "형식에 맞지 않는 건" ? '수기입고' : '보유중',
+            'is_approved': true,
+            'metadata': metadata
+          };
+
+          bool ok = await provider.handleSave(product: null, data: data, imageXFile: null);
+
+          if (ok) {
+            if (!isFormatError) successCount++;
+          } else {
+            failCount++;
+            if (isFormatError) errorCount--;
+          }
+
+          currentCountNotifier.value++;
+        }
+
+      } catch (e) {
+        hasCriticalError = true;
+        criticalErrorMsg = e.toString();
+      } finally {
+        if (mounted) {
+          setState(() { _isFullScreenLoading = false; });
+          Navigator.of(context).pop();
+        }
+      }
+
+      if (mounted) {
+        if (hasCriticalError) {
+          if (criticalErrorMsg.contains('numFmtId')) {
+            _showInfoDialog(
+                "엑셀 서식 호환성 오류",
+                "해당 엑셀 파일에 지원되지 않는 특수 셀 서식이 포함되어 있습니다.\n\n"
+                    "💡 [빠른 해결 방법]\n"
+                    "새 엑셀 파일의 A1 셀에 '값만 붙여넣기'로 데이터를 옮긴 후 다시 업로드해주세요.",
+                theme
+            );
+          } else {
+            _showInfoDialog("오류", "엑셀 파싱 중 예기치 않은 오류가 발생했습니다: $criticalErrorMsg", theme);
+          }
+        } else {
+          _syncFiltering(provider.items);
+          totalCount = successCount + errorCount + failCount;
+          _showInfoDialog(
+              "엑셀 데이터 임포트 완료",
+              "총 $totalCount건의 데이터 처리가 종료되었습니다.\n\n"
+                  "✅ 정상 등록됨: $successCount건\n"
+                  "⚠️ 형식 오류 (이름 누락): $errorCount건\n"
+                  "❌ 서버 저장 실패: $failCount건\n\n"
+                  "(저장 실패가 발생한 경우, 엑셀 내부에 태그ID가 중복되어 있거나 서버의 제약조건 때문일 수 있습니다.)",
+              theme
+          );
+        }
+      }
+
+    } catch (e) {
+      if (mounted) {
+        _showInfoDialog("오류", "파일 처리 중 치명적 오류가 발생했습니다.", theme);
+      }
+    }
+  }
+
+  String _extractString(excel_pkg.Data? cell) {
+    if (cell == null || cell.value == null) return "";
+    String str = cell.value.toString();
+
+    RegExp regExp = RegExp(r'^[a-zA-Z]+CellValue\((.*)\)$', dotAll: true);
+    Match? match = regExp.firstMatch(str);
+
+    if (match != null && match.groupCount >= 1) {
+      String extracted = match.group(1) ?? "";
+      if (extracted.startsWith('"') && extracted.endsWith('"') && extracted.length >= 2) {
+        extracted = extracted.substring(1, extracted.length - 1);
+      }
+      return extracted.trim();
+    }
+    return str.trim();
+  }
+}
 
 class _ManualInoutDialog extends StatefulWidget {
   final String type;

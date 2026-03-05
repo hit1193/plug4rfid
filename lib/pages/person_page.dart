@@ -14,9 +14,11 @@ import '../utils/hangul_utils.dart';
 import '../providers/person_provider.dart';
 import '../theme/app_theme.dart';
 
-/// RFID 인원 관리 페이지입니다.
+/// ---------------------------------------------------------------------------
+/// [RFID 인원 관리 페이지]
 /// 현장에 출입하는 인원들의 상태(입장/퇴장)와 상세 정보를 실시간으로 추적/관리합니다.
-/// [디자인 철학] 미니멀리즘, 키오스크 스타일, Semi Bold(w600), Silver 텍스트 가이드 적용
+/// [디자인 철학] 미니멀리즘, 키오스크 스타일, 전역 AppTheme 기반 일관된 UI 적용
+/// ---------------------------------------------------------------------------
 class PersonPage extends StatefulWidget {
   final String searchQuery; // 상위 화면(MainPage)에서 전달받은 초기 검색어
   final String filter;      // 상위 화면에서 전달받은 초기 필터 상태
@@ -47,18 +49,21 @@ class _PersonPageState extends State<PersonPage> {
   String _activeMetricFilter = "전체"; // 상단 대시보드 통계 카드에서 선택된 필터 조건
   String? _selectedPersonId;       // 현재 리스트에서 클릭하여 선택된 인원의 고유 ID
 
+  // 스크린 전체를 덮는 다이얼로그(엑셀 업로드 등) 실행 중일 때 상태 관리를 위한 플래그
+  bool _isFullScreenLoading = false;
+
   // --- UI 규격 디자인 상수 ---
   static const double _colImgSize = 70.0;      // 아바타 썸네일 이미지의 가로/세로 크기
   static const double _colActionWidth = 240.0; // 우측 액션 버튼(기록, 입장, 퇴장, 삭제) 영역의 고정 너비
 
-  /// PocketBase 시스템 필드 및 화면 노출(표시 항목 설정)에서 제외해야 할 내부 관리용 데이터 키 목록입니다.
+  /// 시스템 필드 및 화면 노출(표시 항목 설정)에서 제외해야 할 내부 관리용 데이터 키 목록입니다.
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
     'access_history', 'last_location_info', 'is_approved', 'last_approval_status',
     'image', 'name', 'code', 'department', 'tag_id', 'is_active', 'remarks',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
-    'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal'
+    'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal', 'error_reason'
   };
 
   @override
@@ -108,7 +113,7 @@ class _PersonPageState extends State<PersonPage> {
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
-  // --- 비동기 출입 처리 로직 (Async Gap 린트 완벽 해결) ---
+  // --- 비동기 출입 처리 로직 ---
 
   /// 사용자가 수동으로 '입장' 또는 '퇴장' 버튼을 눌렀을 때 위치 정보를 입력받고 서버에 처리하는 프로세스입니다.
   Future<void> _processAccessWithLocation(PersonProvider provider, Person p, String type) async {
@@ -120,7 +125,7 @@ class _PersonPageState extends State<PersonPage> {
       builder: (ctx) => _LocationSelectionDialog(type: type, existingPersons: provider.list),
     );
 
-    // [린트 해결] 사용자가 다이얼로그를 취소했거나, 닫히는 동안 위젯이 트리를 벗어난 경우 방어 (context.mounted 사용)
+    // 사용자가 다이얼로그를 취소했거나, 닫히는 동안 위젯이 트리를 벗어난 경우 방어
     if (result == null || !context.mounted) {
       return;
     }
@@ -157,7 +162,7 @@ class _PersonPageState extends State<PersonPage> {
     // 4. Provider를 통해 서버로 변경된 정보(출입 상태 및 히스토리) 전송
     final success = await provider.handleSave(p: p, data: {'is_approved': isApproved, 'metadata': updatedMeta});
 
-    // 5. 성공 시 화면 하단에 스낵바로 결과 알림 (context.mounted 확인 필수)
+    // 5. 성공 시 화면 하단에 스낵바로 결과 알림
     if (success && context.mounted) {
       messenger.showSnackBar(SnackBar(
         content: Text('[${p.name}]님 $type 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
@@ -213,22 +218,55 @@ class _PersonPageState extends State<PersonPage> {
     return Scaffold(
       // 테마에서 정의한 톤온톤(Tone-on-Tone) 배경색 일괄 적용
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: Column(
+      body: Stack(
         children: [
-          // 1. 상단 통계 대시보드
-          _buildDashboard(metrics, provider, theme),
-          Divider(height: 1, color: theme.dividerTheme.color),
+          Column(
+            children: [
+              // 1. 상단 통계 대시보드
+              _buildDashboard(metrics, provider, theme),
+              Divider(height: 1, color: theme.dividerTheme.color),
 
-          // 2. 검색창 및 엑셀 등 액션 버튼 바
-          _buildHeader(provider, filteredList, theme),
-          const SizedBox(height: 16),
+              // 2. 검색창 및 엑셀 등 액션 버튼 바
+              _buildHeader(provider, filteredList, theme),
+              const SizedBox(height: 16),
 
-          // 3. 메인 인원 리스트 뷰 영역
-          Expanded(
-            child: provider.isLoading
-                ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
-                : _buildListView(filteredList, provider, provider.selectedColumns, theme),
+              // 3. 메인 인원 리스트 뷰 영역
+              Expanded(
+                child: provider.isLoading
+                    ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
+                    : _buildListView(filteredList, provider, provider.selectedColumns, theme),
+              ),
+            ],
           ),
+
+          // 단일 수정 등 가벼운 작업 시에만 표출되는 오버레이
+          // 전체 화면(풀스크린) 엑셀 로딩 다이얼로그가 떠 있을 때는 중복 표출되지 않도록 차단합니다.
+          if (provider.isSaving && !_isFullScreenLoading)
+            Container(
+              color: Colors.black.withValues(alpha: 0.1),
+              child: Center(
+                child: Card(
+                  elevation: 10,
+                  color: theme.cardTheme.color,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                        SizedBox(height: 25),
+                        Text(
+                          "데이터베이스 통신 중...",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -245,11 +283,11 @@ class _PersonPageState extends State<PersonPage> {
         children: [
           Expanded(child: _buildStatTile("전체 보기", provider.list.length, Icons.people, Colors.blueGrey, theme, filterKey: "전체")),
           const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("당일 입장", m['in'], Icons.login, AppTheme.success, theme, filterKey: "당일 입장")),
+          Expanded(child: _buildStatTile("당일 입장", m['in'] as int, Icons.login, AppTheme.success, theme, filterKey: "당일 입장")),
           const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("당일 퇴장", m['out'], Icons.logout, AppTheme.warning, theme, filterKey: "당일 퇴장")),
+          Expanded(child: _buildStatTile("당일 퇴장", m['out'] as int, Icons.logout, AppTheme.warning, theme, filterKey: "당일 퇴장")),
           const SizedBox(width: 12),
-          Expanded(child: _buildStatTile("현재 잔류", m['current'], Icons.person_search, theme.colorScheme.primary, theme, filterKey: "현재 잔류")),
+          Expanded(child: _buildStatTile("현재 잔류", m['current'] as int, Icons.person_search, theme.colorScheme.primary, theme, filterKey: "현재 잔류")),
         ],
       ),
     );
@@ -386,18 +424,21 @@ class _PersonPageState extends State<PersonPage> {
                       children: [
                         Row(
                           children: [
-                            // 성명 출력 (크기 19px, 테마 속성 적용)
+                            // 성명 출력 (형식 오류 건에 대한 색상 처리 포함)
                             Text(
                               item.name,
-                              style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
+                              style: AppTheme.itemValueStyle(context).copyWith(
+                                  fontSize: 19,
+                                  color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null
+                              ),
                             ),
                             const SizedBox(width: 12),
                             _buildStatusBadge(status),
                             // 출입이 승인되지 않은 인원일 경우 경고 아이콘 노출
                             if (!item.isApproved)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8),
-                                child: const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+                              const Padding(
+                                padding: EdgeInsets.only(left: 8),
+                                child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
                               ),
                           ],
                         ),
@@ -522,9 +563,8 @@ class _PersonPageState extends State<PersonPage> {
     return item.metadata[key]?.toString() ?? "-";
   }
 
-  // --- 시스템 기능 팝업 다이얼로그 (완벽 보존 구간) ---
+  // --- 시스템 기능 팝업 다이얼로그 ---
 
-  /// [에러 해결 1] 엑셀 처리 도중 에러가 나거나 일반 정보를 띄울 때 사용하던 다이얼로그를 복구했습니다.
   /// 단순 정보 및 오류를 사용자에게 안전하게 알리는 모달 위젯입니다.
   void _showInfoDialog(String title, String msg, ThemeData theme) {
     showDialog(
@@ -639,7 +679,6 @@ class _PersonPageState extends State<PersonPage> {
                 AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () => Navigator.pop(ctx)),
                 AppTheme.actionButton(label: "설정 적용", onPressed: () async {
                   await provider.saveRemoteSettings(temp);
-                  // [린트 해결 2] ctx 기반의 Navigator를 사용하므로 ctx.mounted로 비동기 후 안정성 확인
                   if (ctx.mounted) Navigator.pop(ctx);
                 })
               ],
@@ -654,7 +693,7 @@ class _PersonPageState extends State<PersonPage> {
     final confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-            title: AppTheme.dialogTitle("삭제 확인", Icons.warning, color: AppTheme.danger),
+            title: AppTheme.dialogTitle("전체 삭제 확인", Icons.warning, color: AppTheme.danger),
             content: const Text("서버의 모든 정보를 영구 삭제하시겠습니까?", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
             actions: [
               AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () => Navigator.pop(ctx, false)),
@@ -663,16 +702,61 @@ class _PersonPageState extends State<PersonPage> {
         )
     );
 
-    // [린트 해결] await 이후 context 사용에 대한 보호
     if (confirm == true && context.mounted) {
-      await provider.resetAllPersons();
-      messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+      // 삭제 역시 안전하게 전체 화면 로딩을 띄워 이중 터치를 막습니다.
+      setState(() { _isFullScreenLoading = true; });
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withValues(alpha: 0.5),
+        builder: (loadingCtx) => PopScope(
+          canPop: false,
+          child: Center(
+            child: Card(
+              elevation: 10,
+              color: theme.cardTheme.color,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: AppTheme.danger, strokeWidth: 5),
+                    SizedBox(height: 25),
+                    Text(
+                      "안전 데이터베이스 초기화 중...\n(창을 닫지 마세요)",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      try {
+        await provider.resetAllPersons();
+      } finally {
+        if (mounted) {
+          setState(() { _isFullScreenLoading = false; });
+          Navigator.of(context).pop(); // 로딩 창 닫기
+        }
+      }
+
+      if (mounted) {
+        messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+      }
     }
   }
 
-  /// 엑셀 파일(xlsx)을 파싱하여 시스템에 다수의 인원을 한 번에 밀어넣는 배치(Batch) 임포트 기능입니다.
+  /// ---------------------------------------------------------------------------
+  /// [인원 정보 엑셀 일괄 임포트 극강 업그레이드 모듈]
+  /// ProductPage와 동일한 수준의 예외 처리, 프로그레스 모달, 그리고
+  /// 화면 깜빡임이 없는 ValueNotifier 기반 실시간 진척도 업데이트 로직을 탑재했습니다.
+  /// ---------------------------------------------------------------------------
   Future<void> _handleBatchImport(PersonProvider provider, ThemeData theme) async {
-    final messenger = ScaffoldMessenger.of(context);
     try {
       // 1. 운영체제 고유 파일 선택기 호출
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -681,7 +765,6 @@ class _PersonPageState extends State<PersonPage> {
         withData: true,
       );
 
-      // [린트 해결]
       if (result == null || !context.mounted) return;
 
       Uint8List? bytes = result.files.single.bytes;
@@ -705,113 +788,278 @@ class _PersonPageState extends State<PersonPage> {
 
       final sheet = excel.tables[targetSheet];
       if (sheet == null || sheet.maxRows <= 1) {
-        if (context.mounted) _showInfoDialog("알림", "데이터가 없습니다.", theme);
+        if (context.mounted) _showInfoDialog("알림", "데이터가 없거나 헤더만 존재합니다.", theme);
         return;
       }
 
-      // 3. 첫 번째 행에서 컬럼 헤더 추출 (동적 메타데이터 구성을 위해)
+      // 3. 첫 번째 행에서 컬럼 헤더 추출
       List<String> headers = [];
       final headerRow = sheet.row(0);
       for (var cell in headerRow) {
         headers.add(_extractString(cell));
       }
 
-      int successCount = 0;
-      int totalCount = 0;
-
-      // 4. 각 행의 데이터를 파싱하여 인원 객체 형태로 서버 저장
-      for (int i = 1; i < sheet.maxRows; i++) {
-        final row = sheet.row(i);
-        if (row.isEmpty) continue;
-
-        String name = "";
-        String code = "";
-        String dept = "";
-        String tagId = "";
-        Map<String, dynamic> metadata = {};
-
-        bool hasData = false;
-
-        // 헤더 인덱스와 매칭하여 셀 데이터 분배
-        for (int colIdx = 0; colIdx < row.length; colIdx++) {
-          if (colIdx >= headers.length) break;
-
-          String header = headers[colIdx];
-          String val = _extractString(row[colIdx]);
-          if (val.isNotEmpty) hasData = true;
-
-          // 기본 관리 필드 매핑
-          if (header == '성명' || header == '이름') {
-            name = val;
-          } else if (header == '사번' || header == 'ID') {
-            code = val;
-          } else if (header == '부서' || header == '소속' || header == '담당부서/소속') {
-            dept = val;
-          } else if (header == '태그ID' || header == 'RFID 태그 EPC') {
-            tagId = val;
-          } else {
-            // 기본 필드가 아닌 항목은 모두 metadata 객체 속으로 집어넣어 동적 확장 지원
-            if (header.isNotEmpty && val.isNotEmpty) {
-              metadata[header] = val;
-            }
-          }
+      // [안전장치 1] 1번째 줄 헤더 필수항목 존재 여부 검사
+      bool hasNameHeader = false;
+      for (String h in headers) {
+        String ch = h.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+        if (ch.contains('성명') || ch.contains('이름') || ch.contains('사원명') ||
+            ch.contains('근로자') || ch.contains('작업자') || ch.contains('직원명') ||
+            ch.contains('인원명')) {
+          hasNameHeader = true;
+          break;
         }
-
-        // 이름이 누락된 불량 데이터는 스킵
-        if (!hasData || name.isEmpty) continue;
-
-        // 태그ID가 비어있으면 현재 시간을 바탕으로 임시 ID를 발급
-        if (tagId.isEmpty) {
-          tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
-        }
-
-        totalCount++;
-
-        final data = {
-          'name': name,
-          'code': code,
-          'tag_id': tagId,
-          'department': dept,
-          'is_approved': true,
-          'remarks': '',
-          'metadata': metadata
-        };
-
-        // 데이터 저장 API 수행
-        bool ok = await provider.handleSave(p: null, data: data, imageXFile: null);
-        if (ok) successCount++;
       }
 
-      if (context.mounted) {
-        messenger.showSnackBar(SnackBar(content: Text('총 $totalCount건 중 $successCount건 성공', style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
+      if (!hasNameHeader) {
+        if (context.mounted) {
+          _showInfoDialog(
+              "엑셀 양식 오류 (헤더 누락)",
+              "엑셀 파일의 1번째 줄(Row 1)에서 '성명', '이름', '사원명' 등의 필수 항목명을 찾을 수 없습니다.\n\n"
+                  "💡 [해결 방법]\n"
+                  "데이터 영역만 복사하신 경우, 1번째 줄에 항목명(예: 성명, 사번, 부서 등)을 반드시 타이핑해 넣으신 뒤 다시 업로드해 주세요.",
+              theme
+          );
+        }
+        return;
+      }
+
+      // [진척도 계산용] 유효 데이터 수(비어있지 않은 행) 산출
+      int actualValidRows = 0;
+      for (int i = 1; i < sheet.maxRows; i++) {
+        bool hasData = false;
+        for (var cell in sheet.row(i)) {
+          if (_extractString(cell).isNotEmpty) {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) actualValidRows++;
+      }
+
+      // 대량 작업 모드 진입 및 진행률 노티파이어 세팅
+      ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+
+      setState(() { _isFullScreenLoading = true; });
+
+      // 전체 스크린을 덮어버리는 프로그레스 모달 팝업 호출
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black.withValues(alpha: 0.5), // 스크린 전체를 완벽히 어둡게
+        builder: (ctx) => PopScope(
+          canPop: false,
+          child: Center(
+            child: Card(
+              elevation: 10,
+              color: theme.cardTheme.color,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                child: ValueListenableBuilder<int>(
+                  valueListenable: currentCountNotifier,
+                  builder: (context, currentCount, child) {
+                    final double progress = actualValidRows > 0 ? currentCount / actualValidRows : 0.0;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            SizedBox(
+                              width: 80,
+                              height: 80,
+                              child: CircularProgressIndicator(
+                                value: progress,
+                                color: AppTheme.primary,
+                                backgroundColor: theme.dividerTheme.color?.withValues(alpha: 0.3),
+                                strokeWidth: 8,
+                              ),
+                            ),
+                            Text(
+                              '${(progress * 100).toInt()}%',
+                              style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 25),
+                        const Text(
+                          "인원 대량 데이터 전송 중...",
+                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "총 $actualValidRows건 중 $currentCount건 처리 완료\n(창을 닫거나 새로고침하지 마세요)",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      int successCount = 0;
+      int errorCount = 0;
+      int failCount = 0;
+      int totalCount = 0;
+
+      bool hasCriticalError = false;
+      String criticalErrorMsg = "";
+
+      try {
+        // 4. 각 행의 데이터를 파싱하여 인원 객체 형태로 서버 저장
+        for (int i = 1; i < sheet.maxRows; i++) {
+          final row = sheet.row(i);
+          if (row.isEmpty) continue;
+
+          String name = "";
+          String code = "";
+          String dept = "";
+          String tagId = "";
+          Map<String, dynamic> metadata = {};
+
+          bool hasData = false;
+
+          // 헤더 인덱스와 매칭하여 셀 데이터 분배
+          for (int colIdx = 0; colIdx < row.length; colIdx++) {
+            if (colIdx >= headers.length) break;
+
+            String rawHeader = headers[colIdx];
+            String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+
+            String val = _extractString(row[colIdx]);
+            if (val.isNotEmpty) hasData = true;
+
+            // 기본 관리 필드 스마트 매핑
+            if (cleanHeader.contains('성명') || cleanHeader.contains('이름') || cleanHeader.contains('사원명') || cleanHeader.contains('근로자') || cleanHeader.contains('작업자')) {
+              name = val;
+            } else if (cleanHeader.contains('사번') || cleanHeader.contains('id') || cleanHeader.contains('고유번호')) {
+              code = val;
+            } else if (cleanHeader.contains('부서') || cleanHeader.contains('소속') || cleanHeader.contains('팀') || cleanHeader.contains('회사')) {
+              dept = val;
+            } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid') || cleanHeader.contains('epc') || cleanHeader.contains('tag')) {
+              tagId = val;
+            } else {
+              // 기본 필드가 아닌 항목은 모두 metadata 객체 속으로 집어넣어 동적 확장 지원
+              if (rawHeader.isNotEmpty && val.isNotEmpty) {
+                metadata[rawHeader] = val;
+              }
+            }
+          }
+
+          if (!hasData) continue;
+
+          bool isFormatError = false;
+
+          // 이름이 누락된 불량 데이터 처리 방식 통일 (ProductPage와 동일)
+          if (name.isEmpty) {
+            name = "형식에 맞지 않는 건";
+            metadata['import_source'] = 'excel_error';
+            metadata['error_reason'] = '성명/사원명 항목 누락';
+            errorCount++;
+            isFormatError = true;
+          } else {
+            metadata['import_source'] = 'excel';
+          }
+
+          // 태그ID가 비어있으면 임시 ID를 발급하여 등록 실패 방지
+          if (tagId.isEmpty) {
+            tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+          }
+
+          final data = {
+            'name': name,
+            'code': code,
+            'tag_id': tagId,
+            'department': dept,
+            'is_approved': !isFormatError, // 이름 누락건은 위험 방지를 위해 자동 미승인 처리
+            'remarks': '',
+            'metadata': metadata
+          };
+
+          // 데이터 저장 API 수행
+          bool ok = await provider.handleSave(p: null, data: data, imageXFile: null);
+
+          if (ok) {
+            if (!isFormatError) successCount++;
+          } else {
+            failCount++;
+            if (isFormatError) errorCount--;
+          }
+
+          // 화면에 떠 있는 원형 프로그레스 즉시 갱신 (리빌드 없음)
+          currentCountNotifier.value++;
+        }
+      } catch (e) {
+        hasCriticalError = true;
+        criticalErrorMsg = e.toString();
+      } finally {
+        // [다이얼로그 닫기] 작업이 무사히 끝났든 에러가 났든, 반드시 로딩창을 닫아줍니다.
+        if (mounted) {
+          setState(() { _isFullScreenLoading = false; });
+          Navigator.of(context).pop(); // 전체 화면 진행률 다이얼로그 닫기
+        }
+      }
+
+      // 로딩 팝업이 완전히 닫힌 직후에 새로운 결과 알림창(또는 오류창)을 띄웁니다.
+      if (mounted) {
+        if (hasCriticalError) {
+          if (criticalErrorMsg.contains('numFmtId')) {
+            _showInfoDialog(
+                "엑셀 서식 호환성 오류",
+                "해당 엑셀 파일에 지원되지 않는 특수 셀 서식이 포함되어 있습니다.\n\n"
+                    "💡 [빠른 해결 방법]\n"
+                    "새 엑셀 파일의 A1 셀에 '값만 붙여넣기'로 데이터를 옮긴 후 다시 업로드해주세요.",
+                theme
+            );
+          } else {
+            _showInfoDialog("오류", "엑셀 파싱 중 예기치 않은 오류가 발생했습니다: $criticalErrorMsg", theme);
+          }
+        } else {
+          totalCount = successCount + errorCount + failCount;
+          _showInfoDialog(
+              "엑셀 데이터 임포트 완료",
+              "총 $totalCount건의 인원 데이터 처리가 종료되었습니다.\n\n"
+                  "✅ 정상 등록됨: $successCount건\n"
+                  "⚠️ 형식 오류 (성명 누락): $errorCount건\n"
+                  "❌ 서버 저장 실패: $failCount건\n\n"
+                  "(저장 실패가 발생한 경우, 엑셀 내부에 태그ID가 중복되어 있거나 서버 제약조건 때문일 수 있습니다.)",
+              theme
+          );
+        }
       }
 
     } catch (e) {
-      if (context.mounted) {
-        _showInfoDialog("오류", "엑셀 업로드 중 오류가 발생했습니다: $e", theme);
+      if (mounted) {
+        _showInfoDialog("오류", "파일 처리 중 치명적 오류가 발생했습니다.", theme);
       }
     }
   }
 
-  /// 엑셀 패키지 버전에 따라 값이 TextCellValue 객체 등으로 리턴되는 것을
-  /// 안전한 기본 문자열(String)로 추출해주는 보호 헬퍼 함수입니다.
+  /// ---------------------------------------------------------------------------
+  /// [데이터 추출 보호 모듈 (강화판)]
+  /// 최신 엑셀 패키지 객체들을 어떤 형태로 만나도 완벽히 알맹이만 빼냅니다.
+  /// (ProductPage의 강력한 정규식 엔진을 동일하게 적용했습니다.)
+  /// ---------------------------------------------------------------------------
   String _extractString(excel_pkg.Data? cell) {
     if (cell == null || cell.value == null) return "";
-    final val = cell.value;
-    String str = val.toString();
+    String str = cell.value.toString();
 
-    if (str.startsWith("TextCellValue(")) {
-      int start = str.indexOf('(') + 1;
-      int end = str.lastIndexOf(')');
-      if (start > 0 && end > start) return str.substring(start, end).trim();
-    } else if (str.startsWith("IntCellValue(")) {
-      int start = str.indexOf('(') + 1;
-      int end = str.lastIndexOf(')');
-      if (start > 0 && end > start) return str.substring(start, end).trim();
-    } else if (str.startsWith("DoubleCellValue(")) {
-      int start = str.indexOf('(') + 1;
-      int end = str.lastIndexOf(')');
-      if (start > 0 && end > start) return str.substring(start, end).trim();
+    // 정규식을 통해 ~CellValue(내용) 형태의 래퍼를 완벽히 제거
+    RegExp regExp = RegExp(r'^[a-zA-Z]+CellValue\((.*)\)$', dotAll: true);
+    Match? match = regExp.firstMatch(str);
+
+    if (match != null && match.groupCount >= 1) {
+      String extracted = match.group(1) ?? "";
+      if (extracted.startsWith('"') && extracted.endsWith('"') && extracted.length >= 2) {
+        extracted = extracted.substring(1, extracted.length - 1);
+      }
+      return extracted.trim();
     }
     return str.trim();
   }
@@ -840,7 +1088,6 @@ class _PersonPageState extends State<PersonPage> {
 
       final path = await FilePicker.platform.saveFile(fileName: 'Person_Export_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
 
-      // [린트 해결] context.mounted 확인
       if (path != null && context.mounted) {
         await File(path).writeAsBytes(excel.encode()!);
         messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 저장 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
@@ -854,7 +1101,7 @@ class _PersonPageState extends State<PersonPage> {
 
   /// 인원의 마스터 정보를 신규 등록하거나, 기존 프로필을 열어서 수정할 수 있는 통합 팝업 폼입니다.
   Future<void> _showForm(PersonProvider provider, Person? p, ThemeData theme) async {
-    final navigator = Navigator.of(context); // [린트 해결] 비동기 이전에 네비게이터를 미리 추출합니다.
+    final navigator = Navigator.of(context);
 
     // 화면에 보여줄 텍스트 필드 컨트롤러 선언 및 기존 데이터 바인딩
     final nameC = TextEditingController(text: p?.name ?? "");
@@ -974,7 +1221,6 @@ class _PersonPageState extends State<PersonPage> {
                       'metadata': meta
                     };
 
-                    // [린트 해결] 백엔드 전송 작업 완료 후 context.mounted 점검
                     if (await provider.handleSave(p: p, data: data, imageXFile: file) && context.mounted) {
                       navigator.pop();
                     }
@@ -1005,7 +1251,6 @@ class _PersonPageState extends State<PersonPage> {
             actions: [
               AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () => Navigator.pop(c)),
               AppTheme.actionButton(label: "삭제 실행", color: AppTheme.danger, onPressed: () async {
-                // [린트 해결] 삭제 성공 여부와 context 안전성 검증
                 if (await provider.deletePerson(p.id) && context.mounted) {
                   nav.pop();
                 }
