@@ -4,17 +4,16 @@ import 'package:window_manager/window_manager.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 
-// 각 페이지 위젯
 import 'kiosk_view.dart';
 import 'person_page.dart';
 import 'device_page.dart';
 import 'product_page.dart';
 import 'device_map_page.dart';
 
-// 테마 및 프로바이더
 import '../theme/app_theme.dart';
 import '../providers/person_provider.dart';
 import '../providers/product_provider.dart';
+import '../providers/theme_provider.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -25,10 +24,10 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   bool _isKioskMode = false;
+  bool _isSidebarExtended = true;
   int _selectedIndex = 0;
   final String _pbBaseUrl = "http://127.0.0.1:8090";
 
-  // 메뉴 정의 데이터
   final List<Map<String, dynamic>> _menuItems = [
     {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},
     {'title': '인원 관리', 'icon': FontAwesomeIcons.users},
@@ -44,7 +43,6 @@ class _MainPageState extends State<MainPage> {
     _initFullScreenConfiguration();
   }
 
-  // 윈도우 환경 설정 (키오스크 느낌을 위한 전체화면)
   Future<void> _initFullScreenConfiguration() async {
     if (Platform.isWindows) {
       await windowManager.setTitleBarStyle(
@@ -59,10 +57,9 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 테마 데이터 가져오기 (이 한 줄로 앱 전체의 테마 상태에 반응함)
     final theme = Theme.of(context);
+    final themeProvider = context.watch<ThemeProvider>();
 
-    // 키오스크 모드 전환 시
     if (_isKioskMode) {
       return Scaffold(
         body: KioskView(
@@ -77,27 +74,21 @@ class _MainPageState extends State<MainPage> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        bool isDesktop = constraints.maxWidth > 1100;
         bool isMobile = constraints.maxWidth <= 650;
 
         return Scaffold(
-          // 테마에 정의된 배경색 사용 (AppTheme.lightTheme / darkTheme의 scaffoldBackgroundColor)
           backgroundColor: theme.scaffoldBackgroundColor,
           body: Row(
             children: [
-              // 좌측 사이드바
               if (!isMobile) ...[
-                _buildSidebar(isDesktop, theme),
+                _buildSidebar(_isSidebarExtended, theme, themeProvider),
               ],
-
-              // 메인 컨텐츠 영역
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
                     color: theme.scaffoldBackgroundColor,
                     border: Border(
                       left: BorderSide(
-                        // 테마의 구분선 색상 사용
                         color: theme.dividerTheme.color ?? theme.colorScheme.outlineVariant,
                         width: 1.5,
                       ),
@@ -113,30 +104,26 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 좌측 사이드바 빌더
-  Widget _buildSidebar(bool extended, ThemeData theme) {
+  Widget _buildSidebar(bool extended, ThemeData theme, ThemeProvider themeProvider) {
     double width = extended ? 280 : 90;
 
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 250),
       width: width,
+      curve: Curves.easeInOut,
       decoration: BoxDecoration(
-        // 테마의 surface 색상을 사용하여 자동으로 다크/라이트 대응
         color: theme.colorScheme.surface,
       ),
       child: Column(
         children: [
-          // 사이드바 로고 영역
-          _buildSidebarLogo(extended, theme),
+          _buildSidebarHeader(extended, theme),
 
           const SizedBox(height: 10),
 
-          // 통합 메뉴 리스트
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               children: [
-                // 1. 일반 업무 메뉴
                 ...List.generate(_menuItems.length, (index) {
                   return _buildMenuItem(
                     title: _menuItems[index]['title'],
@@ -151,13 +138,29 @@ class _MainPageState extends State<MainPage> {
                     },
                   );
                 }),
-
                 const SizedBox(height: 20),
-                // 테마의 디바이더 사용
                 Divider(color: theme.dividerTheme.color, height: 1),
                 const SizedBox(height: 20),
 
-                // 2. 추가 시스템 메뉴 (일반 메뉴와 동일한 위젯 사용)
+                // [추가] 테마 스위처 섹션
+                if (extended) ...[
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    child: Text(
+                      "감성 테마 선택",
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ),
+                  _buildThemeSelector(themeProvider, theme),
+                  const SizedBox(height: 20),
+                  Divider(color: theme.dividerTheme.color, height: 1),
+                  const SizedBox(height: 20),
+                ],
+
                 _buildMenuItem(
                   title: "키오스크 모드",
                   icon: FontAwesomeIcons.lockOpen,
@@ -170,7 +173,6 @@ class _MainPageState extends State<MainPage> {
                     });
                   },
                 ),
-
                 if (Platform.isWindows) ...[
                   const SizedBox(height: 4),
                   _buildMenuItem(
@@ -185,7 +187,6 @@ class _MainPageState extends State<MainPage> {
                     },
                   ),
                 ],
-
                 const SizedBox(height: 20),
               ],
             ),
@@ -195,31 +196,107 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 사이드바 로고 영역
-  Widget _buildSidebarLogo(bool extended, ThemeData theme) {
+  // [추가] 테마를 선택할 수 있는 가로형 버튼 그룹
+  Widget _buildThemeSelector(ThemeProvider provider, ThemeData theme) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: AppThemeType.values.map((type) {
+        final bool isSelected = provider.currentThemeType == type;
+        final Color seedColor = _getSeedColor(type);
+
+        return GestureDetector(
+          onTap: () => provider.setTheme(type),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: seedColor,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: isSelected ? theme.colorScheme.onSurface : Colors.transparent,
+                width: 3,
+              ),
+              boxShadow: [
+                if (isSelected)
+                  BoxShadow(
+                    color: seedColor.withValues(alpha: 0.4),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  )
+              ],
+            ),
+            child: isSelected
+                ? const Icon(Icons.check, color: Colors.white, size: 20)
+                : null,
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Color _getSeedColor(AppThemeType type) {
+    switch (type) {
+      case AppThemeType.industrial: return AppTheme.colorIndustrial;
+      case AppThemeType.forest: return AppTheme.colorForest;
+      case AppThemeType.solar: return AppTheme.colorSolar;
+      case AppThemeType.midnight: return AppTheme.colorMidnight;
+    }
+  }
+
+  Widget _buildSidebarHeader(bool extended, ThemeData theme) {
     return Container(
-      padding: EdgeInsets.symmetric(vertical: extended ? 50 : 25, horizontal: 10),
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: extended ? 180 : 50,
-          height: extended ? 180 : 50,
-          child: Image.asset(
-            'assets/images/PLUG4ASSET.png',
-            fit: BoxFit.contain,
-            errorBuilder: (ctx, err, stack) => Icon(
+      padding: EdgeInsets.fromLTRB(14, extended ? 50 : 25, 14, 25),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: extended ? MainAxisAlignment.spaceBetween : MainAxisAlignment.center,
+            children: [
+              if (extended)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  width: 140,
+                  child: Image.asset(
+                    'assets/images/PLUG4ASSET.png',
+                    fit: BoxFit.contain,
+                    errorBuilder: (ctx, err, stack) => Text(
+                      "PLUG4",
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 22,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _isSidebarExtended = !_isSidebarExtended;
+                  });
+                },
+                icon: Icon(
+                  extended ? Icons.menu_open_rounded : Icons.menu_rounded,
+                  color: theme.colorScheme.primary.withValues(alpha: 0.6),
+                  size: 26,
+                ),
+              ),
+            ],
+          ),
+          if (!extended) ...[
+            const SizedBox(height: 20),
+            Icon(
               Icons.api_rounded,
-              size: extended ? 60 : 30,
-              // 테마의 primary 색상에 투명도 적용
+              size: 32,
               color: theme.colorScheme.primary.withValues(alpha: 0.1),
             ),
-          ),
-        ),
+          ],
+        ],
       ),
     );
   }
 
-  // 공통 메뉴 아이템 빌더
   Widget _buildMenuItem({
     required String title,
     required dynamic icon,
@@ -229,9 +306,8 @@ class _MainPageState extends State<MainPage> {
     required ThemeData theme,
     Color? color,
   }) {
-    // 테마 기반 색상 추출
-    final Color activeColor = AppTheme.primary;
-    final Color inactiveColor = color ?? theme.textTheme.bodyLarge?.color?.withValues(alpha: 0.7) ?? Colors.grey;
+    final Color activeColor = theme.colorScheme.primary;
+    final Color inactiveColor = color ?? theme.colorScheme.onSurface.withValues(alpha: 0.6);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -243,7 +319,6 @@ class _MainPageState extends State<MainPage> {
           height: 56,
           padding: EdgeInsets.symmetric(horizontal: extended ? 18 : 0),
           decoration: BoxDecoration(
-            // 선택 시 테마의 primary, 미선택 시 투명배경
             color: isSelected ? activeColor : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
             border: Border.all(
@@ -295,7 +370,6 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 메인 컨텐츠 영역
   Widget _buildBody(bool isMobile) {
     switch (_selectedIndex) {
       case 0:
@@ -314,7 +388,6 @@ class _MainPageState extends State<MainPage> {
   }
 }
 
-// 윈도우 드래그 영역 (필요 시 확장)
 class DragToMoveArea extends StatelessWidget {
   final Widget child;
   const DragToMoveArea({super.key, required this.child});
