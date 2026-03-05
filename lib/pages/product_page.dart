@@ -233,7 +233,7 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
-  // --- 상세 리스트 뷰 (품명 19px로 키움) ---
+  // --- 상세 리스트 뷰 ---
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
       children: [
@@ -275,7 +275,7 @@ class _ProductPageState extends State<ProductPage> {
                           children: [
                             Row(
                               children: [
-                                // [수정] 품명 글자 크기를 17에서 19로 키워 시인성을 극대화함
+                                // 품명 글자 크기 19px 유지
                                 Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
                                 const SizedBox(width: 12),
                                 _buildStatusBadge(p.status),
@@ -314,7 +314,7 @@ class _ProductPageState extends State<ProductPage> {
                             const SizedBox(width: 12),
                             _buildCircleAction(Icons.login, AppTheme.success, "입고", () => _processAssetAccess(provider, p, '수기입고', theme)),
                             const SizedBox(width: 12),
-                            _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () => _processAssetAccess(provider, p, '수기출고', theme)),
+                            _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () => _processAssetAccess(provider, p, '수기출고', theme)),
                             const SizedBox(width: 12),
                             _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () => _confirmIndividualDelete(provider, p, theme)),
                           ],
@@ -341,6 +341,9 @@ class _ProductPageState extends State<ProductPage> {
     final snC = TextEditingController(text: p?.serialNumber ?? "");
     final safeC = TextEditingController(text: p?.safetyStock.toString() ?? "5");
     final qtyC = TextEditingController(text: "1");
+
+    // 다크모드 대응 취소 버튼 색상
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
 
     final Set<String> availableMetaKeys = {};
     for (var item in provider.items.take(100)) {
@@ -498,7 +501,7 @@ class _ProductPageState extends State<ProductPage> {
             AppTheme.actionButton(
                 label: "취소",
                 color: Colors.transparent,
-                textColor: Colors.black54,
+                textColor: cancelColor,
                 onPressed: () => Navigator.of(dialogCtx).pop()
             ),
             AppTheme.actionButton(
@@ -958,6 +961,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   void _showHistoryDialog(BuildContext context, ProductModel p, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1032,7 +1036,7 @@ class _ProductPageState extends State<ProductPage> {
               AppTheme.actionButton(
                   label: "닫기",
                   color: Colors.transparent,
-                  textColor: Colors.black54,
+                  textColor: cancelColor,
                   onPressed: () => Navigator.pop(ctx)
               )
             ]
@@ -1043,6 +1047,7 @@ class _ProductPageState extends State<ProductPage> {
   void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
     final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
     final Set<String> metaKeySet = {};
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
 
     for (var item in provider.items.take(100)) {
       for (var entry in item.metadata.entries) {
@@ -1077,7 +1082,7 @@ class _ProductPageState extends State<ProductPage> {
                             const SizedBox(height: 12),
                             ...baseFields.map((k) => _buildSelectionListItem(k, temp, (v) {
                               setS(() {});
-                            })),
+                            }, theme)),
                             const SizedBox(height: 32),
                             _buildColumnGroupHeader("추가 확장 정보"),
                             const SizedBox(height: 12),
@@ -1086,7 +1091,7 @@ class _ProductPageState extends State<ProductPage> {
                             else
                               ...metaFields.map((k) => _buildSelectionListItem(k, temp, (v) {
                                 setS(() {});
-                              }))
+                              }, theme))
                           ]
                       )
                   )
@@ -1095,7 +1100,7 @@ class _ProductPageState extends State<ProductPage> {
                 AppTheme.actionButton(
                     label: "취소",
                     color: Colors.transparent,
-                    textColor: Colors.black54,
+                    textColor: cancelColor,
                     onPressed: () => Navigator.pop(ctx)
                 ),
                 AppTheme.actionButton(
@@ -1124,8 +1129,9 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged) {
+  Widget _buildSelectionListItem(String label, List<String> currentList, Function(void) onChanged, ThemeData theme) {
     final bool isSelected = currentList.contains(label);
+    final bool isDark = theme.brightness == Brightness.dark;
     return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: InkWell(
@@ -1146,15 +1152,15 @@ class _ProductPageState extends State<ProductPage> {
                 duration: const Duration(milliseconds: 200),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                    color: isSelected ? AppTheme.primary.withValues(alpha: 0.05) : Colors.white,
+                    color: isSelected ? AppTheme.primary.withValues(alpha: 0.05) : theme.cardTheme.color,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: isSelected ? AppTheme.primary : Colors.black12, width: 2.5)
+                    border: Border.all(color: isSelected ? AppTheme.primary : (isDark ? Colors.white12 : Colors.black12), width: 2.5)
                 ),
                 child: Row(
                     children: [
                       Icon(isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 20, color: isSelected ? AppTheme.primary : Colors.black26),
                       const SizedBox(width: 16),
-                      Expanded(child: Text(label, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 15, fontWeight: FontWeight.bold, color: isSelected ? AppTheme.primary : Colors.black45)))
+                      Expanded(child: Text(label, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 15, fontWeight: FontWeight.bold, color: isSelected ? AppTheme.primary : (isDark ? Colors.white38 : Colors.black45))))
                     ]
                 )
             )
@@ -1163,6 +1169,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   void _showResetDialog(ProductProvider provider, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1172,7 +1179,7 @@ class _ProductPageState extends State<ProductPage> {
               AppTheme.actionButton(
                   label: "취소",
                   color: Colors.transparent,
-                  textColor: Colors.black54,
+                  textColor: cancelColor,
                   onPressed: () => Navigator.pop(ctx)
               ),
               AppTheme.actionButton(
@@ -1208,6 +1215,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   void _confirmIndividualDelete(ProductProvider provider, ProductModel p, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
         context: context,
         builder: (c) => AlertDialog(
@@ -1217,7 +1225,7 @@ class _ProductPageState extends State<ProductPage> {
               AppTheme.actionButton(
                   label: "취소",
                   color: Colors.transparent,
-                  textColor: Colors.black54,
+                  textColor: cancelColor,
                   onPressed: () => Navigator.pop(c)
               ),
               const SizedBox(width: 8),
@@ -1241,6 +1249,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   void _confirmGroupDelete(BuildContext ctx, ProductProvider provider, String name, List<ProductModel> items, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
         context: ctx,
         builder: (c) => AlertDialog(
@@ -1250,7 +1259,7 @@ class _ProductPageState extends State<ProductPage> {
               AppTheme.actionButton(
                   label: "취소",
                   color: Colors.transparent,
-                  textColor: Colors.black54,
+                  textColor: cancelColor,
                   onPressed: () => Navigator.pop(c)
               ),
               const SizedBox(width: 8),
@@ -1437,9 +1446,13 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final personProvider = context.watch<PersonProvider>();
     final workerList = personProvider.list.map((p) => "${p.name} (${p.code})").toList();
     final isIn = widget.type == '수기입고';
+
+    // 취소 버튼 색상 (다크모드 대응)
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
 
     return AlertDialog(
       title: AppTheme.dialogTitle('${widget.type} - ${widget.product.name}', isIn ? Icons.login : Icons.logout),
@@ -1476,7 +1489,12 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
         ),
       ),
       actions: [
-        AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: Colors.black54, onPressed: () => Navigator.pop(context)),
+        AppTheme.actionButton(
+            label: "취소",
+            color: Colors.transparent,
+            textColor: cancelColor,
+            onPressed: () => Navigator.pop(context)
+        ),
         AppTheme.actionButton(
             label: "처리 확정",
             onPressed: () => Navigator.pop(context, {
