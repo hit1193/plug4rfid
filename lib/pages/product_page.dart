@@ -50,7 +50,7 @@ class _ProductPageState extends State<ProductPage> {
   int _lastRawItemCount = -1;
   String _lastActiveFilter = "";
 
-  // 스크린 전체를 덮는 다이얼로그(초기화, 엑셀) 실행 중일 때
+  // 스크린 전체를 덮는 다이얼로그(초기화, 엑셀, 일괄 이미지 변경) 실행 중일 때
   // 기존의 부분 오버레이(Stack)가 중복으로 표출되는 것을 막는 플래그입니다.
   bool _isFullScreenLoading = false;
 
@@ -121,7 +121,6 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [실시간 검색 및 필터링 엔진]
-  /// 사용자의 입력을 감지하여 데이터를 즉시 필터링합니다. (Debounce 적용)
   /// ---------------------------------------------------------------------------
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
@@ -181,7 +180,6 @@ class _ProductPageState extends State<ProductPage> {
       return true;
     }).toList();
 
-    // 기본 이름 오름차순 정렬
     if (_sortCriteria == 'name') {
       result.sort((a, b) => a.name.compareTo(b.name));
     }
@@ -195,12 +193,10 @@ class _ProductPageState extends State<ProductPage> {
     final provider = context.watch<ProductProvider>();
     final theme = Theme.of(context);
 
-    // 원본 데이터가 변경되었거나 필터가 변경된 경우 캐시 동기화
     if (_lastRawItemCount != provider.items.length || _lastActiveFilter != _activeMetricFilter) {
       _syncFiltering(provider.items);
     }
 
-    // 그룹화 및 지표 계산
     final Map<String, dynamic> metrics = _calculateMetrics(provider.items);
     final Map<String, List<ProductModel>> groupedMap = _getGroupedData(_filteredCache);
     final List<String> groupKeys = groupedMap.keys.toList()..sort();
@@ -227,8 +223,6 @@ class _ProductPageState extends State<ProductPage> {
             ],
           ),
 
-          // 단일 수정 등 가벼운 작업 시에만 표출되는 우측 영역 한정 오버레이
-          // 전체 화면(풀스크린) 다이얼로그가 떠 있을 때는 이중 표출되지 않도록 차단합니다.
           if ((provider.isParsing || provider.isSaving) && !_isFullScreenLoading)
             _buildGlobalLoadingOverlay(provider, theme),
         ],
@@ -236,9 +230,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [설정된 컬럼에 따른 데이터 매핑 로직]
-  /// ---------------------------------------------------------------------------
   String _getAttributeValue(String label, ProductModel p) {
     switch (label) {
       case '품명':
@@ -261,7 +252,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [상세 리스트 뷰 영역] - (좌측 정렬 완벽 개선 패치 적용)
+  /// [상세 리스트 뷰 영역]
   /// ---------------------------------------------------------------------------
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     return Column(
@@ -330,13 +321,12 @@ class _ProductPageState extends State<ProductPage> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            // [핵심 개선 포인트] Wrap의 자식에서 크기가 0인 항목이 spacing을 먹어버리는 버그 방지
+                            // Wrap의 자식에서 크기가 0인 항목이 spacing을 먹어버리는 버그 방지 패치
                             Wrap(
                               spacing: 20,
                               runSpacing: 10,
                               alignment: WrapAlignment.start,
                               crossAxisAlignment: WrapCrossAlignment.start,
-                              // '품명'은 제외(필터링)한 뒤 화면에 그립니다.
                               children: provider.selectedColumns
                                   .where((colName) => colName != '품명')
                                   .map((colName) => _buildKeyValue(colName, _getAttributeValue(colName, p), context))
@@ -607,22 +597,19 @@ class _ProductPageState extends State<ProductPage> {
 
   // --- 보조 UI 빌더 메서드 ---
 
-  /// [핵심 개선 2] 텍스트가 어떤 해상도에서도 절대 우측이나 중앙으로 흔들리지 않게 Align으로 강제 고정
   Widget _buildKeyValue(String label, String value, BuildContext ctx) {
     return SizedBox(
-      width: 150, // 글자 크기가 커짐에 따라 텍스트가 잘리지 않도록 할당 너비를 살짝 넓혔습니다 (140 -> 150)
+      width: 150,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Align(
             alignment: Alignment.centerLeft,
-            // 라벨의 폰트 사이즈도 명시적으로 13으로 고정하여 비율을 맞춥니다
             child: Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13), textAlign: TextAlign.left),
           ),
-          const SizedBox(height: 2), // 라벨과 값 사이의 시각적 여유 공간 추가
+          const SizedBox(height: 2),
           Align(
             alignment: Alignment.centerLeft,
-            // 실제 데이터 값의 폰트 사이즈를 기존 14에서 16으로 시원하게 키우고, 굵기도 살짝 보강했습니다
             child: Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis, textAlign: TextAlign.left),
           ),
         ],
@@ -674,9 +661,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [상단 헤더 툴바 생성]
-  /// ---------------------------------------------------------------------------
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -736,6 +720,159 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [대표 이미지 일괄 교체 모듈]
+  /// 집계(그룹) 리스트뷰의 썸네일을 클릭했을 때, 원본 품명이 동일한 모든 아이템의
+  /// 이미지를 한 번에 덮어쓰기 위한 기능입니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _handleGroupImageUpdate(ProductProvider provider, List<ProductModel> groupItems, ThemeData theme) async {
+    if (groupItems.isEmpty) return;
+
+    // 그룹 내 첫 번째 아이템의 '품명(name)'을 기준으로 업데이트 대상을 확실하게 색출합니다.
+    final String targetName = groupItems.first.name;
+    final List<ProductModel> targetItems = provider.items.where((p) => p.name == targetName).toList();
+
+    if (targetItems.isEmpty) return;
+
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+
+    if (image == null || !mounted) return;
+
+    final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            title: AppTheme.dialogTitle("대표 이미지 일괄 적용", Icons.photo_camera_front),
+            content: Text(
+                "선택하신 이미지를 '$targetName' 품명을 가진 모든 자산(${targetItems.length}개)에 일괄 적용하시겠습니까?\n\n(개별적으로 등록했던 특수 이미지가 있다면 덮어씌워집니다.)",
+                style: const TextStyle(fontFamily: AppTheme.fontPretendard)
+            ),
+            actions: [
+              AppTheme.actionButton(
+                  label: "취소",
+                  color: Colors.transparent,
+                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  onPressed: () => Navigator.pop(ctx, false)
+              ),
+              AppTheme.actionButton(
+                  label: "일괄 변경",
+                  color: AppTheme.primary,
+                  onPressed: () => Navigator.pop(ctx, true)
+              ),
+            ]
+        )
+    );
+
+    if (confirm != true || !mounted) return;
+
+    // 화면 깜빡임이 없는 ValueNotifier 기반의 전체 화면 프로그레스 호출
+    ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+    setState(() { _isFullScreenLoading = true; });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            elevation: 10,
+            color: theme.cardTheme.color,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+              child: ValueListenableBuilder<int>(
+                valueListenable: currentCountNotifier,
+                builder: (context, currentCount, child) {
+                  final double progress = targetItems.isNotEmpty ? currentCount / targetItems.length : 0.0;
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: CircularProgressIndicator(
+                              value: progress,
+                              color: AppTheme.primary,
+                              backgroundColor: theme.dividerTheme.color?.withValues(alpha: 0.3),
+                              strokeWidth: 8,
+                            ),
+                          ),
+                          Text(
+                            '${(progress * 100).toInt()}%',
+                            style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 25),
+                      const Text(
+                        "이미지 일괄 적용 중...",
+                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "총 ${targetItems.length}건 중 $currentCount건 처리 완료\n(창을 닫지 마세요)",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    int successCount = 0;
+    int failCount = 0;
+
+    try {
+      for (var p in targetItems) {
+        // 기존 데이터를 안전하게 보존하면서 이미지만 덮어씌웁니다.
+        final data = {
+          'name': p.name,
+          'tag_id': p.tagId,
+          'location': p.location,
+          'spec': p.spec,
+          'category': p.category,
+          'serial_number': p.serialNumber,
+          'safety_stock': p.safetyStock,
+          'status': p.status,
+          'is_approved': p.isApproved,
+          'metadata': p.metadata,
+        };
+
+        bool ok = await provider.handleSave(product: p, data: data, imageXFile: image);
+        if (ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+        currentCountNotifier.value++;
+      }
+    } finally {
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+        Navigator.of(context).pop();
+      }
+    }
+
+    if (mounted) {
+      _syncFiltering(provider.items);
+      _showInfoDialog(
+          "일괄 적용 완료",
+          "총 ${targetItems.length}개의 자산 중\n✅ $successCount개 적용 성공\n❌ $failCount개 적용 실패",
+          theme
+      );
+    }
+  }
+
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, ThemeData theme) {
     final double healthRatio = items.isEmpty ? 0.0 : items.where((i) => !i.status.contains('출고')).length / items.length;
     final Color hCol = healthRatio == 1.0 ? AppTheme.success : (healthRatio > 0.4 ? AppTheme.warning : AppTheme.danger);
@@ -756,7 +893,26 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
           children: [
-            _buildThumbnail(items.first, theme, size: 52),
+            // 썸네일을 터치하여 이미지를 일괄 변경할 수 있도록 구조를 개선했습니다.
+            GestureDetector(
+              onTap: () => _handleGroupImageUpdate(provider, items, theme),
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  _buildThumbnail(items.first, theme, size: 52),
+                  // 사진 교체 가능을 안내하는 뱃지 아이콘
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                    ),
+                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(width: 16),
             Expanded(child: Text(title, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15, color: isSelected ? AppTheme.primary : null))),
             Container(
