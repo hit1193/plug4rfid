@@ -44,7 +44,7 @@ class _MainPageState extends State<MainPage> {
     _initFullScreenConfiguration();
   }
 
-  // 윈도우 환경에서 안드로이드 태블릿처럼 전체화면 및 캡션바 제거 설정
+  // 윈도우 환경 설정 (키오스크 느낌을 위한 전체화면)
   Future<void> _initFullScreenConfiguration() async {
     if (Platform.isWindows) {
       await windowManager.setTitleBarStyle(
@@ -59,9 +59,10 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 테마 데이터 가져오기 (이 한 줄로 앱 전체의 테마 상태에 반응함)
     final theme = Theme.of(context);
 
-    // 키오스크 모드 전환 시의 화면
+    // 키오스크 모드 전환 시
     if (_isKioskMode) {
       return Scaffold(
         body: KioskView(
@@ -80,8 +81,8 @@ class _MainPageState extends State<MainPage> {
         bool isMobile = constraints.maxWidth <= 650;
 
         return Scaffold(
-          // 배경색을 순백색으로 통일
-          backgroundColor: Colors.white,
+          // 테마에 정의된 배경색 사용 (AppTheme.lightTheme / darkTheme의 scaffoldBackgroundColor)
+          backgroundColor: theme.scaffoldBackgroundColor,
           body: Row(
             children: [
               // 좌측 사이드바
@@ -93,10 +94,11 @@ class _MainPageState extends State<MainPage> {
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: theme.scaffoldBackgroundColor,
                     border: Border(
                       left: BorderSide(
-                        color: theme.dividerTheme.color ?? Colors.black.withValues(alpha: 0.05),
+                        // 테마의 구분선 색상 사용
+                        color: theme.dividerTheme.color ?? theme.colorScheme.outlineVariant,
                         width: 1.5,
                       ),
                     ),
@@ -118,29 +120,30 @@ class _MainPageState extends State<MainPage> {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       width: width,
-      decoration: const BoxDecoration(
-        color: Colors.white, // 사이드바 배경색 화이트 통일
+      decoration: BoxDecoration(
+        // 테마의 surface 색상을 사용하여 자동으로 다크/라이트 대응
+        color: theme.colorScheme.surface,
       ),
       child: Column(
         children: [
           // 사이드바 로고 영역
-          _buildSidebarLogo(extended),
+          _buildSidebarLogo(extended, theme),
 
           const SizedBox(height: 10),
 
-          // 통합 리스트뷰 (메뉴 + 시스템 액션)
+          // 통합 메뉴 리스트
           Expanded(
             child: ListView(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               children: [
-                // 1. 일반 업무 메뉴들
+                // 1. 일반 업무 메뉴
                 ...List.generate(_menuItems.length, (index) {
                   return _buildMenuItem(
-                    index: index,
                     title: _menuItems[index]['title'],
                     icon: _menuItems[index]['icon'],
                     extended: extended,
                     isSelected: _selectedIndex == index,
+                    theme: theme,
                     onTap: () {
                       setState(() {
                         _selectedIndex = index;
@@ -150,15 +153,17 @@ class _MainPageState extends State<MainPage> {
                 }),
 
                 const SizedBox(height: 20),
+                // 테마의 디바이더 사용
                 Divider(color: theme.dividerTheme.color, height: 1),
                 const SizedBox(height: 20),
 
-                // 2. 시스템 액션 메뉴 (메뉴와 동일한 스타일로 배치)
+                // 2. 추가 시스템 메뉴 (일반 메뉴와 동일한 위젯 사용)
                 _buildMenuItem(
                   title: "키오스크 모드",
                   icon: FontAwesomeIcons.lockOpen,
                   extended: extended,
                   isSelected: false,
+                  theme: theme,
                   onTap: () {
                     setState(() {
                       _isKioskMode = true;
@@ -174,6 +179,7 @@ class _MainPageState extends State<MainPage> {
                     extended: extended,
                     isSelected: false,
                     color: AppTheme.danger,
+                    theme: theme,
                     onTap: () async {
                       await windowManager.close();
                     },
@@ -190,7 +196,7 @@ class _MainPageState extends State<MainPage> {
   }
 
   // 사이드바 로고 영역
-  Widget _buildSidebarLogo(bool extended) {
+  Widget _buildSidebarLogo(bool extended, ThemeData theme) {
     return Container(
       padding: EdgeInsets.symmetric(vertical: extended ? 50 : 25, horizontal: 10),
       child: Center(
@@ -204,7 +210,8 @@ class _MainPageState extends State<MainPage> {
             errorBuilder: (ctx, err, stack) => Icon(
               Icons.api_rounded,
               size: extended ? 60 : 30,
-              color: AppTheme.primary.withValues(alpha: 0.1),
+              // 테마의 primary 색상에 투명도 적용
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
             ),
           ),
         ),
@@ -212,16 +219,20 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 공통 메뉴 아이템 빌더 (업무 메뉴 및 시스템 메뉴 공용)
+  // 공통 메뉴 아이템 빌더
   Widget _buildMenuItem({
-    int? index,
     required String title,
     required dynamic icon,
     required bool extended,
     required bool isSelected,
     required VoidCallback onTap,
+    required ThemeData theme,
     Color? color,
   }) {
+    // 테마 기반 색상 추출
+    final Color activeColor = AppTheme.primary;
+    final Color inactiveColor = color ?? theme.textTheme.bodyLarge?.color?.withValues(alpha: 0.7) ?? Colors.grey;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: InkWell(
@@ -232,10 +243,13 @@ class _MainPageState extends State<MainPage> {
           height: 56,
           padding: EdgeInsets.symmetric(horizontal: extended ? 18 : 0),
           decoration: BoxDecoration(
-            color: isSelected ? AppTheme.primary : Colors.white,
+            // 선택 시 테마의 primary, 미선택 시 투명배경
+            color: isSelected ? activeColor : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
             border: Border.all(
-              color: isSelected ? AppTheme.primary : (color?.withValues(alpha: 0.2) ?? Colors.black.withValues(alpha: 0.05)),
+              color: isSelected
+                  ? activeColor
+                  : (color?.withValues(alpha: 0.3) ?? theme.dividerTheme.color ?? Colors.black12),
               width: 1.5,
             ),
           ),
@@ -249,12 +263,12 @@ class _MainPageState extends State<MainPage> {
                       ? Icon(
                     icon,
                     size: 20,
-                    color: isSelected ? Colors.white : (color ?? Colors.black45),
+                    color: isSelected ? Colors.white : inactiveColor,
                   )
                       : FaIcon(
                     icon as IconData,
                     size: 18,
-                    color: isSelected ? Colors.white : (color ?? Colors.black45),
+                    color: isSelected ? Colors.white : inactiveColor,
                   ),
                 ),
               ),
@@ -264,7 +278,7 @@ class _MainPageState extends State<MainPage> {
                   child: Text(
                     title,
                     style: TextStyle(
-                      color: isSelected ? Colors.white : (color ?? Colors.black87),
+                      color: isSelected ? Colors.white : inactiveColor,
                       fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
                       fontSize: 16,
                       letterSpacing: -0.5,
@@ -281,7 +295,7 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  // 메인 바디 영역 전환 로직
+  // 메인 컨텐츠 영역
   Widget _buildBody(bool isMobile) {
     switch (_selectedIndex) {
       case 0:
@@ -293,24 +307,14 @@ class _MainPageState extends State<MainPage> {
       case 3:
         return ProductPage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);
       default:
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.construction_rounded, size: 64, color: AppTheme.primary.withValues(alpha: 0.1)),
-              const SizedBox(height: 16),
-              const Text(
-                "기능 개발 중입니다.",
-                style: TextStyle(color: Colors.black26, fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ],
-          ),
+        return const Center(
+          child: Text("기능 개발 중입니다."),
         );
     }
   }
 }
 
-// 창 이동 처리를 위한 영역 위젯
+// 윈도우 드래그 영역 (필요 시 확장)
 class DragToMoveArea extends StatelessWidget {
   final Widget child;
   const DragToMoveArea({super.key, required this.child});
