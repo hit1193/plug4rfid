@@ -306,94 +306,98 @@ class _PersonPageState extends State<PersonPage> {
       return _buildEmptyState("데이터가 없습니다.");
     }
 
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-      itemCount: list.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (ctx, idx) {
-        final item = list[idx];
-        final bool isSelected = _selectedPersonId == item.id;
-        final status = item.metadata['last_access_type'] ?? "미확인";
-        final statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
+    // [수정] 리스트뷰의 부모 컨테이너에 하단 여백 20px 추가
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20.0),
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        itemCount: list.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (ctx, idx) {
+          final item = list[idx];
+          final bool isSelected = _selectedPersonId == item.id;
+          final status = item.metadata['last_access_type'] ?? "미확인";
+          final statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
 
-        return InkWell(
-          onTap: () {
-            setState(() => _selectedPersonId = item.id);
-            _showForm(provider, item, theme);
-          },
-          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-            child: Row(
-              children: [
-                _buildAvatar(item, theme, size: _colImgSize),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          // [수정] 성명 글자 크기를 19px로 상향 조정
-                          Text(
-                            item.name,
-                            style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
-                          ),
-                          const SizedBox(width: 12),
-                          _buildStatusBadge(status),
-                          if (!item.isApproved)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+          return InkWell(
+            onTap: () {
+              setState(() => _selectedPersonId = item.id);
+              _showForm(provider, item, theme);
+            },
+            borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
+              child: Row(
+                children: [
+                  _buildAvatar(item, theme, size: _colImgSize),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            // 성명 글자 크기 19px 유지
+                            Text(
+                              item.name,
+                              style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
                             ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 20,
-                        runSpacing: 8,
-                        children: columns.map((col) {
-                          return SizedBox(
-                            width: 140,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(col, style: AppTheme.itemLabelStyle(context)),
-                                Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        item.metadata['last_location_info']?['full_name'] ?? "위치 정보 없음",
-                        style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
-                    ],
+                            const SizedBox(width: 12),
+                            _buildStatusBadge(status),
+                            if (!item.isApproved)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8),
+                                child: const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 20,
+                          runSpacing: 8,
+                          children: columns.map((col) {
+                            return SizedBox(
+                              width: 140,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(col, style: AppTheme.itemLabelStyle(context)),
+                                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          item.metadata['last_location_info']?['full_name'] ?? "위치 정보 없음",
+                          style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(
-                  width: _colActionWidth,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () => _showHistoryDialog(context, item, theme)),
-                      const SizedBox(width: 12),
-                      _buildCircleAction(Icons.login, AppTheme.success, "입장", () => _processAccessWithLocation(provider, item, '입장')),
-                      const SizedBox(width: 12),
-                      _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () => _processAccessWithLocation(provider, item, '퇴장')),
-                      const SizedBox(width: 12),
-                      _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () => _confirmDelete(provider, item, theme)),
-                    ],
+                  SizedBox(
+                    width: _colActionWidth,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () => _showHistoryDialog(context, item, theme)),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.login, AppTheme.success, "입장", () => _processAccessWithLocation(provider, item, '입장')),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () => _processAccessWithLocation(provider, item, '퇴장')),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () => _confirmDelete(provider, item, theme)),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
 class AppTheme {
-  // 고유 브랜드 색상
+  // 고유 브랜드 및 상태 색상
   static const Color primary = Color(0xFF6366F1);
   static const Color success = Color(0xFF36B37E);
   static const Color warning = Color(0xFFFFAB00);
   static const Color danger = Color(0xFFFF5630);
+
+  // [수정] 미확인 상태의 외곽선을 더욱 또렷하게 만들기 위해 더 깊은 다크 그레이로 변경
+  static const Color inactive = Color(0xFF475569);
 
   // 폰트 설정
   static const String fontPretendard = 'Pretendard';
@@ -22,24 +25,24 @@ class AppTheme {
 
   static const double cardRadius = 12.0;
 
-  // [수정] 아이템 값 스타일: fontSize를 15에서 17로 키워 데이터 식별력 강화
+  // [유지] 아이템 값 스타일
   static TextStyle itemValueStyle(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
       fontFamily: fontPretendard,
-      fontSize: 17, // 기존 15에서 상향 조정
+      fontSize: 17,
       color: dataColor(isDark),
       fontWeight: FontWeight.w700,
-      letterSpacing: -0.4, // 글자가 커짐에 따라 자간을 미세하게 더 좁혀 응집력 유지
+      letterSpacing: -0.4,
     );
   }
 
-  // [수정] 레이블 스타일: fontSize를 12에서 14로 키워 정보 구조를 더 명확히 함
+  // [유지] 레이블 스타일
   static TextStyle itemLabelStyle(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
       fontFamily: fontPretendard,
-      fontSize: 14, // 기존 12에서 상향 조정
+      fontSize: 14,
       color: labelColor(isDark),
       fontWeight: FontWeight.w600,
     );
@@ -65,7 +68,7 @@ class AppTheme {
     );
   }
 
-  // [유지] 리스트 아이템 데코레이션
+  // [수정] 리스트 아이템 데코레이션: 입장/퇴장 이외의 상태(미확인 등)일 때 외곽선을 더 진하게 표현
   static BoxDecoration listItemDecoration(BuildContext context, {
     required bool isSelected,
     required Color statusColor,
@@ -73,26 +76,28 @@ class AppTheme {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    final Color borderColor = isSelected
-        ? theme.colorScheme.primary
-        : statusColor.withValues(alpha: isDark ? 0.4 : 0.3);
+    // [변경] 입장/퇴장 색상이 아닌 경우(그레이 계열) 투명도를 제거하여 더 진한 외곽선 제공
+    // 선택되지 않았을 때, statusColor가 success나 warning이 아니면 더 또렷한 불투명도를 적용합니다.
+    Color finalBorderColor;
+    if (isSelected) {
+      finalBorderColor = theme.colorScheme.primary;
+    } else {
+      final bool isStandardStatus = statusColor == success || statusColor == warning;
+      // 입장/퇴장이 아닌 경우(미확인 등) alpha를 1.0(불투명)으로 설정하여 진하게 표시
+      finalBorderColor = isStandardStatus
+          ? statusColor.withValues(alpha: isDark ? 0.8 : 0.75)
+          : statusColor.withValues(alpha: 1.0);
+    }
 
     return BoxDecoration(
       color: isSelected
-          ? theme.colorScheme.primary.withValues(alpha: 0.02)
+          ? theme.colorScheme.primary.withValues(alpha: 0.05)
           : theme.cardTheme.color,
       borderRadius: BorderRadius.circular(cardRadius),
       border: Border.all(
-        color: borderColor,
-        width: isSelected ? 2.5 : 1.5,
+        color: finalBorderColor,
+        width: isSelected ? 2.5 : 1.8,
       ),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.03),
-          blurRadius: 10,
-          offset: const Offset(0, 4),
-        )
-      ],
     );
   }
 
@@ -130,7 +135,7 @@ class AppTheme {
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(8),
         borderSide: BorderSide(
-          color: isDark ? const Color(0xFF4A5568) : const Color(0xFF94A3B8),
+          color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
           width: 1.5,
         ),
       ),
@@ -141,7 +146,7 @@ class AppTheme {
     );
   }
 
-  // [유지] 공통 버튼
+  // [수정] 공통 버튼 헬퍼: 그림자를 완벽히 제거 (elevation: 0)
   static Widget actionButton({
     required String label,
     required VoidCallback onPressed,
@@ -155,7 +160,8 @@ class AppTheme {
         foregroundColor: textColor ?? Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        elevation: 0,
+        elevation: 0, // 그림자 제거
+        shadowColor: Colors.transparent, // 그림자 색상 투명화
       ),
       onPressed: onPressed,
       child: Row(
@@ -175,6 +181,30 @@ class AppTheme {
     );
   }
 
+  // --- 버튼 테마 정의 (글로벌 적용용) ---
+
+  // [수정] 글로벌 ElevatedButton 테마에서도 그림자를 완전히 제거
+  static ElevatedButtonThemeData get elevatedButtonTheme => ElevatedButtonThemeData(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: primary,
+      foregroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      textStyle: const TextStyle(fontFamily: fontPretendard, fontWeight: FontWeight.w700, fontSize: 15),
+      elevation: 0, // 그림자 제거
+      shadowColor: Colors.transparent, // 그림자 색상 투명화
+    ),
+  );
+
+  static TextButtonThemeData get textButtonTheme => TextButtonThemeData(
+    style: TextButton.styleFrom(
+      foregroundColor: primary,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      textStyle: const TextStyle(fontFamily: fontPretendard, fontWeight: FontWeight.w700, fontSize: 15),
+    ),
+  );
+
   // [유지] 라이트 테마 정의
   static final ThemeData lightTheme = ThemeData(
     useMaterial3: true,
@@ -182,6 +212,8 @@ class AppTheme {
     fontFamily: fontPretendard,
     scaffoldBackgroundColor: Colors.white,
     colorScheme: ColorScheme.fromSeed(seedColor: primary, primary: primary, surface: Colors.white),
+    elevatedButtonTheme: elevatedButtonTheme,
+    textButtonTheme: textButtonTheme,
     dividerTheme: const DividerThemeData(color: Color(0xFFF1F3F5), thickness: 1),
     cardTheme: const CardThemeData(
       elevation: 0,
@@ -189,7 +221,7 @@ class AppTheme {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(cardRadius)),
-        side: BorderSide(color: Color(0xFFE9ECEF), width: 1.5),
+        side: BorderSide(color: Color(0xFFDEE2E6), width: 1.5),
       ),
     ),
   );
@@ -201,6 +233,8 @@ class AppTheme {
     fontFamily: fontPretendard,
     scaffoldBackgroundColor: const Color(0xFF12141C),
     colorScheme: const ColorScheme.dark(primary: primary, surface: Color(0xFF1E212A), onSurface: Colors.white),
+    elevatedButtonTheme: elevatedButtonTheme,
+    textButtonTheme: textButtonTheme,
     dividerTheme: const DividerThemeData(color: Color(0xFF333846), thickness: 1),
     cardTheme: const CardThemeData(
       elevation: 0,
@@ -208,7 +242,7 @@ class AppTheme {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(cardRadius)),
-        side: BorderSide(color: Color(0xFF333846), width: 1.5),
+        side: BorderSide(color: Color(0xFF454C5E), width: 1.5),
       ),
     ),
   );
