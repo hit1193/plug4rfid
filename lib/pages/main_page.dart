@@ -4,19 +4,18 @@ import 'package:window_manager/window_manager.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 
-// 테마 및 프로바이더 임포트
 import '../theme/app_theme.dart';
 import '../providers/theme_provider.dart';
 
-// 하위 페이지 위젯 임포트
+// 하위 페이지 위젯
 import 'person_page.dart';
 import 'product_page.dart';
 import 'device_page.dart';
 import 'device_map_page.dart';
 import 'kiosk_view.dart';
 
-/// RFID FA 솔루션의 메인 레이아웃 페이지입니다.
-/// [디자인 업데이트] 사이드바에 깊이감을 주기 위해 본문보다 약간 더 진한 톤온톤 배색을 적용했습니다.
+/// RFID 솔루션의 메인 레이아웃을 담당하는 페이지입니다.
+/// 디자인 철학: 미니멀리즘, 키오스크 스타일, 톤온톤 배색
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
@@ -57,11 +56,10 @@ class _MainPageState extends State<MainPage> {
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
     final theme = themeProvider.themeData;
+    final isDark = theme.brightness == Brightness.dark;
 
     if (_isKioskMode) {
-      return Scaffold(
-        body: KioskView(onDismiss: () => setState(() => _isKioskMode = false)),
-      );
+      return Scaffold(body: KioskView(onDismiss: () => setState(() => _isKioskMode = false)));
     }
 
     return LayoutBuilder(
@@ -69,16 +67,12 @@ class _MainPageState extends State<MainPage> {
         bool isMobile = constraints.maxWidth <= 650;
 
         return Scaffold(
-          // 전체 베이스 배경색
           backgroundColor: theme.scaffoldBackgroundColor,
           body: Row(
             children: [
-              // 1. 좌측 사이드바 (본문보다 약간 더 진한 톤 적용)
               if (!isMobile) ...[
                 _buildSidebar(_isSidebarExtended, theme, themeProvider),
               ],
-
-              // 2. 우측 콘텐츠 영역 (테마 고유의 연한 배경색 유지)
               Expanded(
                 child: Container(
                   color: theme.scaffoldBackgroundColor,
@@ -89,8 +83,7 @@ class _MainPageState extends State<MainPage> {
                           decoration: BoxDecoration(
                             border: Border(
                               left: BorderSide(
-                                // 사이드바가 더 진해졌으므로 경계선은 더 은은하게 처리
-                                color: theme.dividerTheme.color ?? Colors.black.withValues(alpha: 0.05),
+                                color: theme.dividerTheme.color ?? Colors.black12,
                                 width: 1.0,
                               ),
                             ),
@@ -109,26 +102,22 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  /// [핵심 수정] 사이드바의 배경색을 본문(scaffoldBackgroundColor)보다 약간 더 진하게(Deeper Tone) 설정합니다.
   Widget _buildSidebar(bool extended, ThemeData theme, ThemeProvider themeProvider) {
-    final bool isPureWhite = themeProvider.currentThemeType == AppThemeType.pureWhite;
     final bool isDark = theme.brightness == Brightness.dark;
 
-    // 사이드바 전용 색상 계산: 본문 배경색에 Primary 컬러를 5% 섞어 명도를 미세하게 낮춤
-    final Color deeperSidebarColor = isPureWhite
-        ? const Color(0xFFF8FAFC) // 순백색 테마일 때 사이드바는 아주 연한 회색톤
-        : Color.alphaBlend(
-        theme.colorScheme.primary.withValues(alpha: 0.06),
-        theme.scaffoldBackgroundColor
-    );
+    // 다크모드일 때는 본문보다 아주 살짝만 더 어두운 색상으로 깊이감 부여
+    final Color deeperSidebarColor = isDark
+        ? const Color(0xFF151D2E)
+        : Color.alphaBlend(theme.colorScheme.primary.withValues(alpha: 0.06), theme.scaffoldBackgroundColor);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       width: extended ? 280 : 90,
       curve: Curves.easeInOut,
+      // [에러 해결 1] 컨테이너 크기가 변할 때 내부 자식 요소가 선을 넘어가면 깔끔하게 잘라줍니다(오버플로 방지).
+      clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
-        // 다크모드일 때는 표면색을 유지하고, 라이트 테마들에서는 본문보다 진한 색상 적용
-        color: isDark ? theme.colorScheme.surface : deeperSidebarColor,
+        color: deeperSidebarColor,
       ),
       child: Column(
         children: [
@@ -149,7 +138,7 @@ class _MainPageState extends State<MainPage> {
                   );
                 }),
                 const SizedBox(height: 20),
-                Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5), thickness: 1),
+                Divider(color: theme.dividerTheme.color),
                 const SizedBox(height: 20),
 
                 if (extended) ...[
@@ -161,13 +150,13 @@ class _MainPageState extends State<MainPage> {
                         fontFamily: AppTheme.fontPretendard,
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                        color: isDark ? Colors.white70 : Colors.black45,
                       ),
                     ),
                   ),
                   _buildThemeSelector(themeProvider, theme),
                   const SizedBox(height: 20),
-                  Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5), thickness: 1),
+                  Divider(color: theme.dividerTheme.color),
                   const SizedBox(height: 20),
                 ],
 
@@ -201,6 +190,7 @@ class _MainPageState extends State<MainPage> {
   }
 
   Widget _buildSidebarHeader(bool extended, ThemeData theme) {
+    final bool isDark = theme.brightness == Brightness.dark;
     return Container(
       padding: EdgeInsets.fromLTRB(14, extended ? 50 : 25, 14, 25),
       child: Row(
@@ -211,20 +201,23 @@ class _MainPageState extends State<MainPage> {
               child: Text(
                 "PLUG4",
                 style: TextStyle(
-                    fontFamily: AppTheme.fontPretendard,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 26,
-                    letterSpacing: -1.2,
-                    color: theme.colorScheme.primary
+                  fontFamily: AppTheme.fontPretendard,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 26,
+                  letterSpacing: -1.2,
+                  color: isDark ? Colors.white : theme.colorScheme.primary,
                 ),
-                overflow: TextOverflow.ellipsis,
+                // [에러 해결 2] 애니메이션 도중 17px 에러를 막기 위해 ellipsis(...) 대신 공간이 없으면 그냥 자르는(clip) 방식을 사용합니다.
+                overflow: TextOverflow.clip,
+                softWrap: false, // 줄바꿈을 원천 차단하여 레이아웃 계산 오류를 없앱니다.
+                maxLines: 1,
               ),
             ),
           IconButton(
             onPressed: () => setState(() => _isSidebarExtended = !_isSidebarExtended),
             icon: Icon(
                 extended ? Icons.menu_open_rounded : Icons.menu_rounded,
-                color: theme.colorScheme.primary.withValues(alpha: 0.7),
+                color: isDark ? Colors.white70 : theme.colorScheme.primary.withValues(alpha: 0.7),
                 size: 28
             ),
           ),
@@ -242,8 +235,9 @@ class _MainPageState extends State<MainPage> {
     required ThemeData theme,
     Color? color,
   }) {
+    final bool isDark = theme.brightness == Brightness.dark;
     final Color activeColor = theme.colorScheme.primary;
-    final Color inactiveColor = color ?? theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    final Color inactiveColor = color ?? (isDark ? Colors.white70 : Colors.black54);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -254,13 +248,15 @@ class _MainPageState extends State<MainPage> {
           duration: const Duration(milliseconds: 150),
           height: 56,
           padding: EdgeInsets.symmetric(horizontal: extended ? 18 : 0),
+          // [에러 해결 3] 개별 메뉴 아이템도 크기가 줄어들 때 글씨가 튀어나오지 않게 경계를 확실히 잘라줍니다.
+          clipBehavior: Clip.hardEdge,
           decoration: BoxDecoration(
             color: isSelected ? activeColor : Colors.transparent,
             borderRadius: BorderRadius.circular(AppTheme.cardRadius),
             border: Border.all(
               color: isSelected
                   ? activeColor
-                  : (color?.withValues(alpha: 0.2) ?? theme.dividerTheme.color?.withValues(alpha: 0.5) ?? Colors.black.withValues(alpha: 0.05)),
+                  : (isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05)),
               width: 1.5,
             ),
           ),
@@ -286,7 +282,9 @@ class _MainPageState extends State<MainPage> {
                       fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
                       fontSize: 16,
                     ),
-                    overflow: TextOverflow.ellipsis,
+                    // [에러 해결 4] ellipsis 가 강제하는 17픽셀 최소 공간 제약을 해제합니다.
+                    overflow: TextOverflow.clip,
+                    softWrap: false,
                     maxLines: 1,
                   ),
                 ),
@@ -299,6 +297,7 @@ class _MainPageState extends State<MainPage> {
   }
 
   Widget _buildThemeSelector(ThemeProvider provider, ThemeData theme) {
+    final bool isDark = theme.brightness == Brightness.dark;
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -308,11 +307,11 @@ class _MainPageState extends State<MainPage> {
 
         Color seedColor;
         switch (type) {
-          case AppThemeType.pureWhite: seedColor = const Color(0xFF475569); break;
+          case AppThemeType.pureWhite: seedColor = const Color(0xFF94A3B8); break;
           case AppThemeType.industrial: seedColor = AppTheme.primary; break;
           case AppThemeType.forest: seedColor = const Color(0xFF10B981); break;
           case AppThemeType.solar: seedColor = const Color(0xFFF59E0B); break;
-          case AppThemeType.midnight: seedColor = const Color(0xFF334155); break;
+          case AppThemeType.midnight: seedColor = const Color(0xFF6366F1); break;
         }
 
         return GestureDetector(
@@ -324,7 +323,9 @@ class _MainPageState extends State<MainPage> {
               color: isPureWhite ? Colors.white : seedColor,
               shape: BoxShape.circle,
               border: Border.all(
-                color: isSelected ? theme.colorScheme.primary : (isPureWhite ? Colors.black.withValues(alpha: 0.1) : Colors.transparent),
+                color: isSelected
+                    ? (isDark ? Colors.white : theme.colorScheme.primary)
+                    : (isPureWhite ? Colors.black12 : Colors.transparent),
                 width: isSelected ? 4 : 1,
               ),
               boxShadow: [
