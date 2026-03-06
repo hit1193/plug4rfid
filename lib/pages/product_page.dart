@@ -21,6 +21,9 @@ import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
+/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
+/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
+/// C++Builder의 VarToStrDef 역할과 동일합니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -35,6 +38,9 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 
 /// ---------------------------------------------------------------------------
 /// [물품 관리 페이지]
+/// 메인 화면의 우측 영역에 표출되는 물품 관리 통합 관제 화면입니다.
+/// 키오스크와 같이 직관적이고 미니멀한 디자인 철학을 바탕으로,
+/// 사용자가 넓은 화면에서 쾌적하게 데이터를 조회하고 편집할 수 있도록 구성했습니다.
 /// ---------------------------------------------------------------------------
 class ProductPage extends StatefulWidget {
   final String searchQuery;
@@ -55,6 +61,7 @@ class ProductPage extends StatefulWidget {
 class _ProductPageState extends State<ProductPage> {
   // ---------------------------------------------------------------------------
   // [상태 변수 선언부]
+  // 화면의 상태(검색어, 필터링, 로딩 상태 등)를 관리하는 변수들입니다.
   // ---------------------------------------------------------------------------
   final TextEditingController _searchController = TextEditingController();
   String _currentQuery = "";
@@ -63,22 +70,31 @@ class _ProductPageState extends State<ProductPage> {
   String _activeMetricFilter = "전체";
   final String _sortCriteria = 'name';
 
+  // [최적화] 사용자의 연속적인 입력을 최적화하기 위한 타이머
   Timer? _debounceTimer;
 
+  // 필터링된 데이터 캐싱용 변수 (성능 향상을 위해 결과를 저장)
   List<ProductModel> _filteredCache = [];
-  int _lastRawItemCount = -1;
+  List<ProductModel>? _lastRawItems;
   String _lastActiveFilter = "";
 
+  // 다중 선택 관리 (일괄 처리 기능을 위함)
   final Set<String> _selectedItemIds = {};
 
   // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
   bool _isSelectionMode = false;
 
+  // 스크린 오버레이 제어 플래그 (엑셀 업로드 등 전체 화면 로딩 시 사용)
   bool _isFullScreenLoading = false;
 
+  // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
+  // ---------------------------------------------------------------------------
+  // [공정 상태 집합]
+  // 자산의 흐름(입고, 공정, 출고, 예외)을 분류하여 상태별 색상 및 로직에 활용합니다.
+  // ---------------------------------------------------------------------------
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
@@ -90,6 +106,7 @@ class _ProductPageState extends State<ProductPage> {
   };
   static const Set<String> _exceptionStatuses = {'폐기', '분실'};
 
+  // 상태별 아이콘 매핑
   static final Map<String, IconData> _statusIcons = {
     '보유중': Icons.inventory, '수동입고': Icons.input, '자동입고': Icons.nfc,
     '생산입고': Icons.factory_outlined, '구매입고': Icons.shopping_cart,
@@ -104,6 +121,7 @@ class _ProductPageState extends State<ProductPage> {
     '폐기': Icons.delete_forever, '분실': Icons.search_off,
   };
 
+  // UI에 직접적으로 노출되지 않아야 할 시스템 내부 관리용 키 목록
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
@@ -124,6 +142,10 @@ class _ProductPageState extends State<ProductPage> {
     _searchController.dispose();
     super.dispose();
   }
+
+  // ---------------------------------------------------------------------------
+  // [비즈니스 로직: 실시간 검색 및 필터링 엔진]
+  // ---------------------------------------------------------------------------
 
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
@@ -173,14 +195,23 @@ class _ProductPageState extends State<ProductPage> {
 
       final String upStr = _safeStr(p.updated);
       final String crStr = _safeStr(p.created);
-      final String lastDate = upStr.isNotEmpty ? upStr : crStr;
+      final String lastDateStr = upStr.isNotEmpty ? upStr : crStr;
+
+      String localDateStr = "";
+      if (lastDateStr.isNotEmpty) {
+        DateTime? parsedDate = DateTime.tryParse(lastDateStr);
+        if (parsedDate != null) {
+          localDateStr = DateFormat('yyyy-MM-dd').format(parsedDate.toLocal());
+        }
+      }
+
       final bool isOut = _outboundStatuses.contains(p.status) || _exceptionStatuses.contains(p.status);
 
       if (_activeMetricFilter == "금일 입고") {
-        return lastDate.startsWith(todayStr) && _inboundStatuses.contains(p.status);
+        return localDateStr == todayStr && _inboundStatuses.contains(p.status);
       }
       if (_activeMetricFilter == "금일 출고") {
-        return lastDate.startsWith(todayStr) && isOut;
+        return localDateStr == todayStr && isOut;
       }
       if (_activeMetricFilter == "현재 실재고") {
         return !isOut;
@@ -193,7 +224,7 @@ class _ProductPageState extends State<ProductPage> {
     }
 
     _filteredCache = result;
-    _lastRawItemCount = rawItems.length;
+    _lastRawItems = rawItems;
     _lastActiveFilter = _activeMetricFilter;
 
     _selectedItemIds.retainWhere((String id) {
@@ -210,10 +241,19 @@ class _ProductPageState extends State<ProductPage> {
     for (final ProductModel item in allItems) {
       final String upStr = _safeStr(item.updated);
       final String crStr = _safeStr(item.created);
-      final String lastDate = upStr.isNotEmpty ? upStr : crStr;
+      final String lastDateStr = upStr.isNotEmpty ? upStr : crStr;
+
+      String localDateStr = "";
+      if (lastDateStr.isNotEmpty) {
+        DateTime? parsedDate = DateTime.tryParse(lastDateStr);
+        if (parsedDate != null) {
+          localDateStr = DateFormat('yyyy-MM-dd').format(parsedDate.toLocal());
+        }
+      }
+
       final bool isOut = _outboundStatuses.contains(item.status) || _exceptionStatuses.contains(item.status);
 
-      if (lastDate.startsWith(todayStr)) {
+      if (localDateStr == todayStr) {
         if (!isOut) {
           todayIn++;
         } else {
@@ -256,12 +296,16 @@ class _ProductPageState extends State<ProductPage> {
     return AppTheme.warning;
   }
 
+  // ---------------------------------------------------------------------------
+  // [메인 UI 렌더링 영역]
+  // ---------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final ProductProvider provider = context.watch<ProductProvider>();
     final ThemeData theme = Theme.of(context);
 
-    if (_lastRawItemCount != provider.items.length || _lastActiveFilter != _activeMetricFilter) {
+    if (_lastRawItems != provider.items || _lastActiveFilter != _activeMetricFilter) {
       _syncFiltering(provider.items);
     }
 
@@ -290,8 +334,11 @@ class _ProductPageState extends State<ProductPage> {
               const SizedBox(height: 20),
             ],
           ),
-          if ((provider.isParsing || provider.isSaving) && !_isFullScreenLoading) ...[
+          if ((provider.isParsing || provider.isSaving || _isFullScreenLoading) && !_isFullScreenLoading) ...[
             _buildGlobalLoadingOverlay(provider, theme),
+          ],
+          if (_isFullScreenLoading) ...[
+            _buildGlobalLoadingOverlay(provider, theme, customMessage: "데이터 대량 처리 중..."),
           ]
         ],
       ),
@@ -412,7 +459,6 @@ class _ProductPageState extends State<ProductPage> {
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
                       provider.fetchData();
                     }, theme),
-                    // 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
                     _buildActionIconButton(
                       _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
                       _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
@@ -420,12 +466,12 @@ class _ProductPageState extends State<ProductPage> {
                         setState(() {
                           _isSelectionMode = !_isSelectionMode;
                           if (!_isSelectionMode) {
-                            _selectedItemIds.clear(); // 모드를 끌 때는 선택 내역도 초기화
+                            _selectedItemIds.clear();
                           }
                         });
                       },
                       theme,
-                      color: _isSelectionMode ? AppTheme.primary : null, // 켜져 있을 땐 색상으로 강조
+                      color: _isSelectionMode ? AppTheme.primary : null,
                     ),
                     _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "엑셀 일괄 임포트", () {
                       _handleBatchImport(provider, theme);
@@ -501,7 +547,6 @@ class _ProductPageState extends State<ProductPage> {
           ),
         ),
 
-        // 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
         AnimatedSize(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
@@ -579,7 +624,6 @@ class _ProductPageState extends State<ProductPage> {
 
               return Row(
                 children: [
-                  // AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
                   AnimatedSize(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
@@ -625,7 +669,6 @@ class _ProductPageState extends State<ProductPage> {
                         : const SizedBox.shrink(),
                   ),
 
-                  // 기존 카드 영역
                   Expanded(
                     child: InkWell(
                       onTap: () {
@@ -647,7 +690,24 @@ class _ProductPageState extends State<ProductPage> {
                         decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
                         child: Row(
                           children: [
-                            _buildThumbnail(p, theme, size: _colImgSize),
+                            GestureDetector(
+                              onTap: () => _handleGroupImageUpdate(provider, items, theme),
+                              child: Stack(
+                                alignment: Alignment.bottomRight,
+                                children: [
+                                  _buildThumbnail(p, theme, size: _colImgSize),
+                                  Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.primary,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                                    ),
+                                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                                  ),
+                                ],
+                              ),
+                            ),
                             const SizedBox(width: 20),
                             Expanded(
                               child: Column(
@@ -713,25 +773,19 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [복원 완료] 그룹 대표 이미지 일괄 업데이트 (카메라 아이콘 클릭 시 실행)
-  /// ---------------------------------------------------------------------------
   Future<void> _handleGroupImageUpdate(ProductProvider provider, List<ProductModel> groupItems, ThemeData theme) async {
     if (groupItems.isEmpty) return;
 
-    // 같은 이름을 가진 모든 자산을 타겟으로 잡습니다.
     final String targetName = groupItems.first.name;
     final List<ProductModel> targetItems = provider.items.where((p) => p.name == targetName).toList();
 
     if (targetItems.isEmpty) return;
 
-    // 갤러리에서 새로운 이미지 선택
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
 
     if (!mounted || image == null) return;
 
-    // 일괄 적용 확인창 표출
     final bool? confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -761,7 +815,6 @@ class _ProductPageState extends State<ProductPage> {
     ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
     setState(() { _isFullScreenLoading = true; });
 
-    // 로딩 및 진행률 다이얼로그 표출
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -827,7 +880,6 @@ class _ProductPageState extends State<ProductPage> {
 
     try {
       for (var p in targetItems) {
-        // 기존 데이터를 그대로 유지하면서 이미지만 덮어씌웁니다.
         final data = {
           'name': p.name,
           'tag_id': p.tagId,
@@ -852,7 +904,7 @@ class _ProductPageState extends State<ProductPage> {
     } finally {
       if (mounted) {
         setState(() { _isFullScreenLoading = false; });
-        Navigator.of(context).pop(); // Progress Dialog 닫기
+        Navigator.of(context).pop();
       }
     }
 
@@ -887,7 +939,6 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
             children: [
-              // [복원 완료] 이미지 위에 카메라 아이콘을 덧씌우고 누르면 일괄 업데이트 실행
               GestureDetector(
                 onTap: () => _handleGroupImageUpdate(provider, items, theme),
                 child: Stack(
@@ -1050,6 +1101,10 @@ class _ProductPageState extends State<ProductPage> {
     _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedProducts.length}개의 항목이 성공적으로 업데이트 되었습니다.", theme);
   }
 
+  // ---------------------------------------------------------------------------
+  // [신규 및 수정 폼 로직]
+  // 신규 추가일 때만 벌크 생성(Bulk Create) 수량을 폼 최하단에서 입력받습니다.
+  // ---------------------------------------------------------------------------
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
@@ -1058,6 +1113,8 @@ class _ProductPageState extends State<ProductPage> {
     final TextEditingController catC = TextEditingController(text: p != null ? _safeStr(p.category) : "");
     final TextEditingController snC = TextEditingController(text: p != null ? _safeStr(p.serialNumber) : "");
     final TextEditingController safeC = TextEditingController(text: p != null ? p.safetyStock.toString() : "5");
+
+    final TextEditingController bulkCountC = TextEditingController(text: "1");
 
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     bool isApproved = p?.isApproved ?? true;
@@ -1204,6 +1261,42 @@ class _ProductPageState extends State<ProductPage> {
                                         );
                                       }).toList()
                                   ),
+
+                                  // -----------------------------------------------------------
+                                  // [신규 기능 위치 이동] 등록(Create) 상태일 때만 최하단에 노출
+                                  // 사용자가 모든 속성을 입력한 후 최종적으로 수량을 결정하게 합니다.
+                                  // -----------------------------------------------------------
+                                  if (p == null) ...[
+                                    const SizedBox(height: 40),
+                                    _buildSectionHeader(Icons.library_add_check_rounded, "다중 자산 일괄 생성 (Bulk Create)", AppTheme.primary),
+                                    const SizedBox(height: 20),
+                                    Container(
+                                      padding: const EdgeInsets.all(20),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primary.withValues(alpha: 0.05),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text("동시 생성 수량", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.dataColor(theme.brightness == Brightness.dark))),
+                                                const SizedBox(height: 8),
+                                                const Text("입력한 수량만큼 태그ID와 S/N에 순번(_1, _2...)이 붙어 자동으로 여러 개가 생성됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
+                                              ],
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 150,
+                                            child: _buildTextField(bulkCountC, "수량 (개)", theme, context),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                   const SizedBox(height: 30),
                                 ]
                             )
@@ -1233,30 +1326,76 @@ class _ProductPageState extends State<ProductPage> {
                               meta[k] = c.text.trim();
                             });
 
-                            final Map<String, dynamic> data = {
-                              'name': nameC.text.trim(),
-                              'tag_id': tagC.text.trim(),
-                              'location': locC.text.trim(),
-                              'spec': specC.text.trim(),
-                              'category': catC.text.trim(),
-                              'serial_number': snC.text.trim(),
-                              'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
-                              'is_approved': isApproved,
-                              'metadata': meta,
-                              'status': p?.status ?? '보유중'
-                            };
-
-                            final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
-                            if (!mounted) {
-                              return;
+                            int bulkCount = 1;
+                            if (p == null) {
+                              bulkCount = int.tryParse(bulkCountC.text.trim()) ?? 1;
+                              if (bulkCount < 1) bulkCount = 1;
                             }
-                            if (ok) {
-                              _syncFiltering(provider.items);
-                              if (dialogCtx.mounted) {
-                                Navigator.pop(dialogCtx);
+
+                            if (bulkCount <= 1) {
+                              final Map<String, dynamic> data = {
+                                'name': nameC.text.trim(),
+                                'tag_id': tagC.text.trim(),
+                                'location': locC.text.trim(),
+                                'spec': specC.text.trim(),
+                                'category': catC.text.trim(),
+                                'serial_number': snC.text.trim(),
+                                'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
+                                'is_approved': isApproved,
+                                'metadata': meta,
+                                'status': p?.status ?? '보유중'
+                              };
+
+                              final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
+                              if (!mounted) return;
+                              if (ok) {
+                                _syncFiltering(provider.items);
+                                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text("마스터 정보가 성공적으로 반영되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
+                                );
                               }
+                            } else {
+                              Navigator.pop(dialogCtx);
+                              setState(() { _isFullScreenLoading = true; });
+
+                              int successCount = 0;
+
+                              for (int i = 0; i < bulkCount; i++) {
+                                String currentTagId = tagC.text.trim();
+                                String currentSn = snC.text.trim();
+
+                                if (currentTagId.isNotEmpty) currentTagId = "${currentTagId}_${i + 1}";
+                                if (currentSn.isNotEmpty) currentSn = "${currentSn}_${i + 1}";
+
+                                if (currentTagId.isEmpty) {
+                                  currentTagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+                                }
+
+                                final Map<String, dynamic> data = {
+                                  'name': nameC.text.trim(),
+                                  'tag_id': currentTagId,
+                                  'location': locC.text.trim(),
+                                  'spec': specC.text.trim(),
+                                  'category': catC.text.trim(),
+                                  'serial_number': currentSn,
+                                  'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
+                                  'is_approved': isApproved,
+                                  'metadata': meta,
+                                  'status': '보유중'
+                                };
+
+                                bool ok = await provider.handleSave(product: null, data: data, imageXFile: file);
+                                if (ok) successCount++;
+                              }
+
+                              if (!mounted) return;
+
+                              setState(() { _isFullScreenLoading = false; });
+                              _syncFiltering(provider.items);
+
                               ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text("마스터 정보가 성공적으로 반영되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
+                                  SnackBar(content: Text("총 $successCount개의 마스터 정보가 벌크(일괄) 생성되었습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)))
                               );
                             }
                           }
@@ -1307,124 +1446,209 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Future<void> _handleBatchImport(ProductProvider provider, ThemeData theme) async {
-    try {
-      final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
-      if (!mounted) {
-        return;
-      }
-      if (result == null) {
-        return;
-      }
+  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme, {String? customMessage}) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.1),
+      child: Center(
+        child: Card(
+          elevation: 10,
+          color: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                const SizedBox(height: 25),
+                Text(
+                  customMessage ?? (provider.isParsing ? "데이터 분석 중..." : "데이터베이스 통신 중..."),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-      Uint8List? bytes = result.files.single.bytes;
-      if (bytes == null && result.files.single.path != null) {
-        bytes = await File(result.files.single.path!).readAsBytes();
-      }
+  // ---------------------------------------------------------------------------
+  // [사라졌던 UI 렌더링 함수들 완벽 복원]
+  // ---------------------------------------------------------------------------
 
-      if (!mounted) {
-        return;
-      }
-      if (bytes == null) {
-        _showInfoDialog("오류", "파일을 읽을 수 없습니다.", theme);
-        return;
-      }
+  Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
+    return Column(
+      children: [
+        _buildHeader(provider, theme),
+        _buildFilterBar(theme),
+        Expanded(
+          child: ListView.separated(
+              padding: const EdgeInsets.all(12),
+              itemCount: groupKeys.length,
+              separatorBuilder: (BuildContext ctx, int idx) => const SizedBox(height: 10),
+              itemBuilder: (BuildContext ctx, int idx) {
+                final String k = groupKeys[idx];
+                return _buildGroupTile(provider, k, groupedMap[k]!, false, theme);
+              }
+          ),
+        ),
+      ],
+    );
+  }
 
-      final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
-      final String targetSheet = excel.tables.keys.first;
-      final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
-      if (sheet == null || sheet.maxRows <= 1) {
-        _showInfoDialog("알림", "데이터가 없거나 헤더만 존재합니다.", theme);
-        return;
-      }
+  Widget _buildEmptyState(String msg) {
+    return Center(
+        child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.inventory_2_outlined, size: 48, color: Colors.black12),
+              const SizedBox(height: 16),
+              Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.black26, fontWeight: FontWeight.bold))
+            ]
+        )
+    );
+  }
 
-      setState(() {
-        _isFullScreenLoading = true;
-      });
+  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
+    return SizedBox(
+        width: 150,
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13)),
+              Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)
+            ]
+        )
+    );
+  }
 
-      final List<String> headers = [];
-      if (sheet.rows.isNotEmpty) {
-        for (final excel_pkg.Data? cell in sheet.rows.first) {
-          headers.add(_extractString(cell));
+  Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(10),
+            child: Container(
+                width: 52,
+                height: 52,
+                alignment: Alignment.center,
+                child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24)
+            )
+        )
+    );
+  }
+
+  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(25),
+            child: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 24)
+            )
+        )
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // [사라졌던 다이얼로그 호출 함수들 완벽 복원]
+  // ---------------------------------------------------------------------------
+
+  void _showInfoDialog(String title, String msg, ThemeData theme) {
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) => AlertDialog(
+            title: AppTheme.dialogTitle(title, Icons.info_outline),
+            content: Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+            actions: [
+              AppTheme.actionButton(label: "확인", onPressed: () => Navigator.pop(ctx))
+            ]
+        )
+    );
+  }
+
+  void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
+    final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+    final Set<String> metaKeySet = {};
+
+    for (final ProductModel p in provider.items.take(100)) {
+      for (final String k in p.metadata.keys) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+          metaKeySet.add(k);
         }
       }
-
-      int successCount = 0;
-      int failCount = 0;
-
-      for (int i = 1; i < sheet.maxRows; i++) {
-        final List<excel_pkg.Data?> row = sheet.row(i);
-        if (row.isEmpty) {
-          continue;
-        }
-
-        String name = "";
-        String tagId = "";
-        String loc = "미지정";
-        final Map<String, dynamic> metadata = {};
-
-        for (int colIdx = 0; colIdx < row.length; colIdx++) {
-          if (colIdx >= headers.length) {
-            break;
-          }
-          final String cleanHeader = headers[colIdx].replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
-          final String val = _extractString(row[colIdx]);
-
-          if (cleanHeader.contains('품명') || cleanHeader.contains('이름')) {
-            name = val;
-          } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
-            tagId = val;
-          } else if (cleanHeader.contains('위치')) {
-            loc = val;
-          } else if (headers[colIdx].isNotEmpty && val.isNotEmpty) {
-            metadata[headers[colIdx]] = val;
-          }
-        }
-
-        if (name.isEmpty && tagId.isEmpty) {
-          continue;
-        }
-        if (name.isEmpty) {
-          name = "이름없음";
-        }
-        if (tagId.isEmpty) {
-          tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
-        }
-
-        final Map<String, dynamic> data = {
-          'name': name,
-          'tag_id': tagId,
-          'location': loc,
-          'status': '보유중',
-          'metadata': metadata
-        };
-
-        bool ok = await provider.handleSave(product: null, data: data);
-        if (ok) {
-          successCount++;
-        } else {
-          failCount++;
-        }
-      }
-
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isFullScreenLoading = false;
-      });
-      _syncFiltering(provider.items);
-      _showInfoDialog("엑셀 임포트 완료", "총 ${successCount + failCount}건의 데이터 처리가 종료되었습니다.\n\n✅ 성공: $successCount건\n❌ 실패: $failCount건", theme);
-
-    } catch (e) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isFullScreenLoading = false;
-      });
-      _showInfoDialog("오류", "엑셀 파싱 중 오류가 발생했습니다.", theme);
     }
+
+    final List<String> metaFields = metaKeySet.toList()..sort();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return ColumnSelectionDialog(
+          title: "표시 항목 설정 (물품)",
+          baseFields: baseFields,
+          metaFields: metaFields,
+          initialSelection: provider.selectedColumns,
+          onSave: (List<String> newColumns) async {
+            await provider.saveRemoteSettings(newColumns);
+          },
+        );
+      },
+    );
+  }
+
+  void _showResetDialog(ProductProvider provider, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger),
+              content: const Text("모든 정보를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "초기화 진행",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _isFullScreenLoading = true;
+                      });
+
+                      await provider.resetAllProducts();
+
+                      if (!mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _isFullScreenLoading = false;
+                        _selectedGroupKey = null;
+                        _currentQuery = "";
+                        _selectedItemIds.clear();
+                      });
+                      _searchController.clear();
+                      _syncFiltering(provider.items);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('전체 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+                    }
+                )
+              ]
+          );
+        }
+    );
   }
 
   void _confirmBulkDelete(ProductProvider provider, ThemeData theme) {
@@ -1461,7 +1685,7 @@ class _ProductPageState extends State<ProductPage> {
                       setState(() {
                         _selectedItemIds.clear();
                         _isFullScreenLoading = false;
-                        _isSelectionMode = false; // 삭제 후 모드 자동 종료
+                        _isSelectionMode = false;
                       });
                       _syncFiltering(provider.items);
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 항목들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
@@ -1560,12 +1784,20 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
+    final userProvider = context.read<UserProvider>();
+
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (BuildContext ctx) {
-          return _ManualInoutDialog(type: type, product: p, statusIcons: _statusIcons);
+          return _ManualInoutDialog(
+            type: type,
+            product: p,
+            statusIcons: _statusIcons,
+            userList: userProvider.list,
+          );
         }
     );
+
     if (!mounted) {
       return;
     }
@@ -1692,206 +1924,130 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [공용 다이얼로그 호출] - 표시 항목 설정
-  /// ---------------------------------------------------------------------------
-  void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
-    final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
-    final Set<String> metaKeySet = {};
+  Future<void> _handleBatchImport(ProductProvider provider, ThemeData theme) async {
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
+      if (!mounted) {
+        return;
+      }
+      if (result == null) {
+        return;
+      }
 
-    for (final ProductModel p in provider.items.take(100)) {
-      for (final String k in p.metadata.keys) {
-        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
-          metaKeySet.add(k);
+      Uint8List? bytes = result.files.single.bytes;
+      if (bytes == null && result.files.single.path != null) {
+        bytes = await File(result.files.single.path!).readAsBytes();
+      }
+
+      if (!mounted) {
+        return;
+      }
+      if (bytes == null) {
+        _showInfoDialog("오류", "파일을 읽을 수 없습니다.", theme);
+        return;
+      }
+
+      final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
+      final String targetSheet = excel.tables.keys.first;
+      final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
+      if (sheet == null || sheet.maxRows <= 1) {
+        _showInfoDialog("알림", "데이터가 없거나 헤더만 존재합니다.", theme);
+        return;
+      }
+
+      setState(() {
+        _isFullScreenLoading = true;
+      });
+
+      final List<String> headers = [];
+      if (sheet.rows.isNotEmpty) {
+        for (final excel_pkg.Data? cell in sheet.rows.first) {
+          headers.add(_extractString(cell));
         }
       }
-    }
 
-    final List<String> metaFields = metaKeySet.toList()..sort();
+      int successCount = 0;
+      int failCount = 0;
 
-    showDialog(
-      context: context,
-      builder: (BuildContext ctx) {
-        return ColumnSelectionDialog(
-          title: "표시 항목 설정 (물품)",
-          baseFields: baseFields,
-          metaFields: metaFields,
-          initialSelection: provider.selectedColumns,
-          onSave: (List<String> newColumns) async {
-            await provider.saveRemoteSettings(newColumns);
-          },
-        );
-      },
-    );
-  }
-
-  void _showResetDialog(ProductProvider provider, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger),
-              content: const Text("모든 정보를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "초기화 진행",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _isFullScreenLoading = true;
-                      });
-
-                      await provider.resetAllProducts();
-
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        _isFullScreenLoading = false;
-                        _selectedGroupKey = null;
-                        _currentQuery = "";
-                        _selectedItemIds.clear();
-                      });
-                      _searchController.clear();
-                      _syncFiltering(provider.items);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('전체 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
-                    }
-                )
-              ]
-          );
+      for (int i = 1; i < sheet.maxRows; i++) {
+        final List<excel_pkg.Data?> row = sheet.row(i);
+        if (row.isEmpty) {
+          continue;
         }
-    );
+
+        String name = "";
+        String tagId = "";
+        String loc = "미지정";
+        final Map<String, dynamic> metadata = {};
+
+        for (int colIdx = 0; colIdx < row.length; colIdx++) {
+          if (colIdx >= headers.length) {
+            break;
+          }
+          final String cleanHeader = headers[colIdx].replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+          final String val = _extractString(row[colIdx]);
+
+          if (cleanHeader.contains('품명') || cleanHeader.contains('이름')) {
+            name = val;
+          } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
+            tagId = val;
+          } else if (cleanHeader.contains('위치')) {
+            loc = val;
+          } else if (headers[colIdx].isNotEmpty && val.isNotEmpty) {
+            metadata[headers[colIdx]] = val;
+          }
+        }
+
+        if (name.isEmpty && tagId.isEmpty) {
+          continue;
+        }
+        if (name.isEmpty) {
+          name = "이름없음";
+        }
+        if (tagId.isEmpty) {
+          tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+        }
+
+        final Map<String, dynamic> data = {
+          'name': name,
+          'tag_id': tagId,
+          'location': loc,
+          'status': '보유중',
+          'metadata': metadata
+        };
+
+        bool ok = await provider.handleSave(product: null, data: data);
+        if (ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      }
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isFullScreenLoading = false;
+      });
+      _syncFiltering(provider.items);
+      _showInfoDialog("엑셀 임포트 완료", "총 ${successCount + failCount}건의 데이터 처리가 종료되었습니다.\n\n✅ 성공: $successCount건\n❌ 실패: $failCount건", theme);
+
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isFullScreenLoading = false;
+      });
+      _showInfoDialog("오류", "엑셀 파싱 중 오류가 발생했습니다.", theme);
+    }
   }
 
-  void _showInfoDialog(String title, String msg, ThemeData theme) {
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) => AlertDialog(
-            title: AppTheme.dialogTitle(title, Icons.info_outline),
-            content: Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-            actions: [
-              AppTheme.actionButton(label: "확인", onPressed: () => Navigator.pop(ctx))
-            ]
-        )
-    );
-  }
-
-  Widget _buildEmptyState(String msg) {
-    return Center(
-        child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.inventory_2_outlined, size: 48, color: Colors.black12),
-              const SizedBox(height: 16),
-              Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.black26, fontWeight: FontWeight.bold))
-            ]
-        )
-    );
-  }
-
-  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
-    return SizedBox(
-        width: 150,
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13)),
-              Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)
-            ]
-        )
-    );
-  }
-
-  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
-    return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(25),
-            child: Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 24)
-            )
-        )
-    );
-  }
-
-  Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
-    return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-                width: 52,
-                height: 52,
-                alignment: Alignment.center,
-                child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24)
-            )
-        )
-    );
-  }
-
-  Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
-    return Column(
-      children: [
-        _buildHeader(provider, theme),
-        _buildFilterBar(theme),
-        Expanded(
-          child: ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: groupKeys.length,
-              separatorBuilder: (BuildContext ctx, int idx) => const SizedBox(height: 10),
-              itemBuilder: (BuildContext ctx, int idx) {
-                final String k = groupKeys[idx];
-                return _buildGroupTile(provider, k, groupedMap[k]!, false, theme);
-              }
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.1),
-      child: Center(
-        child: Card(
-          elevation: 10,
-          color: theme.cardTheme.color,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
-                const SizedBox(height: 25),
-                Text(
-                  provider.isParsing ? "데이터 분석 중..." : "데이터베이스 통신 중...",
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
+  // ---------------------------------------------------------------------------
+  // [엑셀 데이터 파싱 보조 함수]
+  // 엑셀 셀에서 안전하게 문자열을 추출합니다.
+  // ---------------------------------------------------------------------------
   String _extractString(excel_pkg.Data? cell) {
     if (cell == null || cell.value == null) {
       return "";
@@ -1899,31 +2055,57 @@ class _ProductPageState extends State<ProductPage> {
     return cell.value.toString().trim().replaceAll(RegExp(r'^[a-zA-Z]+CellValue\((.*)\)$'), r'$1').replaceAll('"', '');
   }
 
+  // ---------------------------------------------------------------------------
+  // [엑셀 내보내기 (Export)]
+  // 현재 조회된 물품 리스트를 엑셀 파일로 저장합니다.
+  // 추가 항목(Metadata)까지 동적으로 스캔하여 포함시킵니다.
+  // ---------------------------------------------------------------------------
   Future<void> _exportToExcel(List<ProductModel> list) async {
     try {
       final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
       final excel_pkg.Sheet sheet = excel['Inventory'];
-      sheet.appendRow([
-        excel_pkg.TextCellValue('품명'),
-        excel_pkg.TextCellValue('태그ID'),
-        excel_pkg.TextCellValue('로케이션'),
-        excel_pkg.TextCellValue('상태'),
-        excel_pkg.TextCellValue('규격')
-      ]);
+
+      // 기본 헤더
+      final List<String> baseHeaders = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+
+      // 메타데이터 동적 헤더 추출
+      final Set<String> metaKeySet = {};
+      for (final ProductModel p in list) {
+        for (final String k in p.metadata.keys) {
+          if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+            metaKeySet.add(k);
+          }
+        }
+      }
+      final List<String> metaHeaders = metaKeySet.toList()..sort();
+      final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
+
+      sheet.appendRow(allHeaders.map((h) => excel_pkg.TextCellValue(h)).toList());
+
       for (final ProductModel i in list) {
-        sheet.appendRow([
+        final List<excel_pkg.CellValue> rowData = [
           excel_pkg.TextCellValue(i.name),
           excel_pkg.TextCellValue(i.tagId),
-          excel_pkg.TextCellValue(i.location ?? ""),
+          excel_pkg.TextCellValue(_safeStr(i.location)),
           excel_pkg.TextCellValue(i.status),
-          excel_pkg.TextCellValue(i.spec ?? "")
-        ]);
+          excel_pkg.TextCellValue(_safeStr(i.spec)),
+          excel_pkg.TextCellValue(_safeStr(i.category)),
+          excel_pkg.TextCellValue(_safeStr(i.serialNumber)),
+        ];
+
+        for (final String metaKey in metaHeaders) {
+          rowData.add(excel_pkg.TextCellValue(_safeStr(i.metadata[metaKey])));
+        }
+
+        sheet.appendRow(rowData);
       }
+
       final String? path = await FilePicker.platform.saveFile(
           fileName: 'Inventory_${DateTime.now().millisecondsSinceEpoch}.xlsx',
           type: FileType.custom,
           allowedExtensions: ['xlsx']
       );
+
       if (path != null) {
         await File(path).writeAsBytes(excel.encode()!);
         if (!mounted) {
@@ -1941,10 +2123,18 @@ class _ProductPageState extends State<ProductPage> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // [데이터 그룹화 (Grouping)]
+  // 사용자가 선택한 기준(품명, 위치, 분류)에 따라 리스트를 묶어줍니다.
+  // ---------------------------------------------------------------------------
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
     final Map<String, List<ProductModel>> grouped = {};
     for (final ProductModel i in items) {
-      final String key = _groupByMode == 'item' ? i.name : (_groupByMode == 'location' ? _safeStr(i.location, defaultVal: "미지정") : _safeStr(i.category, defaultVal: "미정"));
+      final String key = _groupByMode == 'item'
+          ? i.name
+          : (_groupByMode == 'location'
+          ? _safeStr(i.location, defaultVal: "미지정")
+          : _safeStr(i.category, defaultVal: "미정"));
       if (!grouped.containsKey(key)) {
         grouped[key] = [];
       }
@@ -1956,14 +2146,21 @@ class _ProductPageState extends State<ProductPage> {
 
 /// ---------------------------------------------------------------------------
 /// [수동 입출고 다이얼로그]
-/// 담당 작업자 검색을 위해 UserProvider를 사용하여 키오스크 스타일로 구성했습니다.
+/// 담당 작업자 검색을 위해 UserProvider를 전달받아 키오스크 스타일로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class _ManualInoutDialog extends StatefulWidget {
   final String type;
   final ProductModel product;
   final Map<String, IconData> statusIcons;
 
-  const _ManualInoutDialog({required this.type, required this.product, required this.statusIcons});
+  final List<UserModel> userList;
+
+  const _ManualInoutDialog({
+    required this.type,
+    required this.product,
+    required this.statusIcons,
+    required this.userList,
+  });
 
   @override
   State<_ManualInoutDialog> createState() => _ManualInoutDialogState();
@@ -1992,8 +2189,8 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final UserProvider userProvider = context.watch<UserProvider>();
-    final List<String> workerList = userProvider.list.map((UserModel p) => "${p.name} (${p.code})").toList();
+    final List<String> workerList = widget.userList.map((UserModel p) => "${p.name} (${p.code})").toList();
+
     final bool isIn = widget.type == '수기입고';
     final ThemeData theme = Theme.of(context);
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
@@ -2039,7 +2236,7 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                           controller: tC,
                           focusNode: fN,
                           style: AppTheme.itemValueStyle(context).copyWith(fontWeight: FontWeight.bold),
-                          decoration: AppTheme.inputDecoration(label: "담당 작업자 (UserProvider 연동)", context: context, hasFocus: fN.hasFocus)
+                          decoration: AppTheme.inputDecoration(label: "담당 작업자 (자동완성)", context: context, hasFocus: fN.hasFocus)
                       );
                     }
                 ),

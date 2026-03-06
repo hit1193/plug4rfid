@@ -5,12 +5,12 @@ import 'package:window_manager/window_manager.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 
+import '../core/pocketbase_client.dart'; // 로그아웃(pb.authStore.clear) 처리를 위한 전역 클라이언트 임포트
 import '../theme/app_theme.dart';
 import '../providers/theme_provider.dart';
 
 // 하위 페이지 위젯 임포트
-// [확인 필수!] 이 파일들이 동일한 pages 폴더 내에 존재해야 합니다.
-import 'user_page.dart';       // user_page.dart 파일 안에 'class UserPage'가 반드시 있어야 합니다!
+import 'user_page.dart';
 import 'product_page.dart';
 import 'device_page.dart';
 import 'device_map_page.dart';
@@ -48,21 +48,6 @@ class _MainPageState extends State<MainPage> {
   @override
   void initState() {
     super.initState();
-    _initFullScreenConfiguration();
-  }
-
-  /// [윈도우 창 제어 초기화]
-  /// PC 버전으로 실행 시 타이틀바를 숨기고 전체 화면으로 포커싱합니다.
-  Future<void> _initFullScreenConfiguration() async {
-    if (!kIsWeb && Platform.isWindows) {
-      try {
-        await windowManager.setTitleBarStyle(TitleBarStyle.hidden, windowButtonVisibility: false);
-        await windowManager.setFullScreen(true);
-        await windowManager.focus();
-      } catch (e) {
-        debugPrint("윈도우 매니저 초기화 중 오류 발생: $e");
-      }
-    }
   }
 
   @override
@@ -131,7 +116,6 @@ class _MainPageState extends State<MainPage> {
   Widget _buildSidebar(bool extended, ThemeData theme, ThemeProvider themeProvider) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
-    // 다크모드일 때는 본문보다 아주 살짝만 더 어두운 색상으로 설정하여 깊이감 부여
     final Color deeperSidebarColor = isDarkMode
         ? const Color(0xFF151D2E)
         : Color.alphaBlend(theme.colorScheme.primary.withValues(alpha: 0.06), theme.scaffoldBackgroundColor);
@@ -146,7 +130,7 @@ class _MainPageState extends State<MainPage> {
       ),
       child: Column(
         children: [
-          // 앱 로고 및 사이드바 토글 버튼
+          // [개편] 로고 이미지 대폭 확대 및 메뉴 접기 아이콘을 Stack 오버레이로 배치
           _buildSidebarHeader(extended, theme),
           const SizedBox(height: 10),
 
@@ -169,7 +153,6 @@ class _MainPageState extends State<MainPage> {
                 Divider(color: theme.dividerTheme.color),
                 const SizedBox(height: 20),
 
-                // 테마 변경 영역 (사이드바가 확장되어 있을 때만 표출)
                 if (extended) ...[
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
@@ -189,7 +172,6 @@ class _MainPageState extends State<MainPage> {
                   const SizedBox(height: 20),
                 ],
 
-                // 특수 모드 진입 및 시스템 제어 버튼 영역
                 _buildMenuItem(
                   title: "키오스크 모드",
                   icon: FontAwesomeIcons.lockOpen,
@@ -199,7 +181,19 @@ class _MainPageState extends State<MainPage> {
                   onTap: () => setState(() => _isKioskMode = true),
                 ),
 
-                // 데스크탑(Windows) 환경일 때만 시스템 종료 버튼 표출 (웹 빌드 오류 방지)
+                const SizedBox(height: 4),
+                _buildMenuItem(
+                  title: "로그아웃",
+                  icon: Icons.logout_rounded,
+                  extended: extended,
+                  isSelected: false,
+                  color: Colors.blueGrey,
+                  theme: theme,
+                  onTap: () {
+                    pb.authStore.clear();
+                  },
+                ),
+
                 if (!kIsWeb && Platform.isWindows) ...[
                   const SizedBox(height: 4),
                   _buildMenuItem(
@@ -221,37 +215,67 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  /// 사이드바 최상단 앱 타이틀 및 메뉴 열기/닫기 토글 버튼 영역
+  /// ---------------------------------------------------------------------------
+  /// [최종 개편된 사이드바 상단 헤더]
+  /// Stack 위젯을 사용하여 로고 이미지를 정중앙에 시원하게 배치하고,
+  /// 메뉴 버튼을 로고 영역의 우측 상단 레이어에 얹었습니다 (Z-Order 최상위).
+  /// ---------------------------------------------------------------------------
   Widget _buildSidebarHeader(bool extended, ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
     return Container(
-      padding: EdgeInsets.fromLTRB(14, extended ? 50 : 25, 14, 25),
-      child: Row(
-        mainAxisAlignment: extended ? MainAxisAlignment.spaceBetween : MainAxisAlignment.center,
+      // [수정] 상단 여백을 대폭 넓혀 로고가 폼 가장 상단에서 쾌적하게 보일 수 있게 합니다.
+      padding: EdgeInsets.fromLTRB(14, extended ? 60 : 40, 14, 20),
+      child: Stack(
+        alignment: Alignment.center, // 모든 요소를 기본 중앙 정렬
+        clipBehavior: Clip.none,
         children: [
-          if (extended)
-            Flexible(
-              child: Text(
-                "PLUG4",
-                style: TextStyle(
-                  fontFamily: AppTheme.fontPretendard,
-                  fontWeight: FontWeight.w900,
-                  fontSize: 26,
-                  letterSpacing: -1.2,
-                  color: isDarkMode ? Colors.white : theme.colorScheme.primary,
-                ),
-                overflow: TextOverflow.clip,
-                softWrap: false,
-                maxLines: 1,
+          // 1. 중앙 로고 이미지 (사장님 요청대로 크기를 대폭 키웠습니다)
+          Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              constraints: BoxConstraints(
+                // [수정] 높이 상한을 120으로 상향하여 훨씬 시원하고 큰 브랜딩 이미지를 표출합니다.
+                maxHeight: extended ? 120 : 50,
+                maxWidth: extended ? 240 : 60,
+              ),
+              child: Image.asset(
+                'assets/images/PLUG4ASSET.png',
+                fit: BoxFit.contain, // 비율 유지하며 최대한 크게 확장
+                errorBuilder: (context, error, stackTrace) {
+                  return Text(
+                    "PLUG4",
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontPretendard,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 24,
+                      color: isDarkMode ? Colors.white : theme.colorScheme.primary,
+                    ),
+                  );
+                },
               ),
             ),
-          IconButton(
-            onPressed: () => setState(() => _isSidebarExtended = !_isSidebarExtended),
-            icon: Icon(
-                extended ? Icons.menu_open_rounded : Icons.menu_rounded,
-                color: isDarkMode ? Colors.white70 : theme.colorScheme.primary.withValues(alpha: 0.7),
-                size: 28
+          ),
+
+          // 2. 메뉴바 접기/펴기 아이콘 (이미지 위에 Stack으로 배치)
+          // [수정] Positioned를 사용하여 로고 영역의 귀퉁이에 정교하게 위치시킵니다.
+          Positioned(
+            top: extended ? -40 : -30, // 로고 이미지보다 살짝 더 위쪽에 위치시켜 간섭 방지
+            right: extended ? -12 : null, // 확장 시에는 우측 끝에 배치
+            left: extended ? null : -12,  // 축소 시에는 좌측 끝에 배치
+            child: Material(
+              color: Colors.transparent,
+              child: IconButton(
+                onPressed: () => setState(() => _isSidebarExtended = !_isSidebarExtended),
+                tooltip: extended ? "메뉴바 접기" : "메뉴바 펴기",
+                icon: Icon(
+                  extended ? Icons.menu_open_rounded : Icons.menu_rounded,
+                  color: isDarkMode ? Colors.white70 : theme.colorScheme.primary.withValues(alpha: 0.8),
+                  size: 30, // 가독성을 위해 아이콘 크기도 살짝 키웠습니다.
+                ),
+                padding: const EdgeInsets.all(10),
+                constraints: const BoxConstraints(),
+              ),
             ),
           ),
         ],
@@ -281,7 +305,6 @@ class _MainPageState extends State<MainPage> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           height: 56,
-          padding: EdgeInsets.symmetric(horizontal: extended ? 18 : 0),
           clipBehavior: Clip.hardEdge,
           decoration: BoxDecoration(
             color: isSelected ? activeColor : Colors.transparent,
@@ -293,35 +316,43 @@ class _MainPageState extends State<MainPage> {
               width: 1.5,
             ),
           ),
-          child: Row(
-            mainAxisAlignment: extended ? MainAxisAlignment.start : MainAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 24,
-                child: Center(
-                  child: icon is IconData
-                      ? Icon(icon, size: 20, color: isSelected ? Colors.white : inactiveColor)
-                      : FaIcon(icon as IconData, size: 18, color: isSelected ? Colors.white : inactiveColor),
-                ),
-              ),
-              if (extended) ...[
-                const SizedBox(width: 16),
-                Flexible(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontPretendard,
-                      color: isSelected ? Colors.white : inactiveColor,
-                      fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
-                      fontSize: 16,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Container(
+              width: extended ? 252 : 62,
+              padding: EdgeInsets.symmetric(horizontal: extended ? 18 : 0),
+              child: Row(
+                mainAxisAlignment: extended ? MainAxisAlignment.start : MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    child: Center(
+                      child: icon is IconData
+                          ? Icon(icon, size: 20, color: isSelected ? Colors.white : inactiveColor)
+                          : FaIcon(icon as IconData, size: 18, color: isSelected ? Colors.white : inactiveColor),
                     ),
-                    overflow: TextOverflow.clip,
-                    softWrap: false,
-                    maxLines: 1,
                   ),
-                ),
-              ],
-            ],
+                  if (extended) ...[
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          color: isSelected ? Colors.white : inactiveColor,
+                          fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                        overflow: TextOverflow.clip,
+                        softWrap: false,
+                        maxLines: 1,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -341,22 +372,11 @@ class _MainPageState extends State<MainPage> {
 
         Color seedColor;
         switch (type) {
-          case AppThemeType.pureWhite:
-            seedColor = const Color(0xFF94A3B8);
-            break;
-          case AppThemeType.industrial:
-            seedColor = AppTheme.primary;
-            break;
-          case AppThemeType.forest:
-            seedColor = const Color(0xFF10B981);
-            break;
-          case AppThemeType.solar:
-            seedColor = const Color(0xFFF59E0B);
-            break;
-          case AppThemeType.midnight:
-          // [수정됨] 직관적인 다크모드 인지를 위해 남색(0xFF6366F1)에서 완전한 검은색으로 변경했습니다.
-            seedColor = Colors.black;
-            break;
+          case AppThemeType.pureWhite: seedColor = const Color(0xFF94A3B8); break;
+          case AppThemeType.industrial: seedColor = AppTheme.primary; break;
+          case AppThemeType.forest: seedColor = const Color(0xFF10B981); break;
+          case AppThemeType.solar: seedColor = const Color(0xFFF59E0B); break;
+          case AppThemeType.midnight: seedColor = Colors.black; break;
         }
 
         return GestureDetector(
@@ -388,7 +408,6 @@ class _MainPageState extends State<MainPage> {
   }
 
   /// [메인 프레임 뷰 라우팅]
-  /// 선택된 메뉴 인덱스(_selectedIndex)에 따라 우측 메인 영역에 각 기능 페이지를 띄웁니다.
   Widget _buildBody(bool isMobile) {
     switch (_selectedIndex) {
       case 0: return DeviceMapPage(baseUrl: _pbBaseUrl);
