@@ -218,7 +218,14 @@ class _BulkEditDialogState extends State<BulkEditDialog> {
   /// [타입별 입력 위젯 생성기]
   Widget _buildInputWidget(BulkEditField field, bool isActive, ThemeData theme) {
     final bool isDark = theme.brightness == Brightness.dark;
-    final Color disableBorderColor = theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3);
+
+    // [수정됨] 미선택 상태의 외곽선을 시각적으로 인지하기 쉽도록 농도를 진하게 조정했습니다.
+    // 라이트모드: 기존 아주 옅은 회색 -> 중간 정도의 또렷한 회색 (0.5)
+    // 다크모드: 옅은 회색 -> 눈에 띄는 반투명 흰색 (0.35)
+    final Color disableBorderColor = isDark
+        ? Colors.white.withValues(alpha: 0.35)
+        : Colors.grey.withValues(alpha: 0.5);
+
     final Color activeBorderColor = AppTheme.primary;
 
     if (field.type == BulkEditFieldType.text) {
@@ -239,7 +246,6 @@ class _BulkEditDialogState extends State<BulkEditDialog> {
       );
     } else if (field.type == BulkEditFieldType.dropdown) {
       return DropdownButtonFormField<String>(
-        // [수정됨] 최신 Flutter 권장사항에 따라 value 대신 initialValue를 사용합니다.
         initialValue: _dynamicValues[field.key],
         decoration: AppTheme.inputDecoration(label: field.label, context: context).copyWith(
           disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: disableBorderColor, width: 1.0)),
@@ -247,7 +253,7 @@ class _BulkEditDialogState extends State<BulkEditDialog> {
         ),
         items: (field.options ?? []).map((String e) {
           return DropdownMenuItem<String>(
-              value: e, // DropdownMenuItem의 value 속성은 정상 유지
+              value: e,
               child: Text(e, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: isActive ? null : Colors.grey))
           );
         }).toList(),

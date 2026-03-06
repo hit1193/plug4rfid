@@ -20,9 +20,6 @@ import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
-/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
-/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
-/// C++Builder의 VarToStrDef 역할과 동일합니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -37,8 +34,6 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 
 /// ---------------------------------------------------------------------------
 /// [RFID 인원 관리 페이지 (UserPage)]
-/// 메인 화면의 우측 영역에 표출되는 인원 관리 통합 관제 화면입니다.
-/// 미니멀리즘과 키오스크 디자인 철학을 적용하여 직관적으로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class UserPage extends StatefulWidget {
   final String searchQuery;
@@ -68,16 +63,17 @@ class _UserPageState extends State<UserPage> {
   late String _currentFilter;
   String _activeMetricFilter = "전체";
 
-  // 단일 선택(String?)에서 다중 선택을 위한 Set<String>으로 변경 (일괄 처리 지원)
+  // 다중 선택(일괄 처리)을 위한 Set 변수
   final Set<String> _selectedUserIds = {};
+
+  // [신규 추가] 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
+  bool _isSelectionMode = false;
 
   bool _isFullScreenLoading = false;
 
-  // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
-  // UI에 노출되지 않아야 할 내부 시스템 키 목록
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
@@ -102,7 +98,6 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
-  // --- FA 대시보드용 통계 계산 로직 ---
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
@@ -127,9 +122,6 @@ class _UserPageState extends State<UserPage> {
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [수기 출입 처리]
-  /// ---------------------------------------------------------------------------
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -170,7 +162,6 @@ class _UserPageState extends State<UserPage> {
     }
     updatedMeta['access_history'] = history;
 
-    // email, username을 전송 데이터에서 제외하여 validation 에러를 방지합니다.
     final Map<String, dynamic> updateData = {
       'is_approved': isApproved,
       'metadata': updatedMeta,
@@ -181,9 +172,7 @@ class _UserPageState extends State<UserPage> {
       data: updateData,
     );
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -195,7 +184,7 @@ class _UserPageState extends State<UserPage> {
     } else {
       _showInfoDialog(
           "처리 실패",
-          "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n💡 관리자 화면에서 'users' 컬렉션의 API Rules 중 'Update Rule'이 TRUE로 입력되어 있는지 다시 확인해 주세요.",
+          "데이터베이스 업데이트 중 오류가 발생했습니다.",
           Theme.of(context)
       );
     }
@@ -207,44 +196,35 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
-    // -------------------------------------------------------------------------
-    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
-    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
-      // 1. 등록 상태 필터 검사
       final bool matchesFilter = _currentFilter == '전체' ||
           (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
 
-      // 2. 검색어 검사 (기본 필드 + 추가 확장 정보(metadata) 전체 순회)
       bool matchesSearch = false;
       final String q = _currentSearchQuery.trim().toLowerCase();
 
       if (q.isEmpty) {
-        matchesSearch = true; // 검색어가 없으면 모두 일치
+        matchesSearch = true;
       } else {
-        // 2-1. 기본 정보 검색 (이름은 초성 검색 지원, 사번/부서/태그ID는 소문자 포함 여부)
         matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
             p.code.toLowerCase().contains(q) ||
             p.department.toLowerCase().contains(q) ||
             p.tagId.toLowerCase().contains(q);
 
-        // 2-2. 추가 확장 정보(metadata) 검색 (물품 페이지 로직 완벽 적용)
         if (!matchesSearch) {
           for (final dynamic value in p.metadata.values) {
             if (value != null && value.toString().toLowerCase().contains(q)) {
               matchesSearch = true;
-              break; // 하나라도 일치하는 값이 있다면 더 이상 찾지 않고 루프 종료
+              break;
             }
           }
         }
       }
 
-      // 필터나 검색 조건 중 하나라도 맞지 않으면 리스트에서 제외
       if (!matchesFilter || !matchesSearch) {
         return false;
       }
 
-      // 3. 대시보드 상단 통계(Metric) 필터 검사
       if (_activeMetricFilter == "전체") {
         return true;
       }
@@ -389,6 +369,21 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.refresh, "새로고침", () {
                       provider.fetchData();
                     }, theme),
+                    // [신규 기능] 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
+                    _buildActionIcon(
+                      _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
+                      _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
+                          () {
+                        setState(() {
+                          _isSelectionMode = !_isSelectionMode;
+                          if (!_isSelectionMode) {
+                            _selectedUserIds.clear(); // 모드를 끌 때는 선택 내역도 초기화
+                          }
+                        });
+                      },
+                      theme,
+                      color: _isSelectionMode ? AppTheme.primary : null, // 켜져 있을 땐 색상으로 강조
+                    ),
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -445,18 +440,21 @@ class _UserPageState extends State<UserPage> {
       return _buildEmptyState("데이터가 없습니다.");
     }
 
-    // 전체 선택 여부 확인
     final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) => _selectedUserIds.contains(p.id));
 
     return Column(
       children: [
-        // 다중 선택 시 나타나는 일괄 편집 헤더
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          alignment: Alignment.centerLeft,
-          child: Row(
-            children: [
-              if (_selectedUserIds.isNotEmpty) ...[
+        // [신규 UI] 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
+        AnimatedSize(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _isSelectionMode
+              ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
@@ -483,30 +481,32 @@ class _UserPageState extends State<UserPage> {
                 const SizedBox(width: 16),
                 Container(width: 1, height: 24, color: theme.dividerTheme.color),
                 const SizedBox(width: 16),
-              ] else ...[
-                Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
-                const SizedBox(width: 16),
-              ],
-              OutlinedButton.icon(
-                icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
-                label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
-                  side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
-                ),
-                onPressed: () {
-                  setState(() {
-                    if (isAllSelected) {
-                      _selectedUserIds.clear();
-                    } else {
-                      for (final UserModel e in list) {
-                        _selectedUserIds.add(e.id);
+                OutlinedButton.icon(
+                  icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                  label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                    side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      if (isAllSelected) {
+                        _selectedUserIds.clear();
+                      } else {
+                        for (final UserModel e in list) {
+                          _selectedUserIds.add(e.id);
+                        }
                       }
-                    }
-                  });
-                },
-              ),
-            ],
+                    });
+                  },
+                ),
+              ],
+            ),
+          )
+              : Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
           ),
         ),
 
@@ -526,48 +526,68 @@ class _UserPageState extends State<UserPage> {
 
                 return Row(
                   children: [
-                    // 키오스크 스타일의 원형 체크박스 토글
-                    InkWell(
-                      onTap: () {
-                        setState(() {
-                          if (isSelected) {
-                            _selectedUserIds.remove(item.id);
-                          } else {
-                            _selectedUserIds.add(item.id);
-                          }
-                        });
-                      },
-                      borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: const EdgeInsets.all(8.0),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isSelected ? AppTheme.primary : Colors.transparent,
-                            border: Border.all(
-                              color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
-                              width: 2,
-                            ),
-                          ),
+                    // [신규 UI] AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      alignment: Alignment.centerLeft,
+                      child: _isSelectionMode
+                          ? Padding(
+                        padding: const EdgeInsets.only(right: 8.0),
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (isSelected) {
+                                _selectedUserIds.remove(item.id);
+                              } else {
+                                _selectedUserIds.add(item.id);
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(20),
                           child: Padding(
-                            padding: const EdgeInsets.all(4.0),
-                            child: Icon(
-                              Icons.check,
-                              size: 16,
-                              color: isSelected ? Colors.white : Colors.transparent,
+                            padding: const EdgeInsets.all(8.0),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: isSelected ? AppTheme.primary : Colors.transparent,
+                                border: Border.all(
+                                  color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                                  width: 2,
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: Icon(
+                                  Icons.check,
+                                  size: 16,
+                                  color: isSelected ? Colors.white : Colors.transparent,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                      )
+                          : const SizedBox.shrink(),
                     ),
-                    const SizedBox(width: 8),
 
                     // 기존 카드 영역
                     Expanded(
                       child: InkWell(
                         onTap: () {
-                          _showForm(provider, item, theme);
+                          // 다중 선택 모드일 땐 카드를 클릭해도 체크되도록 UX를 향상시켰습니다.
+                          if (_isSelectionMode) {
+                            setState(() {
+                              if (isSelected) {
+                                _selectedUserIds.remove(item.id);
+                              } else {
+                                _selectedUserIds.add(item.id);
+                              }
+                            });
+                          } else {
+                            _showForm(provider, item, theme);
+                          }
                         },
                         borderRadius: BorderRadius.circular(AppTheme.cardRadius),
                         child: Container(
@@ -728,22 +748,16 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // [신규 연동] 다중 선택 항목 일괄 편집 (공용 BulkEditDialog 연동)
-  // 인원 관리의 기본 항목과 추가 확장 항목(Metadata)을 모두 수집하여 공용 위젯에 넘깁니다.
-  // ---------------------------------------------------------------------------
   void _showBulkEditDialog(UserProvider provider, List<UserModel> visibleItems, ThemeData theme) async {
     final List<UserModel> selectedUsers = visibleItems.where((UserModel p) => _selectedUserIds.contains(p.id)).toList();
     if (selectedUsers.isEmpty) return;
 
-    // 1. 편집할 기본 고정 필드 정의 (부서, 비고, 출입 승인 여부)
     List<BulkEditField> fields = [
       BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
       BulkEditField(key: 'remarks', label: '새로운 공통 비고', type: BulkEditFieldType.text),
       BulkEditField(key: 'is_approved', label: '출입 승인 상태 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
     ];
 
-    // 2. 동적 메타데이터(추가 확장 항목) 수집 및 텍스트 필드로 추가
     final Set<String> metaKeySet = {};
     for (final UserModel p in provider.list) {
       for (final String k in p.metadata.keys) {
@@ -758,7 +772,6 @@ class _UserPageState extends State<UserPage> {
       fields.add(BulkEditField(key: metaKey, label: '추가항목: $metaKey', type: BulkEditFieldType.text));
     }
 
-    // 3. 공용 일괄 편집창(TFrame) 띄우기
     final Map<String, dynamic>? resultValues = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
@@ -770,12 +783,10 @@ class _UserPageState extends State<UserPage> {
         }
     );
 
-    // 4. 취소 버튼을 누르거나 창을 닫은 경우 무시
     if (resultValues == null || !mounted) return;
 
     setState(() { _isFullScreenLoading = true; });
 
-    // 5. 사용자가 입력한 데이터로 각 선택된 인원(User) 정보 병합 및 서버 전송
     for (final UserModel p in selectedUsers) {
       final Map<String, dynamic> data = {};
       final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
@@ -788,12 +799,10 @@ class _UserPageState extends State<UserPage> {
         } else if (key == 'is_approved') {
           data['is_approved'] = value;
         } else {
-          // 기본 필드가 아니면 모두 메타데이터(추가 항목)로 처리
           updatedMeta[key] = value;
         }
       });
 
-      // 최종적으로 업데이트된 메타데이터를 data 객체에 담음
       data['metadata'] = updatedMeta;
 
       await provider.handleSave(p: p, data: data);
@@ -803,15 +812,14 @@ class _UserPageState extends State<UserPage> {
 
     setState(() {
       _isFullScreenLoading = false;
-      _selectedUserIds.clear(); // 일괄 편집 완료 후 선택 해제
+      _selectedUserIds.clear();
+      // 팁: 편집이 끝난 후 다중 선택 모드를 자동으로 꺼주면 UX가 더 깔끔합니다.
+      _isSelectionMode = false;
     });
 
     _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedUsers.length}명의 데이터가 성공적으로 업데이트 되었습니다.", theme);
   }
 
-  // ---------------------------------------------------------------------------
-  // [신규 추가] 다중 선택 항목 일괄 삭제 다이얼로그
-  // ---------------------------------------------------------------------------
   void _confirmBulkDelete(UserProvider provider, ThemeData theme) {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -838,7 +846,6 @@ class _UserPageState extends State<UserPage> {
                         _isFullScreenLoading = true;
                       });
 
-                      // 선택된 모든 ID를 순회하며 삭제 처리 (API 한계상 개별 호출)
                       for (String id in _selectedUserIds) {
                         await provider.deletePerson(id);
                       }
@@ -849,6 +856,7 @@ class _UserPageState extends State<UserPage> {
                       setState(() {
                         _selectedUserIds.clear();
                         _isFullScreenLoading = false;
+                        _isSelectionMode = false; // 삭제 후 모드 자동 종료
                       });
 
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 인원 정보가 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
@@ -1359,7 +1367,6 @@ class _UserPageState extends State<UserPage> {
                           safeUsername += '_u';
                         }
 
-                        // 저장 시에도 신규가 아닐 때는 email, username을 전송하지 않도록 분기합니다.
                         final Map<String, dynamic> data = {
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),

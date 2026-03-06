@@ -71,6 +71,9 @@ class _ProductPageState extends State<ProductPage> {
 
   final Set<String> _selectedItemIds = {};
 
+  // [신규 추가] 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
+  bool _isSelectionMode = false;
+
   bool _isFullScreenLoading = false;
 
   static const double _colImgSize = 70.0;
@@ -409,6 +412,21 @@ class _ProductPageState extends State<ProductPage> {
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
                       provider.fetchData();
                     }, theme),
+                    // [신규 기능] 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
+                    _buildActionIconButton(
+                      _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
+                      _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
+                          () {
+                        setState(() {
+                          _isSelectionMode = !_isSelectionMode;
+                          if (!_isSelectionMode) {
+                            _selectedItemIds.clear(); // 모드를 끌 때는 선택 내역도 초기화
+                          }
+                        });
+                      },
+                      theme,
+                      color: _isSelectionMode ? AppTheme.primary : null, // 켜져 있을 땐 색상으로 강조
+                    ),
                     _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "엑셀 일괄 임포트", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -479,8 +497,21 @@ class _ProductPageState extends State<ProductPage> {
               Container(width: 4, height: 20, color: AppTheme.primary),
               const SizedBox(width: 12),
               Text(groupName, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w800, fontSize: 20, color: AppTheme.dataColor(theme.brightness == Brightness.dark), letterSpacing: -0.4)),
-              const Spacer(),
-              if (_selectedItemIds.isNotEmpty) ...[
+            ],
+          ),
+        ),
+
+        // [신규 UI] 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
+        AnimatedSize(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _isSelectionMode
+              ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
@@ -507,32 +538,35 @@ class _ProductPageState extends State<ProductPage> {
                 const SizedBox(width: 16),
                 Container(width: 1, height: 24, color: theme.dividerTheme.color),
                 const SizedBox(width: 16),
-              ] else ...[
-                Text('총 ${items.length}개 항목', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
-                const SizedBox(width: 16),
-              ],
-              OutlinedButton.icon(
-                icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
-                label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
-                  side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
-                ),
-                onPressed: () {
-                  setState(() {
-                    if (isAllSelected) {
-                      _selectedItemIds.clear();
-                    } else {
-                      for (final ProductModel e in items) {
-                        _selectedItemIds.add(e.id);
+                OutlinedButton.icon(
+                  icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                  label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                    side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      if (isAllSelected) {
+                        _selectedItemIds.clear();
+                      } else {
+                        for (final ProductModel e in items) {
+                          _selectedItemIds.add(e.id);
+                        }
                       }
-                    }
-                  });
-                },
-              ),
-            ],
+                    });
+                  },
+                ),
+              ],
+            ),
+          )
+              : Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Text('총 ${items.length}개 항목', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
           ),
         ),
+
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -545,45 +579,68 @@ class _ProductPageState extends State<ProductPage> {
 
               return Row(
                 children: [
-                  InkWell(
-                    onTap: () {
-                      setState(() {
-                        if (isSelected) {
-                          _selectedItemIds.remove(p.id);
-                        } else {
-                          _selectedItemIds.add(p.id);
-                        }
-                      });
-                    },
-                    borderRadius: BorderRadius.circular(20),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isSelected ? AppTheme.primary : Colors.transparent,
-                          border: Border.all(
-                            color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
-                            width: 2,
-                          ),
-                        ),
+                  // [신규 UI] AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeInOut,
+                    alignment: Alignment.centerLeft,
+                    child: _isSelectionMode
+                        ? Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedItemIds.remove(p.id);
+                            } else {
+                              _selectedItemIds.add(p.id);
+                            }
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(20),
                         child: Padding(
-                          padding: const EdgeInsets.all(4.0),
-                          child: Icon(
-                            Icons.check,
-                            size: 16,
-                            color: isSelected ? Colors.white : Colors.transparent,
+                          padding: const EdgeInsets.all(8.0),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isSelected ? AppTheme.primary : Colors.transparent,
+                              border: Border.all(
+                                color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                                width: 2,
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.check,
+                                size: 16,
+                                color: isSelected ? Colors.white : Colors.transparent,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
+                    )
+                        : const SizedBox.shrink(),
                   ),
-                  const SizedBox(width: 8),
+
+                  // 기존 카드 영역
                   Expanded(
                     child: InkWell(
                       onTap: () {
-                        _showForm(provider, p, theme);
+                        // 다중 선택 모드일 땐 카드를 클릭해도 체크되도록 UX를 향상시켰습니다.
+                        if (_isSelectionMode) {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedItemIds.remove(p.id);
+                            } else {
+                              _selectedItemIds.add(p.id);
+                            }
+                          });
+                        } else {
+                          _showForm(provider, p, theme);
+                        }
                       },
                       borderRadius: BorderRadius.circular(AppTheme.cardRadius),
                       child: Container(
@@ -747,7 +804,6 @@ class _ProductPageState extends State<ProductPage> {
     final List<ProductModel> selectedProducts = visibleItems.where((ProductModel p) => _selectedItemIds.contains(p.id)).toList();
     if (selectedProducts.isEmpty) return;
 
-    // 1. 편집할 기본 고정 필드 정의
     List<BulkEditField> fields = [
       BulkEditField(key: 'location', label: '새로운 위치 (로케이션)', type: BulkEditFieldType.text),
       BulkEditField(key: 'category', label: '새로운 자산 분류', type: BulkEditFieldType.text),
@@ -762,7 +818,6 @@ class _ProductPageState extends State<ProductPage> {
       BulkEditField(key: 'is_approved', label: '승인 여부 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
     ];
 
-    // 2. 동적 메타데이터(추가 확장 항목) 수집 및 텍스트 필드로 추가
     final Set<String> metaKeySet = {};
     for (final ProductModel p in provider.items.take(100)) {
       for (final String k in p.metadata.keys) {
@@ -777,7 +832,6 @@ class _ProductPageState extends State<ProductPage> {
       fields.add(BulkEditField(key: metaKey, label: '추가항목: $metaKey', type: BulkEditFieldType.text));
     }
 
-    // 3. 공용 일괄 편집창(TFrame) 띄우기
     final Map<String, dynamic>? resultValues = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
@@ -789,12 +843,10 @@ class _ProductPageState extends State<ProductPage> {
         }
     );
 
-    // 4. 취소 버튼을 누르거나 창을 닫은 경우 무시
     if (resultValues == null || !mounted) return;
 
     setState(() { _isFullScreenLoading = true; });
 
-    // 5. 사용자가 입력한 데이터로 각 선택된 물품(Product) 정보 병합 및 서버 전송
     for (final ProductModel p in selectedProducts) {
       final Map<String, dynamic> data = {};
       final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
@@ -811,12 +863,10 @@ class _ProductPageState extends State<ProductPage> {
         } else if (key == 'is_approved') {
           data['is_approved'] = value;
         } else {
-          // 기본 필드가 아니면 모두 메타데이터(추가 항목)로 처리
           updatedMeta[key] = value;
         }
       });
 
-      // 최종적으로 업데이트된 메타데이터를 data 객체에 담음
       data['metadata'] = updatedMeta;
 
       await provider.handleSave(product: p, data: data);
@@ -826,7 +876,9 @@ class _ProductPageState extends State<ProductPage> {
 
     setState(() {
       _isFullScreenLoading = false;
-      _selectedItemIds.clear(); // 일괄 편집 완료 후 선택 해제
+      _selectedItemIds.clear();
+      // 팁: 편집이 끝난 후 다중 선택 모드를 자동으로 꺼주면 UX가 더 깔끔합니다.
+      _isSelectionMode = false;
     });
 
     _syncFiltering(provider.items);
@@ -1244,6 +1296,7 @@ class _ProductPageState extends State<ProductPage> {
                       setState(() {
                         _selectedItemIds.clear();
                         _isFullScreenLoading = false;
+                        _isSelectionMode = false; // 삭제 후 모드 자동 종료
                       });
                       _syncFiltering(provider.items);
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 항목들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
