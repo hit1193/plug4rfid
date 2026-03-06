@@ -13,8 +13,10 @@ import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
-// [추가] 새롭게 분리한 공용 표시 항목 설정 컴포넌트 임포트
+
+// [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
+import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
@@ -65,7 +67,9 @@ class _UserPageState extends State<UserPage> {
   String _currentSearchQuery = "";
   late String _currentFilter;
   String _activeMetricFilter = "전체";
-  String? _selectedUserId;
+
+  // 단일 선택(String?)에서 다중 선택을 위한 Set<String>으로 변경 (일괄 처리 지원)
+  final Set<String> _selectedUserIds = {};
 
   bool _isFullScreenLoading = false;
 
@@ -441,97 +445,208 @@ class _UserPageState extends State<UserPage> {
       return _buildEmptyState("데이터가 없습니다.");
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 20.0),
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-        itemCount: list.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (BuildContext ctx, int idx) {
-          final UserModel item = list[idx];
-          final bool isSelected = _selectedUserId == item.id;
-          final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
-          final Color statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
+    // 전체 선택 여부 확인
+    final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) => _selectedUserIds.contains(p.id));
 
-          return InkWell(
-            onTap: () {
-              setState(() {
-                _selectedUserId = item.id;
-              });
-              _showForm(provider, item, theme);
-            },
-            borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-              child: Row(
-                children: [
-                  _buildAvatar(item, theme, size: _colImgSize),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
-                            const SizedBox(width: 12),
-                            _buildStatusBadge(status),
-                            if (!item.isApproved) ...[
-                              const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
-                            ]
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 20, runSpacing: 8,
-                          children: columns.map((String col) {
-                            return SizedBox(
-                              width: 140,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(col, style: AppTheme.itemLabelStyle(context)),
-                                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
-                  ),
-                  SizedBox(
-                    width: _colActionWidth,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
-                          _showHistoryDialog(context, item, theme);
-                        }),
-                        const SizedBox(width: 12),
-                        _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
-                          _processAccessWithLocation(provider, item, '입장');
-                        }),
-                        const SizedBox(width: 12),
-                        _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
-                          _processAccessWithLocation(provider, item, '퇴장');
-                        }),
-                        const SizedBox(width: 12),
-                        _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
-                          _confirmDelete(provider, item, theme);
-                        }),
-                      ],
-                    ),
-                  ),
-                ],
+    return Column(
+      children: [
+        // 다중 선택 시 나타나는 일괄 편집 헤더
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          alignment: Alignment.centerLeft,
+          child: Row(
+            children: [
+              if (_selectedUserIds.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                  child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.edit_note, size: 18),
+                  label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
+                  onPressed: () {
+                    _showBulkEditDialog(provider, list, theme);
+                  },
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.delete_sweep, size: 18),
+                  label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
+                  onPressed: () {
+                    _confirmBulkDelete(provider, theme);
+                  },
+                ),
+                const SizedBox(width: 16),
+                Container(width: 1, height: 24, color: theme.dividerTheme.color),
+                const SizedBox(width: 16),
+              ] else ...[
+                Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
+                const SizedBox(width: 16),
+              ],
+              OutlinedButton.icon(
+                icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                  side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                ),
+                onPressed: () {
+                  setState(() {
+                    if (isAllSelected) {
+                      _selectedUserIds.clear();
+                    } else {
+                      for (final UserModel e in list) {
+                        _selectedUserIds.add(e.id);
+                      }
+                    }
+                  });
+                },
               ),
+            ],
+          ),
+        ),
+
+        // 메인 리스트 뷰
+        Expanded(
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 20.0),
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (BuildContext ctx, int idx) {
+                final UserModel item = list[idx];
+                final bool isSelected = _selectedUserIds.contains(item.id);
+                final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
+                final Color statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
+
+                return Row(
+                  children: [
+                    // 키오스크 스타일의 원형 체크박스 토글
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          if (isSelected) {
+                            _selectedUserIds.remove(item.id);
+                          } else {
+                            _selectedUserIds.add(item.id);
+                          }
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isSelected ? AppTheme.primary : Colors.transparent,
+                            border: Border.all(
+                              color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                              width: 2,
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4.0),
+                            child: Icon(
+                              Icons.check,
+                              size: 16,
+                              color: isSelected ? Colors.white : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+
+                    // 기존 카드 영역
+                    Expanded(
+                      child: InkWell(
+                        onTap: () {
+                          _showForm(provider, item, theme);
+                        },
+                        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
+                          child: Row(
+                            children: [
+                              _buildAvatar(item, theme, size: _colImgSize),
+                              const SizedBox(width: 20),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
+                                        const SizedBox(width: 12),
+                                        _buildStatusBadge(status),
+                                        if (!item.isApproved) ...[
+                                          const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
+                                        ]
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Wrap(
+                                      spacing: 20, runSpacing: 8,
+                                      children: columns.map((String col) {
+                                        return SizedBox(
+                                          width: 140,
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(col, style: AppTheme.itemLabelStyle(context)),
+                                              Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                                            ],
+                                          ),
+                                        );
+                                      }).toList(),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(
+                                width: _colActionWidth,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
+                                      _showHistoryDialog(context, item, theme);
+                                    }),
+                                    const SizedBox(width: 12),
+                                    _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
+                                      _processAccessWithLocation(provider, item, '입장');
+                                    }),
+                                    const SizedBox(width: 12),
+                                    _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
+                                      _processAccessWithLocation(provider, item, '퇴장');
+                                    }),
+                                    const SizedBox(width: 12),
+                                    _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                                      _confirmDelete(provider, item, theme);
+                                    }),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
-          );
-        },
-      ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -613,6 +728,138 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // [신규 연동] 다중 선택 항목 일괄 편집 (공용 BulkEditDialog 연동)
+  // 인원 관리의 기본 항목과 추가 확장 항목(Metadata)을 모두 수집하여 공용 위젯에 넘깁니다.
+  // ---------------------------------------------------------------------------
+  void _showBulkEditDialog(UserProvider provider, List<UserModel> visibleItems, ThemeData theme) async {
+    final List<UserModel> selectedUsers = visibleItems.where((UserModel p) => _selectedUserIds.contains(p.id)).toList();
+    if (selectedUsers.isEmpty) return;
+
+    // 1. 편집할 기본 고정 필드 정의 (부서, 비고, 출입 승인 여부)
+    List<BulkEditField> fields = [
+      BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
+      BulkEditField(key: 'remarks', label: '새로운 공통 비고', type: BulkEditFieldType.text),
+      BulkEditField(key: 'is_approved', label: '출입 승인 상태 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
+    ];
+
+    // 2. 동적 메타데이터(추가 확장 항목) 수집 및 텍스트 필드로 추가
+    final Set<String> metaKeySet = {};
+    for (final UserModel p in provider.list) {
+      for (final String k in p.metadata.keys) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+          metaKeySet.add(k);
+        }
+      }
+    }
+    final List<String> metaFields = metaKeySet.toList()..sort();
+
+    for (String metaKey in metaFields) {
+      fields.add(BulkEditField(key: metaKey, label: '추가항목: $metaKey', type: BulkEditFieldType.text));
+    }
+
+    // 3. 공용 일괄 편집창(TFrame) 띄우기
+    final Map<String, dynamic>? resultValues = await showDialog<Map<String, dynamic>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext ctx) {
+          return BulkEditDialog(
+            title: '${selectedUsers.length}명 인원 정보 일괄 편집',
+            fields: fields,
+          );
+        }
+    );
+
+    // 4. 취소 버튼을 누르거나 창을 닫은 경우 무시
+    if (resultValues == null || !mounted) return;
+
+    setState(() { _isFullScreenLoading = true; });
+
+    // 5. 사용자가 입력한 데이터로 각 선택된 인원(User) 정보 병합 및 서버 전송
+    for (final UserModel p in selectedUsers) {
+      final Map<String, dynamic> data = {};
+      final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
+
+      resultValues.forEach((String key, dynamic value) {
+        if (key == 'department') {
+          data['department'] = value;
+        } else if (key == 'remarks') {
+          data['remarks'] = value;
+        } else if (key == 'is_approved') {
+          data['is_approved'] = value;
+        } else {
+          // 기본 필드가 아니면 모두 메타데이터(추가 항목)로 처리
+          updatedMeta[key] = value;
+        }
+      });
+
+      // 최종적으로 업데이트된 메타데이터를 data 객체에 담음
+      data['metadata'] = updatedMeta;
+
+      await provider.handleSave(p: p, data: data);
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isFullScreenLoading = false;
+      _selectedUserIds.clear(); // 일괄 편집 완료 후 선택 해제
+    });
+
+    _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedUsers.length}명의 데이터가 성공적으로 업데이트 되었습니다.", theme);
+  }
+
+  // ---------------------------------------------------------------------------
+  // [신규 추가] 다중 선택 항목 일괄 삭제 다이얼로그
+  // ---------------------------------------------------------------------------
+  void _confirmBulkDelete(UserProvider provider, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("선택 항목 일괄 삭제", Icons.warning, color: AppTheme.danger),
+              content: Text("선택하신 ${_selectedUserIds.length}명의 인원 정보를 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며, 출입 이력도 함께 삭제될 수 있습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "일괄 삭제",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _isFullScreenLoading = true;
+                      });
+
+                      // 선택된 모든 ID를 순회하며 삭제 처리 (API 한계상 개별 호출)
+                      for (String id in _selectedUserIds) {
+                        await provider.deletePerson(id);
+                      }
+
+                      if (!mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedUserIds.clear();
+                        _isFullScreenLoading = false;
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 인원 정보가 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
   void _showHistoryDialog(BuildContext context, UserModel p, ThemeData theme) {
     final List<dynamic> history = p.metadata['access_history'] is List ? List.from(p.metadata['access_history']) : [];
     showDialog(
@@ -667,15 +914,9 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [공용 다이얼로그 호출] - (수정됨)
-  /// 기존의 길었던 코드를 제거하고, 독립된 ColumnSelectionDialog 위젯을 호출합니다.
-  /// ---------------------------------------------------------------------------
   void _showColumnSelectionDialog(UserProvider provider, ThemeData theme) {
-    // 1. 인원 관리를 위한 기본 고정 필드 설정
     final List<String> baseFields = ['성명', '사번', '부서', '태그ID'];
 
-    // 2. 동적 메타데이터 필드 수집
     final Set<String> metaKeySet = {};
     for (final UserModel p in provider.list) {
       for (final String k in p.metadata.keys) {
@@ -686,7 +927,6 @@ class _UserPageState extends State<UserPage> {
     }
     final List<String> metaFields = metaKeySet.toList()..sort();
 
-    // 3. 공용 프레임(TFrame) 위젯 호출
     showDialog(
       context: context,
       builder: (BuildContext ctx) {
@@ -696,7 +936,6 @@ class _UserPageState extends State<UserPage> {
           metaFields: metaFields,
           initialSelection: provider.selectedColumns,
           onSave: (List<String> newColumns) async {
-            // 저장 콜백 로직
             await provider.saveRemoteSettings(newColumns);
           },
         );

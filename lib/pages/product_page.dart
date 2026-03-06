@@ -15,8 +15,9 @@ import '../providers/product_provider.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
 
-// [추가] 새롭게 분리한 공용 표시 항목 설정 컴포넌트 임포트 (C++Builder의 공통 프레임 역할)
+// [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
+import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
@@ -738,195 +739,98 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  void _showBulkEditDialog(ProductProvider provider, List<ProductModel> visibleItems, ThemeData theme) {
+  // ---------------------------------------------------------------------------
+  // [신규 연동] 다중 선택 항목 일괄 편집 (공용 BulkEditDialog 연동)
+  // 물품 관리의 기본 항목과 추가 확장 항목(Metadata)을 모두 수집하여 공용 위젯에 넘깁니다.
+  // ---------------------------------------------------------------------------
+  void _showBulkEditDialog(ProductProvider provider, List<ProductModel> visibleItems, ThemeData theme) async {
     final List<ProductModel> selectedProducts = visibleItems.where((ProductModel p) => _selectedItemIds.contains(p.id)).toList();
-    if (selectedProducts.isEmpty) {
-      return;
+    if (selectedProducts.isEmpty) return;
+
+    // 1. 편집할 기본 고정 필드 정의
+    List<BulkEditField> fields = [
+      BulkEditField(key: 'location', label: '새로운 위치 (로케이션)', type: BulkEditFieldType.text),
+      BulkEditField(key: 'category', label: '새로운 자산 분류', type: BulkEditFieldType.text),
+      BulkEditField(key: 'spec', label: '새로운 규격 및 사양', type: BulkEditFieldType.text),
+      BulkEditField(
+          key: 'status',
+          label: '새로운 상태 변경',
+          type: BulkEditFieldType.dropdown,
+          options: ['보유중', '수동입고', '폐기', '분실', '수리출고'],
+          initialValue: '보유중'
+      ),
+      BulkEditField(key: 'is_approved', label: '승인 여부 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
+    ];
+
+    // 2. 동적 메타데이터(추가 확장 항목) 수집 및 텍스트 필드로 추가
+    final Set<String> metaKeySet = {};
+    for (final ProductModel p in provider.items.take(100)) {
+      for (final String k in p.metadata.keys) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+          metaKeySet.add(k);
+        }
+      }
+    }
+    final List<String> metaFields = metaKeySet.toList()..sort();
+
+    for (String metaKey in metaFields) {
+      fields.add(BulkEditField(key: metaKey, label: '추가항목: $metaKey', type: BulkEditFieldType.text));
     }
 
-    bool optLoc = false;
-    bool optCat = false;
-    bool optStatus = false;
-    bool optSpec = false;
-    bool optApproved = false;
-    final TextEditingController locC = TextEditingController();
-    final TextEditingController catC = TextEditingController();
-    final TextEditingController specC = TextEditingController();
-    String selStatus = '보유중';
-    bool selApproved = true;
-
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-
-    showDialog(
+    // 3. 공용 일괄 편집창(TFrame) 띄우기
+    final Map<String, dynamic>? resultValues = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
-        builder: (BuildContext dialogCtx) {
-          return StatefulBuilder(
-              builder: (BuildContext innerCtx, StateSetter setS) {
-                return AlertDialog(
-                  title: AppTheme.dialogTitle('${selectedProducts.length}개 자산 일괄 편집', Icons.edit_note, color: AppTheme.primary),
-                  content: SizedBox(
-                      width: 600,
-                      child: SingleChildScrollView(
-                          child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(8)),
-                                    child: const Row(
-                                      children: [
-                                        Icon(Icons.info_outline, color: AppTheme.primary, size: 20),
-                                        SizedBox(width: 12),
-                                        Expanded(child: Text("체크된 항목(동그라미 활성화)만 일괄 변경됩니다.\n선택되지 않은 필드는 기존 데이터가 그대로 유지됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: AppTheme.primary))),
-                                      ],
-                                    )
-                                ),
-                                const SizedBox(height: 24),
-                                _buildBulkEditRow(optLoc, (bool? v) { setS(() { optLoc = v ?? false; }); }, _buildBulkEditField(locC, "새로운 위치 (로케이션)", optLoc, theme), "위치 변경"),
-                                const SizedBox(height: 16),
-                                _buildBulkEditRow(optCat, (bool? v) { setS(() { optCat = v ?? false; }); }, _buildBulkEditField(catC, "새로운 자산 분류", optCat, theme), "분류 변경"),
-                                const SizedBox(height: 16),
-                                _buildBulkEditRow(optSpec, (bool? v) { setS(() { optSpec = v ?? false; }); }, _buildBulkEditField(specC, "새로운 규격 및 사양", optSpec, theme), "규격 변경"),
-                                const SizedBox(height: 16),
-                                _buildBulkEditRow(optStatus, (bool? v) { setS(() { optStatus = v ?? false; }); }, DropdownButtonFormField<String>(
-                                  initialValue: selStatus,
-                                  decoration: AppTheme.inputDecoration(label: "새로운 상태 변경", context: context).copyWith(
-                                    disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)),
-                                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: optStatus ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: optStatus ? 2.0 : 1.0)),
-                                  ),
-                                  items: ['보유중', '수동입고', '폐기', '분실'].map((String e) {
-                                    return DropdownMenuItem<String>(value: e, child: Text(e, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: optStatus ? null : Colors.grey)));
-                                  }).toList(),
-                                  onChanged: optStatus ? (String? v) {
-                                    if (v != null) {
-                                      setS(() {
-                                        selStatus = v;
-                                      });
-                                    }
-                                  } : null,
-                                ), "상태 변경"),
-                                const SizedBox(height: 16),
-                                _buildBulkEditRow(optApproved, (bool? v) { setS(() { optApproved = v ?? false; }); }, AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200), height: 56, padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  decoration: BoxDecoration(border: Border.all(color: optApproved ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3)), width: optApproved ? 2.0 : 1.0), borderRadius: BorderRadius.circular(8)),
-                                  child: Row(children: [const Text("승인 여부 일괄 변경", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey)), const Spacer(), Switch(value: selApproved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: optApproved ? (bool v) { setS(() { selApproved = v; }); } : null)]),
-                                ), "승인 여부"),
-                              ]
-                          )
-                      )
-                  ),
-                  actions: [
-                    AppTheme.actionButton(
-                        label: "취소",
-                        color: Colors.transparent,
-                        textColor: cancelColor,
-                        onPressed: () {
-                          Navigator.pop(dialogCtx);
-                        }
-                    ),
-                    AppTheme.actionButton(
-                        label: "일괄 적용 실행",
-                        color: AppTheme.primary,
-                        onPressed: () async {
-                          if (!optLoc && !optCat && !optStatus && !optSpec && !optApproved) {
-                            ScaffoldMessenger.of(dialogCtx).showSnackBar(const SnackBar(content: Text("변경할 항목을 최소 1개 이상 체크해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard))));
-                            return;
-                          }
-                          Navigator.pop(dialogCtx);
-                          setState(() {
-                            _isFullScreenLoading = true;
-                          });
-                          for (final ProductModel p in selectedProducts) {
-                            final Map<String, dynamic> data = {
-                              'location': optLoc ? locC.text.trim() : p.location,
-                              'category': optCat ? catC.text.trim() : p.category,
-                              'spec': optSpec ? specC.text.trim() : p.spec,
-                              'status': optStatus ? selStatus : p.status,
-                              'is_approved': optApproved ? selApproved : p.isApproved,
-                            };
-                            await provider.handleSave(product: p, data: data);
-                          }
-                          if (!mounted) {
-                            return;
-                          }
-                          setState(() {
-                            _isFullScreenLoading = false;
-                            _selectedItemIds.clear();
-                          });
-                          _syncFiltering(provider.items);
-                          _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedProducts.length}개의 항목이 성공적으로 업데이트 되었습니다.", theme);
-                        }
-                    ),
-                  ],
-                );
-              }
+        builder: (BuildContext ctx) {
+          return BulkEditDialog(
+            title: '${selectedProducts.length}개 자산 일괄 편집',
+            fields: fields,
           );
         }
     );
-  }
 
-  Widget _buildBulkEditRow(bool active, void Function(bool?) onChanged, Widget field, String label) {
-    return Row(
-        children: [
-          InkWell(
-            onTap: () => onChanged(!active),
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: active ? AppTheme.primary : Colors.transparent,
-                  border: Border.all(
-                    color: active ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
-                    width: 2,
-                  ),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(4.0),
-                  child: Icon(
-                    Icons.check,
-                    size: 16,
-                    color: active ? Colors.white : Colors.transparent,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: field)
-        ]
-    );
-  }
+    // 4. 취소 버튼을 누르거나 창을 닫은 경우 무시
+    if (resultValues == null || !mounted) return;
 
-  Widget _buildBulkEditField(TextEditingController ctrl, String label, bool active, ThemeData theme) {
-    return TextField(
-      controller: ctrl,
-      enabled: active,
-      style: TextStyle(
-          fontFamily: AppTheme.fontPretendard,
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: active ? AppTheme.dataColor(theme.brightness == Brightness.dark) : Colors.grey
-      ),
-      decoration: AppTheme.inputDecoration(label: label, context: context).copyWith(
-        disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)
-        ),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: active ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: active ? 2.0 : 1.0)
-        ),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: AppTheme.primary, width: 2.5)
-        ),
-      ),
-    );
+    setState(() { _isFullScreenLoading = true; });
+
+    // 5. 사용자가 입력한 데이터로 각 선택된 물품(Product) 정보 병합 및 서버 전송
+    for (final ProductModel p in selectedProducts) {
+      final Map<String, dynamic> data = {};
+      final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
+
+      resultValues.forEach((String key, dynamic value) {
+        if (key == 'location') {
+          data['location'] = value;
+        } else if (key == 'category') {
+          data['category'] = value;
+        } else if (key == 'spec') {
+          data['spec'] = value;
+        } else if (key == 'status') {
+          data['status'] = value;
+        } else if (key == 'is_approved') {
+          data['is_approved'] = value;
+        } else {
+          // 기본 필드가 아니면 모두 메타데이터(추가 항목)로 처리
+          updatedMeta[key] = value;
+        }
+      });
+
+      // 최종적으로 업데이트된 메타데이터를 data 객체에 담음
+      data['metadata'] = updatedMeta;
+
+      await provider.handleSave(product: p, data: data);
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isFullScreenLoading = false;
+      _selectedItemIds.clear(); // 일괄 편집 완료 후 선택 해제
+    });
+
+    _syncFiltering(provider.items);
+    _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedProducts.length}개의 항목이 성공적으로 업데이트 되었습니다.", theme);
   }
 
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
@@ -1571,15 +1475,12 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [공용 다이얼로그 호출] - 물품 관리 버전
-  /// 긴 UI 렌더링 코드를 제거하고, 독립된 ColumnSelectionDialog 위젯을 호출합니다.
+  /// [공용 다이얼로그 호출] - 표시 항목 설정
   /// ---------------------------------------------------------------------------
   void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
-    // 1. 물품 관리를 위한 기본 고정 필드 설정
     final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
-
-    // 2. 동적 메타데이터 필드 수집
     final Set<String> metaKeySet = {};
+
     for (final ProductModel p in provider.items.take(100)) {
       for (final String k in p.metadata.keys) {
         if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
@@ -1587,9 +1488,9 @@ class _ProductPageState extends State<ProductPage> {
         }
       }
     }
+
     final List<String> metaFields = metaKeySet.toList()..sort();
 
-    // 3. 공용 프레임(TFrame) 위젯 호출
     showDialog(
       context: context,
       builder: (BuildContext ctx) {
@@ -1599,7 +1500,6 @@ class _ProductPageState extends State<ProductPage> {
           metaFields: metaFields,
           initialSelection: provider.selectedColumns,
           onSave: (List<String> newColumns) async {
-            // 저장 콜백 로직
             await provider.saveRemoteSettings(newColumns);
           },
         );
@@ -1838,6 +1738,7 @@ class _ProductPageState extends State<ProductPage> {
 
 /// ---------------------------------------------------------------------------
 /// [수동 입출고 다이얼로그]
+/// 담당 작업자 검색을 위해 UserProvider를 사용하여 키오스크 스타일로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class _ManualInoutDialog extends StatefulWidget {
   final String type;
