@@ -13,6 +13,8 @@ import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
+// [추가] 새롭게 분리한 공용 표시 항목 설정 컴포넌트 임포트
+import '../widgets/column_selection_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
@@ -665,78 +667,40 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [공용 다이얼로그 호출] - (수정됨)
+  /// 기존의 길었던 코드를 제거하고, 독립된 ColumnSelectionDialog 위젯을 호출합니다.
+  /// ---------------------------------------------------------------------------
   void _showColumnSelectionDialog(UserProvider provider, ThemeData theme) {
-    final Set<String> keySet = {};
+    // 1. 인원 관리를 위한 기본 고정 필드 설정
+    final List<String> baseFields = ['성명', '사번', '부서', '태그ID'];
+
+    // 2. 동적 메타데이터 필드 수집
+    final Set<String> metaKeySet = {};
     for (final UserModel p in provider.list) {
       for (final String k in p.metadata.keys) {
         if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
-          keySet.add(k);
+          metaKeySet.add(k);
         }
       }
     }
-    final List<String> available = keySet.toList()..sort();
-    final List<String> temp = List.from(provider.selectedColumns);
+    final List<String> metaFields = metaKeySet.toList()..sort();
 
+    // 3. 공용 프레임(TFrame) 위젯 호출
     showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return StatefulBuilder(
-              builder: (BuildContext context, StateSetter setS) {
-                return AlertDialog(
-                  title: AppTheme.dialogTitle("표시 항목 설정", Icons.view_column_rounded),
-                  content: SizedBox(
-                      width: 480,
-                      child: available.isEmpty
-                          ? const Text("추가 필드 없음", style: const TextStyle(fontFamily: AppTheme.fontPretendard))
-                          : SingleChildScrollView(
-                          child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: available.map((String key) {
-                                final bool sel = temp.contains(key);
-                                return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 4),
-                                    child: InkWell(
-                                        onTap: () {
-                                          setS(() {
-                                            if (sel) {
-                                              if (temp.length > 1) {
-                                                temp.remove(key);
-                                              }
-                                            } else {
-                                              if (temp.length < 5) {
-                                                temp.add(key);
-                                              }
-                                            }
-                                          });
-                                        },
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: AnimatedContainer(
-                                            duration: const Duration(milliseconds: 200),
-                                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                            decoration: BoxDecoration(color: sel ? theme.colorScheme.primary.withValues(alpha: 0.05) : Colors.transparent, borderRadius: BorderRadius.circular(8), border: Border.all(color: sel ? theme.colorScheme.primary : Colors.black.withValues(alpha: 0.15), width: sel ? 2.5 : 1.0)),
-                                            child: Row(children: [Icon(sel ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 20, color: sel ? theme.colorScheme.primary : Colors.black26), const SizedBox(width: 16), Expanded(child: Text(key, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 15, fontWeight: FontWeight.bold, color: sel ? theme.colorScheme.primary : Colors.black45)))])
-                                        )
-                                    )
-                                );
-                              }).toList()
-                          )
-                      )
-                  ),
-                  actions: [
-                    AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
-                      Navigator.pop(ctx);
-                    }),
-                    AppTheme.actionButton(label: "설정 적용", onPressed: () async {
-                      await provider.saveRemoteSettings(temp);
-                      if (ctx.mounted) {
-                        Navigator.pop(ctx);
-                      }
-                    })
-                  ],
-                );
-              }
-          );
-        }
+      context: context,
+      builder: (BuildContext ctx) {
+        return ColumnSelectionDialog(
+          title: "표시 항목 설정 (인원)",
+          baseFields: baseFields,
+          metaFields: metaFields,
+          initialSelection: provider.selectedColumns,
+          onSave: (List<String> newColumns) async {
+            // 저장 콜백 로직
+            await provider.saveRemoteSettings(newColumns);
+          },
+        );
+      },
     );
   }
 
@@ -987,28 +951,18 @@ class _UserPageState extends State<UserPage> {
     return str.trim();
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [엑셀 내보내기 (Export)]
-  /// 기본 항목(성명, 사번, 부서, 태그ID)뿐만 아니라 사용자가 추가로 등록한
-  /// 모든 확장 정보(Metadata)를 동적으로 스캔하여 엑셀 파일의 열(Column)로
-  /// 모두 기록하여 다운로드하도록 구성했습니다.
-  /// (안정성을 위해 플러터 공식 권장 방식인 appendRow를 적용했습니다)
-  /// ---------------------------------------------------------------------------
   Future<void> _exportToExcel(List<UserModel> dataList) async {
     if (dataList.isEmpty) {
       return;
     }
     try {
       final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
-      // 기존에 존재하는 기본 시트를 찾아서 안전하게 이름을 변경합니다.
       final String defaultSheet = excel.tables.keys.first;
       excel.rename(defaultSheet, '인원리스트');
       final excel_pkg.Sheet sheet = excel['인원리스트'];
 
-      // 1. 기본 항목 헤더 정의
       final List<String> baseHeaders = ['성명', '사번', '부서', '태그ID'];
 
-      // 2. 추가 확장 정보(Metadata) 헤더 동적 수집
       final Set<String> metaKeySet = {};
       for (final UserModel p in dataList) {
         for (final String k in p.metadata.keys) {
@@ -1017,17 +971,12 @@ class _UserPageState extends State<UserPage> {
           }
         }
       }
-      // 수집된 추가 항목 헤더를 정렬합니다.
       final List<String> metaHeaders = metaKeySet.toList()..sort();
-
-      // 3. 전체 헤더 결합 (기본항목 + 추가항목)
       final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
 
-      // 4. [개선됨] 엑셀의 첫 번째 줄에 헤더를 appendRow 방식으로 안전하게 추가
       final List<excel_pkg.CellValue> headerRow = allHeaders.map<excel_pkg.CellValue>((String h) => excel_pkg.TextCellValue(h)).toList();
       sheet.appendRow(headerRow);
 
-      // 5. [개선됨] 각 인원 데이터를 appendRow를 통해 한 행씩 순차적으로 삽입 (인덱스 꼬임 원천 차단)
       for (final UserModel p in dataList) {
         final List<excel_pkg.CellValue> rowData = [
           excel_pkg.TextCellValue(p.name),
@@ -1036,7 +985,6 @@ class _UserPageState extends State<UserPage> {
           excel_pkg.TextCellValue(p.tagId),
         ];
 
-        // 추가 확장 정보가 있는 경우 헤더 순서에 맞춰 데이터를 매핑합니다.
         for (final String metaKey in metaHeaders) {
           rowData.add(excel_pkg.TextCellValue(_safeStr(p.metadata[metaKey])));
         }
@@ -1044,7 +992,6 @@ class _UserPageState extends State<UserPage> {
         sheet.appendRow(rowData);
       }
 
-      // 6. 파일 저장 팝업 표출 및 로컬 저장
       final String? path = await FilePicker.platform.saveFile(
           fileName: 'User_Export_${DateTime.now().millisecondsSinceEpoch}.xlsx',
           type: FileType.custom,
@@ -1054,7 +1001,6 @@ class _UserPageState extends State<UserPage> {
       if (path != null) {
         await File(path).writeAsBytes(excel.encode()!);
 
-        // 7. 성공 시 알림 표시
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
