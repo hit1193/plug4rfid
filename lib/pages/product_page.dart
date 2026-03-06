@@ -705,7 +705,6 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
             children: [
-              // [수정됨] ProductModel.empty() 대신 null을 전달하여 안전하게 빈 이미지를 처리합니다.
               _buildThumbnail(items.isNotEmpty ? items.first : null, theme, size: 52),
               const SizedBox(width: 16),
               Expanded(child: Text(title, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15, color: isSelected ? AppTheme.primary : null))),
@@ -723,7 +722,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // [수정됨] ProductModel? 를 파라미터로 받도록 변경하여 null 안전성을 보장합니다.
   Widget _buildThumbnail(ProductModel? p, ThemeData theme, {double size = 44}) {
     final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '100x100') : '';
     final bool isDark = theme.brightness == Brightness.dark;
@@ -742,8 +740,6 @@ class _ProductPageState extends State<ProductPage> {
 
     // 캐시 방지를 위한 타임스탬프 추가
     final String connector = url.contains('?') ? '&' : '?';
-
-    // [수정됨] p.updated ?? 와 같은 경고(Non-nullable 에러)를 피하기 위해 _safeStr과 isNotEmpty를 활용합니다.
     final String upStr = p != null ? _safeStr(p.updated) : '';
     final String crStr = p != null ? _safeStr(p.created) : '';
     final String timeStamp = upStr.isNotEmpty ? upStr : (crStr.isNotEmpty ? crStr : DateTime.now().millisecondsSinceEpoch.toString());
@@ -816,7 +812,7 @@ class _ProductPageState extends State<ProductPage> {
                                       children: [
                                         Icon(Icons.info_outline, color: AppTheme.primary, size: 20),
                                         SizedBox(width: 12),
-                                        Expanded(child: Text("체크박스를 활성화한 항목만 일괄 변경됩니다.\n선택하지 않은 항목은 기존 데이터가 그대로 유지됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: AppTheme.primary))),
+                                        Expanded(child: Text("체크된 항목(동그라미 활성화)만 일괄 변경됩니다.\n선택되지 않은 필드는 기존 데이터가 그대로 유지됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: AppTheme.primary))),
                                       ],
                                     )
                                 ),
@@ -827,10 +823,12 @@ class _ProductPageState extends State<ProductPage> {
                                 const SizedBox(height: 16),
                                 _buildBulkEditRow(optSpec, (bool? v) { setS(() { optSpec = v ?? false; }); }, _buildBulkEditField(specC, "새로운 규격 및 사양", optSpec, theme), "규격 변경"),
                                 const SizedBox(height: 16),
+                                // [수정됨] 드롭다운 필드도 활성화/비활성화 상태에 따라 테두리 색상이 강조되도록 변경
                                 _buildBulkEditRow(optStatus, (bool? v) { setS(() { optStatus = v ?? false; }); }, DropdownButtonFormField<String>(
                                   initialValue: selStatus,
                                   decoration: AppTheme.inputDecoration(label: "새로운 상태 변경", context: context).copyWith(
-                                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: optStatus ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: optStatus ? 2.5 : 1.0)),
+                                    disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)),
+                                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: optStatus ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: optStatus ? 2.0 : 1.0)),
                                   ),
                                   items: ['보유중', '수동입고', '폐기', '분실'].map((String e) {
                                     return DropdownMenuItem<String>(value: e, child: Text(e, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: optStatus ? null : Colors.grey)));
@@ -844,9 +842,10 @@ class _ProductPageState extends State<ProductPage> {
                                   } : null,
                                 ), "상태 변경"),
                                 const SizedBox(height: 16),
+                                // [수정됨] 스위치 컨테이너도 활성화 상태에 따라 테두리 색상 강조
                                 _buildBulkEditRow(optApproved, (bool? v) { setS(() { optApproved = v ?? false; }); }, AnimatedContainer(
                                   duration: const Duration(milliseconds: 200), height: 56, padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  decoration: BoxDecoration(border: Border.all(color: optApproved ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: optApproved ? 2.5 : 1.0), borderRadius: BorderRadius.circular(8)),
+                                  decoration: BoxDecoration(border: Border.all(color: optApproved ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3)), width: optApproved ? 2.0 : 1.0), borderRadius: BorderRadius.circular(8)),
                                   child: Row(children: [Text("승인 여부 일괄 변경", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: optApproved ? null : Colors.grey)), const Spacer(), Switch(value: selApproved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: optApproved ? (bool v) { setS(() { selApproved = v; }); } : null)]),
                                 ), "승인 여부"),
                               ]
@@ -904,16 +903,43 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  // [수정됨] 기본 사각형 체크박스를 원형(Circle) 토글로 변경하여 키오스크 및 미니멀리즘 느낌을 살렸습니다.
   Widget _buildBulkEditRow(bool active, void Function(bool?) onChanged, Widget field, String label) {
     return Row(
         children: [
-          Checkbox(value: active, activeColor: AppTheme.primary, onChanged: onChanged),
+          InkWell(
+            onTap: () => onChanged(!active),
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: active ? AppTheme.primary : Colors.transparent,
+                  border: Border.all(
+                    color: active ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                    width: 2,
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(4.0),
+                  child: Icon(
+                    Icons.check,
+                    size: 16,
+                    color: active ? Colors.white : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+          ),
           const SizedBox(width: 8),
           Expanded(child: field)
         ]
     );
   }
 
+  // [수정됨] 입력필드의 Outline 색상을 active(선택여부)에 따라 진한 파란색(Primary)으로 뚜렷하게 변경합니다.
   Widget _buildBulkEditField(TextEditingController ctrl, String label, bool active, ThemeData theme) {
     return TextField(
       controller: ctrl,
@@ -925,9 +951,17 @@ class _ProductPageState extends State<ProductPage> {
           color: active ? AppTheme.dataColor(theme.brightness == Brightness.dark) : Colors.grey
       ),
       decoration: AppTheme.inputDecoration(label: label, context: context).copyWith(
+        disabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)
+        ),
         enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: active ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: active ? 2.5 : 1.0)
+            borderSide: BorderSide(color: active ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey), width: active ? 2.0 : 1.0)
+        ),
+        focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(8),
+            borderSide: BorderSide(color: AppTheme.primary, width: 2.5)
         ),
       ),
     );
@@ -1291,7 +1325,6 @@ class _ProductPageState extends State<ProductPage> {
         };
 
         bool ok = await provider.handleSave(product: null, data: data);
-        // [수정됨] if문 안에 구문이 한 줄이더라도 반드시 {} 블록으로 감싸도록 수정 완료
         if (ok) {
           successCount++;
         } else {
