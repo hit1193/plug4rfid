@@ -1,0 +1,1261 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:typed_data';
+import 'dart:io';
+import 'dart:async';
+import 'package:excel/excel.dart' as excel_pkg;
+import 'package:file_picker/file_picker.dart';
+import 'package:intl/intl.dart';
+
+import '../models/user_model.dart';
+import '../utils/hangul_utils.dart';
+import '../providers/user_provider.dart';
+import '../theme/app_theme.dart';
+
+/// ---------------------------------------------------------------------------
+/// [안전한 문자열 변환 유틸리티]
+/// ---------------------------------------------------------------------------
+String _safeStr(dynamic value, {String defaultVal = ""}) {
+  if (value == null) {
+    return defaultVal;
+  }
+  final String str = value.toString().trim();
+  if (str.isEmpty || str == "null") {
+    return defaultVal;
+  }
+  return str;
+}
+
+/// ---------------------------------------------------------------------------
+/// [RFID 인원 관리 페이지 (UserPage)]
+/// ---------------------------------------------------------------------------
+class UserPage extends StatefulWidget {
+  final String searchQuery;
+  final String filter;
+  final bool isMobile;
+  final String baseUrl;
+
+  const UserPage({
+    super.key,
+    required this.searchQuery,
+    required this.filter,
+    required this.isMobile,
+    required this.baseUrl,
+  });
+
+  @override
+  State<UserPage> createState() => _UserPageState();
+}
+
+class _UserPageState extends State<UserPage> {
+  // ---------------------------------------------------------------------------
+  // [상태 변수 선언부]
+  // ---------------------------------------------------------------------------
+  final TextEditingController _searchController = TextEditingController();
+
+  String _currentSearchQuery = "";
+  late String _currentFilter;
+  String _activeMetricFilter = "전체";
+  String? _selectedUserId;
+
+  bool _isFullScreenLoading = false;
+
+  static const double _colImgSize = 70.0;
+  static const double _colActionWidth = 240.0;
+
+  static const Set<String> _excludedSystemKeys = {
+    'import_source', 'original_row_data', 'id', 'created', 'updated',
+    'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
+    'access_history', 'last_location_info', 'is_approved', 'last_approval_status',
+    'image', 'avatar', 'name', 'code', 'department', 'tag_id', 'is_active', 'remarks',
+    'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
+    'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal', 'error_reason',
+    'email', 'username', 'password', 'passwordConfirm'
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _currentFilter = widget.filter == '정상 등록' ? '등록' : widget.filter;
+    _currentSearchQuery = widget.searchQuery;
+    _searchController.text = widget.searchQuery;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // --- FA 대시보드용 통계 계산 로직 ---
+  Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
+    final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    int todayIn = 0;
+    int todayOut = 0;
+    int currentRemained = 0;
+
+    for (final UserModel p in list) {
+      final String lastType = _safeStr(p.metadata['last_access_type']);
+      final String lastTime = _safeStr(p.metadata['last_access_time']);
+
+      if (lastTime.startsWith(todayStr)) {
+        if (lastType == '입장') {
+          todayIn++;
+        } else if (lastType == '퇴장') {
+          todayOut++;
+        }
+      }
+      if (lastType == '입장') {
+        currentRemained++;
+      }
+    }
+    return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [수기 출입 처리] - 수정된 부분
+  /// ---------------------------------------------------------------------------
+  Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
+    final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return _LocationSelectionDialog(type: type, existingUsers: provider.list);
+      },
+    );
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+    final dynamic rawApprove = result['is_approved'];
+    final bool isApproved = rawApprove is bool ? rawApprove : true;
+
+    final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
+    updatedMeta['last_access_type'] = type;
+    updatedMeta['last_access_time'] = now;
+    updatedMeta['last_approval_status'] = isApproved;
+    updatedMeta['last_location_info'] = {
+      'building': _safeStr(result['building'], defaultVal: "미지정"),
+      'gate': _safeStr(result['gate'], defaultVal: "미지정"),
+      'full_name': "${_safeStr(result['building'])} - ${_safeStr(result['gate'])}"
+    };
+
+    List<dynamic> history = updatedMeta['access_history'] is List ? List.from(updatedMeta['access_history']) : [];
+    history.insert(0, {
+      'time': now,
+      'type': type,
+      'mode': '수동',
+      'is_approved': isApproved,
+      'location': updatedMeta['last_location_info']
+    });
+
+    if (history.length > 50) {
+      history = history.sublist(0, 50);
+    }
+    updatedMeta['access_history'] = history;
+
+    // [중요 수정] email, username을 전송 데이터에서 제외하여 validation 에러를 방지합니다.
+    // 포켓베이스 Auth 컬렉션은 값이 바뀌지 않을 때 이메일을 보내면 충돌이 날 수 있습니다.
+    final Map<String, dynamic> updateData = {
+      'is_approved': isApproved,
+      'metadata': updatedMeta,
+    };
+
+    final bool success = await provider.handleSave(
+      p: p,
+      data: updateData,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('[${p.name}]님 $type 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+        backgroundColor: isApproved ? AppTheme.success : AppTheme.danger,
+        elevation: 0,
+        duration: const Duration(seconds: 1),
+      ));
+    } else {
+      _showInfoDialog(
+          "처리 실패",
+          "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n💡 관리자 화면에서 'users' 컬렉션의 API Rules 중 'Update Rule'이 TRUE로 입력되어 있는지 다시 확인해 주세요.",
+          Theme.of(context)
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final UserProvider provider = context.watch<UserProvider>();
+    final ThemeData theme = Theme.of(context);
+    final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
+
+    final List<UserModel> filteredList = provider.list.where((UserModel p) {
+      final bool matchesFilter = _currentFilter == '전체' ||
+          (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
+
+      final bool matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
+          p.code.contains(_currentSearchQuery) ||
+          p.department.contains(_currentSearchQuery);
+
+      if (!matchesFilter || !matchesSearch) {
+        return false;
+      }
+
+      if (_activeMetricFilter == "전체") {
+        return true;
+      }
+
+      final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final String lastType = _safeStr(p.metadata['last_access_type']);
+      final String lastTime = _safeStr(p.metadata['last_access_time']);
+
+      if (_activeMetricFilter == "당일 입장") {
+        return (lastType == '입장' && lastTime.startsWith(todayStr));
+      }
+      if (_activeMetricFilter == "당일 퇴장") {
+        return (lastType == '퇴장' && lastTime.startsWith(todayStr));
+      }
+      if (_activeMetricFilter == "현재 잔류") {
+        return lastType == '입장';
+      }
+      return true;
+    }).toList();
+
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              _buildDashboard(metrics, provider, theme),
+              Divider(height: 1, color: theme.dividerTheme.color),
+              _buildHeader(provider, filteredList, theme),
+              const SizedBox(height: 16),
+              Expanded(
+                child: provider.isLoading
+                    ? Center(child: CircularProgressIndicator(color: theme.colorScheme.primary))
+                    : _buildListView(filteredList, provider, provider.selectedColumns, theme),
+              ),
+            ],
+          ),
+
+          if (provider.isSaving && !_isFullScreenLoading)
+            _buildGlobalLoadingOverlay(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlobalLoadingOverlay(ThemeData theme) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.1),
+      child: Center(
+        child: Card(
+          elevation: 10,
+          color: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                SizedBox(height: 25),
+                Text(
+                  "데이터베이스 통신 중...",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDashboard(Map<String, dynamic> m, UserProvider provider, ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: theme.scaffoldBackgroundColor,
+      child: Row(
+        children: [
+          Expanded(child: _buildStatTile("전체 보기", provider.list.length, Icons.people, Colors.blueGrey, theme, filterKey: "전체")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("당일 입장", m['in'] as int, Icons.login, AppTheme.success, theme, filterKey: "당일 입장")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("당일 퇴장", m['out'] as int, Icons.logout, AppTheme.warning, theme, filterKey: "당일 퇴장")),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatTile("현재 잔류", m['current'] as int, Icons.person_search, theme.colorScheme.primary, theme, filterKey: "현재 잔류")),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatTile(String label, int val, IconData icon, Color color, ThemeData theme, {required String filterKey}) {
+    final bool isSelected = _activeMetricFilter == filterKey;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _activeMetricFilter = _activeMetricFilter == filterKey ? "전체" : filterKey;
+        });
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? color.withValues(alpha: theme.brightness == Brightness.dark ? 0.15 : 0.08) : theme.cardTheme.color,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: isSelected ? color : color.withValues(alpha: 0.4), width: isSelected ? 3.0 : 1.8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 24),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 11, color: color.withValues(alpha: 0.7), fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                  Text('$val', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 22, fontWeight: FontWeight.w900, color: color), overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildActionIcon(Icons.refresh, "새로고침", () {
+                      provider.fetchData();
+                    }, theme),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
+                      _handleBatchImport(provider, theme);
+                    }, theme, color: Colors.indigo),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑스포트", () {
+                      _exportToExcel(filtered);
+                    }, theme, color: Colors.green),
+                    _buildActionIcon(Icons.settings_outlined, "표시 항목 설정", () {
+                      _showColumnSelectionDialog(provider, theme);
+                    }, theme),
+                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
+                      _showResetConfirmationDialog(provider, theme);
+                    }, theme, color: AppTheme.danger),
+                  ],
+                ),
+              ),
+              AppTheme.actionButton(label: "신규 등록", icon: Icons.person_add_alt_1, onPressed: () {
+                _showForm(provider, null, theme);
+              }, color: theme.colorScheme.primary),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _searchController,
+            onChanged: (String v) {
+              setState(() {
+                _currentSearchQuery = v;
+              });
+            },
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
+            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서 또는 상세내용 검색...", context: context, prefixIcon: Icons.search),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 52, height: 52,
+          alignment: Alignment.center,
+          child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListView(List<UserModel> list, UserProvider provider, List<String> columns, ThemeData theme) {
+    if (list.isEmpty) {
+      return _buildEmptyState("데이터가 없습니다.");
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20.0),
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+        itemCount: list.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (BuildContext ctx, int idx) {
+          final UserModel item = list[idx];
+          final bool isSelected = _selectedUserId == item.id;
+          final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
+          final Color statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
+
+          return InkWell(
+            onTap: () {
+              setState(() {
+                _selectedUserId = item.id;
+              });
+              _showForm(provider, item, theme);
+            },
+            borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
+              child: Row(
+                children: [
+                  _buildAvatar(item, theme, size: _colImgSize),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
+                            const SizedBox(width: 12),
+                            _buildStatusBadge(status),
+                            if (!item.isApproved) ...[
+                              const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
+                            ]
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 20, runSpacing: 8,
+                          children: columns.map((String col) {
+                            return SizedBox(
+                              width: 140,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(col, style: AppTheme.itemLabelStyle(context)),
+                                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    width: _colActionWidth,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
+                          _showHistoryDialog(context, item, theme);
+                        }),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
+                          _processAccessWithLocation(provider, item, '입장');
+                        }),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
+                          _processAccessWithLocation(provider, item, '퇴장');
+                        }),
+                        const SizedBox(width: 12),
+                        _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                          _confirmDelete(provider, item, theme);
+                        }),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(25),
+            child: Container(
+                width: 50, height: 50,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 24)
+            )
+        )
+    );
+  }
+
+  Widget _buildAvatar(UserModel item, ThemeData theme, {double size = 44}) {
+    final String? url = item.getImageUrl(widget.baseUrl, thumb: '100x100');
+    return Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+            color: theme.dividerTheme.color?.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: (url != null)
+            ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12))
+            : const Icon(Icons.person_outline, color: Colors.black12, size: 30)
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    final Color color = status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : Colors.grey);
+    return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+        child: Text(status, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900))
+    );
+  }
+
+  Widget _buildEmptyState(String msg) {
+    return Center(
+        child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.people_outline, size: 100, color: Colors.grey[300]),
+              const SizedBox(height: 20),
+              Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18))
+            ]
+        )
+    );
+  }
+
+  String _getMetaValue(UserModel item, String key) {
+    final Map<String, String> baseFields = {'성명': item.name, '사번': item.code, '부서': item.department, '태그ID': item.tagId};
+    if (baseFields.containsKey(key)) {
+      return baseFields[key]!;
+    }
+    return _safeStr(item.metadata[key], defaultVal: "-");
+  }
+
+  void _showInfoDialog(String title, String msg, ThemeData theme) {
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle(title, Icons.info_outline),
+              content: Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(label: "확인", onPressed: () {
+                  Navigator.pop(ctx);
+                })
+              ]
+          );
+        }
+    );
+  }
+
+  void _showHistoryDialog(BuildContext context, UserModel p, ThemeData theme) {
+    final List<dynamic> history = p.metadata['access_history'] is List ? List.from(p.metadata['access_history']) : [];
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+            title: AppTheme.dialogTitle('[${p.name}]님 출입 히스토리', Icons.history, color: Colors.blueGrey),
+            content: SizedBox(
+                width: 550, height: 600,
+                child: history.isEmpty
+                    ? _buildEmptyState("기록 없음")
+                    : ListView.separated(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    itemCount: history.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (BuildContext c, int i) {
+                      final dynamic log = history[i];
+                      final String type = _safeStr(log['type'], defaultVal: "-");
+                      final String timeStr = _safeStr(log['time'], defaultVal: "-");
+                      final dynamic rawApprove = log['is_approved'];
+                      final bool approved = rawApprove is bool ? rawApprove : true;
+                      final Color col = approved ? (type == '입장' ? AppTheme.success : AppTheme.warning) : AppTheme.danger;
+
+                      return Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(color: theme.cardTheme.color, borderRadius: BorderRadius.circular(10), border: Border.all(color: col.withValues(alpha: 0.15))),
+                          child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
+                                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                                    Text(timeStr, style: const TextStyle(fontFamily: 'monospace', fontSize: 15, fontWeight: FontWeight.bold)),
+                                    Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: col.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)), child: Text(type, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: col, fontWeight: FontWeight.bold, fontSize: 12))),
+                                  ]),
+                                  const SizedBox(height: 6),
+                                  Text('${_safeStr(log['location']?['building'], defaultVal: "미지정")} - ${_safeStr(log['location']?['gate'], defaultVal: "미정")}', style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.blueGrey, fontSize: 14, fontWeight: FontWeight.w600)),
+                                ])),
+                              ]
+                          )
+                      );
+                    }
+                )
+            ),
+            actions: [
+              AppTheme.actionButton(label: "닫기", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+                Navigator.pop(ctx);
+              })
+            ],
+          );
+        }
+    );
+  }
+
+  void _showColumnSelectionDialog(UserProvider provider, ThemeData theme) {
+    final Set<String> keySet = {};
+    for (final UserModel p in provider.list) {
+      for (final String k in p.metadata.keys) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+          keySet.add(k);
+        }
+      }
+    }
+    final List<String> available = keySet.toList()..sort();
+    final List<String> temp = List.from(provider.selectedColumns);
+
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return StatefulBuilder(
+              builder: (BuildContext context, StateSetter setS) {
+                return AlertDialog(
+                  title: AppTheme.dialogTitle("표시 항목 설정", Icons.view_column_rounded),
+                  content: SizedBox(
+                      width: 480,
+                      child: available.isEmpty
+                          ? const Text("추가 필드 없음", style: TextStyle(fontFamily: AppTheme.fontPretendard))
+                          : SingleChildScrollView(
+                          child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: available.map((String key) {
+                                final bool sel = temp.contains(key);
+                                return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 4),
+                                    child: InkWell(
+                                        onTap: () {
+                                          setS(() {
+                                            if (sel) {
+                                              if (temp.length > 1) {
+                                                temp.remove(key);
+                                              }
+                                            } else {
+                                              if (temp.length < 5) {
+                                                temp.add(key);
+                                              }
+                                            }
+                                          });
+                                        },
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: AnimatedContainer(
+                                            duration: const Duration(milliseconds: 200),
+                                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                            decoration: BoxDecoration(color: sel ? theme.colorScheme.primary.withValues(alpha: 0.05) : Colors.transparent, borderRadius: BorderRadius.circular(8), border: Border.all(color: sel ? theme.colorScheme.primary : Colors.black.withValues(alpha: 0.15), width: sel ? 2.5 : 1.0)),
+                                            child: Row(children: [Icon(sel ? Icons.check_circle_rounded : Icons.radio_button_unchecked, size: 20, color: sel ? theme.colorScheme.primary : Colors.black26), const SizedBox(width: 16), Expanded(child: Text(key, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 15, fontWeight: FontWeight.bold, color: sel ? theme.colorScheme.primary : Colors.black45)))])
+                                        )
+                                    )
+                                );
+                              }).toList()
+                          )
+                      )
+                  ),
+                  actions: [
+                    AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+                      Navigator.pop(ctx);
+                    }),
+                    AppTheme.actionButton(label: "설정 적용", onPressed: () async {
+                      await provider.saveRemoteSettings(temp);
+                      if (ctx.mounted) {
+                        Navigator.pop(ctx);
+                      }
+                    })
+                  ],
+                );
+              }
+          );
+        }
+    );
+  }
+
+  Future<void> _showResetConfirmationDialog(UserProvider provider, ThemeData theme) async {
+    final bool? confirm = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("전체 삭제 확인", Icons.warning, color: AppTheme.danger),
+              content: const Text("서버의 모든 정보를 영구 삭제하시겠습니까?", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+                  Navigator.pop(ctx, false);
+                }),
+                AppTheme.actionButton(label: "삭제 실행", color: AppTheme.danger, onPressed: () {
+                  Navigator.pop(ctx, true);
+                })
+              ]
+          );
+        }
+    );
+
+    if (!mounted || confirm != true) {
+      return;
+    }
+
+    setState(() { _isFullScreenLoading = true; });
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext loadingCtx) {
+        return PopScope(
+          canPop: false,
+          child: Center(
+            child: Card(
+              elevation: 10,
+              color: theme.cardTheme.color,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: AppTheme.danger, strokeWidth: 5),
+                    SizedBox(height: 25),
+                    Text("안전 데이터베이스 초기화 중...", textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    try {
+      await provider.resetAllPersons();
+    } finally {
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+      }
+    }
+  }
+
+  Future<void> _handleBatchImport(UserProvider provider, ThemeData theme) async {
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
+      if (result == null || !mounted) {
+        return;
+      }
+
+      Uint8List? bytes = result.files.single.bytes;
+      if (bytes == null && result.files.single.path != null) {
+        bytes = await File(result.files.single.path!).readAsBytes();
+      }
+      if (bytes == null) {
+        return;
+      }
+
+      final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
+      String targetSheet = excel.tables.keys.first;
+      if (excel.tables.keys.contains('인원리스트')) {
+        targetSheet = '인원리스트';
+      }
+      final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
+      if (sheet == null || sheet.maxRows <= 1) {
+        return;
+      }
+
+      final List<String> headers = [];
+      for (final List<excel_pkg.Data?> rowData in sheet.rows.take(1)) {
+        for (final excel_pkg.Data? cell in rowData) {
+          headers.add(_extractString(cell));
+        }
+      }
+
+      int actualValidRows = 0;
+      for (int i = 1; i < sheet.maxRows; i++) {
+        bool hasData = false;
+        for (final excel_pkg.Data? cell in sheet.row(i)) {
+          if (_extractString(cell).isNotEmpty) {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) {
+          actualValidRows++;
+        }
+      }
+
+      final ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+      setState(() { _isFullScreenLoading = true; });
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext ctx) {
+          return PopScope(
+            canPop: false,
+            child: Center(
+              child: Card(
+                elevation: 10,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: currentCountNotifier,
+                    builder: (BuildContext context, int currentCount, Widget? child) {
+                      final double progress = actualValidRows > 0 ? currentCount / actualValidRows : 0.0;
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              SizedBox(width: 80, height: 80, child: CircularProgressIndicator(value: progress, color: AppTheme.primary, strokeWidth: 8)),
+                              Text('${(progress * 100).toInt()}%', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16)),
+                            ],
+                          ),
+                          const SizedBox(height: 25),
+                          const Text("인원 대량 전송 중...", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18)),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+
+      for (int i = 1; i < sheet.maxRows; i++) {
+        final List<excel_pkg.Data?> row = sheet.row(i);
+        if (row.isEmpty) {
+          continue;
+        }
+        String name = "", code = "", dept = "", tagId = "";
+        final Map<String, dynamic> metadata = {};
+        bool hasRowData = false;
+
+        for (int colIdx = 0; colIdx < row.length; colIdx++) {
+          if (colIdx >= headers.length) {
+            break;
+          }
+          final String rawHeader = headers[colIdx];
+          final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+          final String val = _extractString(row[colIdx]);
+          if (val.isNotEmpty) {
+            hasRowData = true;
+          }
+
+          if (cleanHeader.contains('성명') || cleanHeader.contains('이름')) {
+            name = val;
+          } else if (cleanHeader.contains('사번') || cleanHeader.contains('id')) {
+            code = val;
+          } else if (cleanHeader.contains('부서')) {
+            dept = val;
+          } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
+            tagId = val;
+          } else if (rawHeader.isNotEmpty && val.isNotEmpty) {
+            metadata[rawHeader] = val;
+          }
+        }
+
+        if (!hasRowData) {
+          continue;
+        }
+        if (name.isEmpty) {
+          name = "형식에 맞지 않는 건";
+        }
+        if (tagId.isEmpty) {
+          tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+        }
+
+        String safeUsername = code.isEmpty
+            ? 'user_${DateTime.now().millisecondsSinceEpoch % 100000}_$i'
+            : code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+        if (safeUsername.length < 3) {
+          safeUsername = '${safeUsername}_$i';
+        }
+
+        final Map<String, dynamic> data = {
+          'username': safeUsername,
+          'email': '$safeUsername@plug4rfid.local',
+          'password': 'password123',
+          'passwordConfirm': 'password123',
+          'name': name,
+          'code': code,
+          'tag_id': tagId,
+          'department': dept,
+          'is_approved': name != "형식에 맞지 않는 건",
+          'metadata': metadata
+        };
+
+        await provider.handleSave(p: null, data: data);
+        currentCountNotifier.value++;
+      }
+
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+      }
+    }
+  }
+
+  String _extractString(excel_pkg.Data? cell) {
+    if (cell == null || cell.value == null) {
+      return "";
+    }
+    final String str = cell.value.toString();
+    final RegExp regExp = RegExp(r'^[a-zA-Z]+CellValue\((.*)\)$', dotAll: true);
+    final Match? match = regExp.firstMatch(str);
+    if (match != null && match.groupCount >= 1) {
+      String extracted = match.group(1) ?? "";
+      if (extracted.startsWith('"') && extracted.endsWith('"') && extracted.length >= 2) {
+        extracted = extracted.substring(1, extracted.length - 1);
+      }
+      return extracted.trim();
+    }
+    return str.trim();
+  }
+
+  Future<void> _exportToExcel(List<UserModel> dataList) async {
+    if (dataList.isEmpty) {
+      return;
+    }
+    try {
+      final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
+      final excel_pkg.Sheet sheet = excel['인원리스트'];
+      excel.rename('Sheet1', '인원리스트');
+      final List<String> headers = ['성명', '사번', '부서', '태그ID'];
+      for (int i = 0; i < headers.length; i++) {
+        sheet.cell(excel_pkg.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = excel_pkg.TextCellValue(headers[i]);
+      }
+      for (int r = 0; r < dataList.length; r++) {
+        final UserModel p = dataList[r];
+        final List<String> row = [p.name, p.code, p.department, p.tagId];
+        for (int c = 0; c < row.length; c++) {
+          sheet.cell(excel_pkg.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1)).value = excel_pkg.TextCellValue(row[c]);
+        }
+      }
+      final String? path = await FilePicker.platform.saveFile(fileName: 'User_Export_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
+      if (path != null) {
+        await File(path).writeAsBytes(excel.encode()!);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
+    final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
+    final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
+    final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
+    final TextEditingController deptC = TextEditingController(text: p?.department ?? "");
+    final TextEditingController remarksC = TextEditingController(text: p?.remarks ?? "");
+    bool approved = p?.isApproved ?? true;
+    XFile? file;
+    Uint8List? preview;
+
+    final Map<String, TextEditingController> metaC = {};
+    if (p != null) {
+      p.metadata.forEach((String k, dynamic v) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal') && v is! Map && v is! List) {
+          metaC[k] = TextEditingController(text: _safeStr(v));
+        }
+      });
+    }
+
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext ctx) {
+          return StatefulBuilder(
+              builder: (BuildContext dialogCtx, StateSetter setS) {
+                return AlertDialog(
+                    title: AppTheme.dialogTitle(p == null ? '신규 인원 등록' : '정보 수정 및 편집', p == null ? Icons.person_add : Icons.edit),
+                    content: SizedBox(
+                        width: 900,
+                        child: SingleChildScrollView(
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(height: 20),
+                                  Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Column(
+                                            children: [
+                                              GestureDetector(
+                                                  onTap: () async {
+                                                    final XFile? img = await ImagePicker().pickImage(source: ImageSource.gallery);
+                                                    if (img != null) {
+                                                      final Uint8List b = await img.readAsBytes();
+                                                      setS(() { file = img; preview = b; });
+                                                    }
+                                                  },
+                                                  child: Container(
+                                                      width: 180, height: 210,
+                                                      decoration: BoxDecoration(color: theme.cardTheme.color, borderRadius: BorderRadius.circular(15), border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)),
+                                                      child: Center(
+                                                          child: preview != null
+                                                              ? Image.memory(preview!, fit: BoxFit.cover)
+                                                              : (p?.getImageUrl(widget.baseUrl) != null
+                                                              ? Image.network(p!.getImageUrl(widget.baseUrl)!, fit: BoxFit.cover)
+                                                              : const Icon(Icons.camera_alt, size: 40, color: Colors.grey))
+                                                      )
+                                                  )
+                                              ),
+                                              const SizedBox(height: 16),
+                                              Row(children: [const Text("출입 승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)), const SizedBox(width: 8), Switch(value: approved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setS(() { approved = v; }); })])
+                                            ]
+                                        ),
+                                        const SizedBox(width: 30),
+                                        Expanded(
+                                            child: Column(
+                                                children: [
+                                                  _buildTextField(nameC, "성명 (필수)", theme), const SizedBox(height: 16),
+                                                  _buildTextField(deptC, "담당부서/소속", theme), const SizedBox(height: 16),
+                                                  _buildTextField(codeC, "사번/ID", theme), const SizedBox(height: 16),
+                                                  _buildTextField(tagC, "RFID 태그 EPC", theme), const SizedBox(height: 16),
+                                                  _buildTextField(remarksC, "비고", theme),
+                                                ]
+                                            )
+                                        )
+                                      ]
+                                  ),
+                                  if (metaC.isNotEmpty) ...[
+                                    const SizedBox(height: 32), const Divider(), const SizedBox(height: 16),
+                                    Wrap(spacing: 16, runSpacing: 16, children: metaC.entries.map((MapEntry<String, TextEditingController> e) => SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme))).toList())
+                                  ]
+                                ]
+                            )
+                        )
+                    ),
+                    actions: [
+                      AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+                        Navigator.pop(dialogCtx);
+                      }),
+                      AppTheme.actionButton(label: "통합 저장", onPressed: () async {
+                        final Map<String, dynamic> meta = Map<String, dynamic>.from(p?.metadata ?? {});
+                        metaC.forEach((String k, TextEditingController c) {
+                          meta[k] = c.text.trim();
+                        });
+
+                        String safeUsername = p != null && p.username.isNotEmpty
+                            ? p.username
+                            : codeC.text.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+                        if (safeUsername.isEmpty) {
+                          safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
+                        }
+                        if (safeUsername.length < 3) {
+                          safeUsername += '_u';
+                        }
+
+                        // [중요 수정] 저장 시에도 신규가 아닐 때는 email, username을 전송하지 않도록 분기합니다.
+                        final Map<String, dynamic> data = {
+                          'name': nameC.text.trim(),
+                          'code': codeC.text.trim(),
+                          'tag_id': tagC.text.trim(),
+                          'department': deptC.text.trim(),
+                          'is_approved': approved,
+                          'remarks': remarksC.text.trim(),
+                          'metadata': meta
+                        };
+
+                        if (p == null) {
+                          data['username'] = safeUsername;
+                          data['email'] = '$safeUsername@plug4rfid.local';
+                          data['password'] = 'password123';
+                          data['passwordConfirm'] = 'password123';
+                        }
+
+                        final bool ok = await provider.handleSave(p: p, data: data, imageXFile: file);
+                        if (ok && dialogCtx.mounted) {
+                          Navigator.pop(dialogCtx);
+                        }
+                      })
+                    ]
+                );
+              }
+          );
+        }
+    );
+  }
+
+  Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme) {
+    return TextField(
+        controller: ctrl,
+        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
+        decoration: AppTheme.inputDecoration(label: label, context: context)
+    );
+  }
+
+  void _confirmDelete(UserProvider provider, UserModel p, ThemeData theme) {
+    showDialog(
+        context: context,
+        builder: (BuildContext c) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("삭제 확인", Icons.delete),
+              content: Text("[${p.name}] 정보를 삭제하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+                  Navigator.pop(c);
+                }),
+                AppTheme.actionButton(label: "삭제 실행", color: AppTheme.danger, onPressed: () async {
+                  final bool ok = await provider.deletePerson(p.id);
+                  if (ok && c.mounted) {
+                    Navigator.pop(c);
+                  }
+                })
+              ]
+          );
+        }
+    );
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// [위치 선택 다이얼로그]
+/// ---------------------------------------------------------------------------
+class _LocationSelectionDialog extends StatefulWidget {
+  final String type;
+  final List<UserModel> existingUsers;
+
+  const _LocationSelectionDialog({required this.type, required this.existingUsers});
+
+  @override
+  State<_LocationSelectionDialog> createState() => _LocationSelectionDialogState();
+}
+
+class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
+  late List<String> _buildings, _gates;
+  final TextEditingController _bC = TextEditingController();
+  final TextEditingController _gC = TextEditingController();
+  bool _ok = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final Set<String> b = {'본관A', '공장B', '물류창고C', '연구소D'};
+    final Set<String> g = {'정문G1', '후문G2', '하차장G3', '비상구G4'};
+
+    for (final UserModel p in widget.existingUsers) {
+      final dynamic loc = p.metadata['last_location_info'];
+      if (loc is Map) {
+        if (loc['building'] != null) {
+          b.add(loc['building'].toString());
+        }
+        if (loc['gate'] != null) {
+          g.add(loc['gate'].toString());
+        }
+      }
+    }
+    _buildings = b.toList()..sort();
+    _gates = g.toList()..sort();
+    _bC.text = _buildings.isNotEmpty ? _buildings.first : "";
+    _gC.text = _gates.isNotEmpty ? _gates.first : "";
+  }
+
+  @override
+  void dispose() {
+    _bC.dispose();
+    _gC.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return AlertDialog(
+      title: AppTheme.dialogTitle('${widget.type}처리', widget.type == '입장' ? Icons.login : Icons.logout),
+      content: SizedBox(
+          width: 420,
+          child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 20),
+                _buildCombo('건물명 (Building)', _bC, _buildings, theme), const SizedBox(height: 24),
+                _buildCombo('출입구 (GATE)', _gC, _gates, theme), const SizedBox(height: 24),
+                Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(10), border: Border.all(color: _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2))),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(_ok ? "승인됨" : "미승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: _ok ? AppTheme.success : AppTheme.danger)), Switch(value: _ok, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setState(() { _ok = v; }); })])
+                )
+              ]
+          )
+      ),
+      actions: [
+        AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
+          Navigator.pop(context);
+        }),
+        AppTheme.actionButton(label: "위치 확정", onPressed: () {
+          Navigator.pop(context, {'building': _bC.text, 'gate': _gC.text, 'is_approved': _ok});
+        })
+      ],
+    );
+  }
+
+  Widget _buildCombo(String label, TextEditingController ctrl, List<String> opts, ThemeData theme) {
+    return Autocomplete<String>(
+        optionsBuilder: (TextEditingValue v) {
+          if (v.text == '') {
+            return opts;
+          }
+          return opts.where((String o) => o.contains(v.text));
+        },
+        onSelected: (String s) {
+          ctrl.text = s;
+        },
+        fieldViewBuilder: (BuildContext ctx, TextEditingController tC, FocusNode fN, VoidCallback onFieldSubmitted) {
+          if (tC.text != ctrl.text) {
+            tC.text = ctrl.text;
+          }
+          tC.addListener(() {
+            if (mounted) {
+              ctrl.text = tC.text;
+            }
+          });
+          return TextField(
+              controller: tC, focusNode: fN,
+              style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
+              decoration: AppTheme.inputDecoration(label: label, context: context, hasFocus: fN.hasFocus)
+          );
+        }
+    );
+  }
+}

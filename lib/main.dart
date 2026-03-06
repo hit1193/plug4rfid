@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // [추가] 웹(Web) 환경 판별(kIsWeb)을 위한 필수 라이브러리
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io';
@@ -8,7 +9,7 @@ import 'pages/main_page.dart';
 import 'theme/app_theme.dart';
 
 // 상태 관리를 위한 프로바이더 임포트
-import 'providers/person_provider.dart';
+import 'providers/user_provider.dart';
 import 'providers/product_provider.dart';
 import 'providers/device_provider.dart';
 import 'providers/theme_provider.dart';
@@ -17,8 +18,9 @@ void main() async {
   // 플러터 엔진 초기화
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 데스크톱(Windows) 환경을 위한 키오스크 스타일 UI 설정
-  if (Platform.isWindows) {
+  // [수정] 데스크톱(Windows) 환경을 위한 키오스크 스타일 UI 설정
+  // 웹 브라우저에서 실행 시 Platform 에러가 나지 않도록 !kIsWeb 방어 코드 추가
+  if (!kIsWeb && Platform.isWindows) {
     await windowManager.ensureInitialized();
     WindowOptions windowOptions = const WindowOptions(
       size: Size(1440, 760),
@@ -42,7 +44,10 @@ void main() async {
       providers: [
         // [핵심] 감성 테마 관리자를 최상단에 배치
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => PersonProvider()),
+
+        // [수정] PersonProvider의 잔재를 지우고 UserProvider로 완벽 교체!
+        ChangeNotifierProvider(create: (_) => UserProvider()),
+
         ChangeNotifierProvider(create: (_) => ProductProvider()),
         ChangeNotifierProvider(create: (_) => DeviceProvider()),
       ],

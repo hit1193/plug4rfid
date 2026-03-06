@@ -4,7 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 
-import '../models/devices.dart';
+import '../models/device_model.dart';
 import '../providers/device_provider.dart'; // 통신 로직 전담 DataModule
 import '../services/device_protocols.dart';
 

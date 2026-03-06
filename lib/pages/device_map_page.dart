@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
-import '../models/devices.dart';
+import '../models/device_model.dart';
 import '../providers/device_provider.dart';
 import '../services/device_protocols.dart';
 

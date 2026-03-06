@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
-import '../models/devices.dart'; // 장치 데이터 구조체 참조
+import '../models/device_model.dart'; // 장치 데이터 구조체 참조
 import '../services/pb_service.dart';
 import '../services/tcp_socket_service.dart';
 import '../services/device_protocols.dart';

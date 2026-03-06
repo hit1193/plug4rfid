@@ -6,7 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
 
-import '../models/products.dart';
+import '../models/product_model.dart';
 import '../services/pb_service.dart';
 
 /// ---------------------------------------------------------------------------
