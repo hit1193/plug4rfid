@@ -16,6 +16,9 @@ import '../theme/app_theme.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
+/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
+/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
+/// C++Builder의 VarToStrDef 역할과 동일합니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -30,6 +33,8 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 
 /// ---------------------------------------------------------------------------
 /// [RFID 인원 관리 페이지 (UserPage)]
+/// 메인 화면의 우측 영역에 표출되는 인원 관리 통합 관제 화면입니다.
+/// 미니멀리즘과 키오스크 디자인 철학을 적용하여 직관적으로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class UserPage extends StatefulWidget {
   final String searchQuery;
@@ -62,9 +67,11 @@ class _UserPageState extends State<UserPage> {
 
   bool _isFullScreenLoading = false;
 
+  // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
+  // UI에 노출되지 않아야 할 내부 시스템 키 목록
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
@@ -115,7 +122,7 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [수기 출입 처리] - 수정된 부분
+  /// [수기 출입 처리]
   /// ---------------------------------------------------------------------------
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
@@ -157,8 +164,7 @@ class _UserPageState extends State<UserPage> {
     }
     updatedMeta['access_history'] = history;
 
-    // [중요 수정] email, username을 전송 데이터에서 제외하여 validation 에러를 방지합니다.
-    // 포켓베이스 Auth 컬렉션은 값이 바뀌지 않을 때 이메일을 보내면 충돌이 날 수 있습니다.
+    // email, username을 전송 데이터에서 제외하여 validation 에러를 방지합니다.
     final Map<String, dynamic> updateData = {
       'is_approved': isApproved,
       'metadata': updatedMeta,
@@ -195,18 +201,44 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
+    // -------------------------------------------------------------------------
+    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
+    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
+      // 1. 등록 상태 필터 검사
       final bool matchesFilter = _currentFilter == '전체' ||
           (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
 
-      final bool matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
-          p.code.contains(_currentSearchQuery) ||
-          p.department.contains(_currentSearchQuery);
+      // 2. 검색어 검사 (기본 필드 + 추가 확장 정보(metadata) 전체 순회)
+      bool matchesSearch = false;
+      final String q = _currentSearchQuery.trim().toLowerCase();
 
+      if (q.isEmpty) {
+        matchesSearch = true; // 검색어가 없으면 모두 일치
+      } else {
+        // 2-1. 기본 정보 검색 (이름은 초성 검색 지원, 사번/부서/태그ID는 소문자 포함 여부)
+        matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
+            p.code.toLowerCase().contains(q) ||
+            p.department.toLowerCase().contains(q) ||
+            p.tagId.toLowerCase().contains(q);
+
+        // 2-2. 추가 확장 정보(metadata) 검색 (물품 페이지 로직 완벽 적용)
+        if (!matchesSearch) {
+          for (final dynamic value in p.metadata.values) {
+            if (value != null && value.toString().toLowerCase().contains(q)) {
+              matchesSearch = true;
+              break; // 하나라도 일치하는 값이 있다면 더 이상 찾지 않고 루프 종료
+            }
+          }
+        }
+      }
+
+      // 필터나 검색 조건 중 하나라도 맞지 않으면 리스트에서 제외
       if (!matchesFilter || !matchesSearch) {
         return false;
       }
 
+      // 3. 대시보드 상단 통계(Metric) 필터 검사
       if (_activeMetricFilter == "전체") {
         return true;
       }
@@ -224,6 +256,7 @@ class _UserPageState extends State<UserPage> {
       if (_activeMetricFilter == "현재 잔류") {
         return lastType == '입장';
       }
+
       return true;
     }).toList();
 
@@ -379,7 +412,7 @@ class _UserPageState extends State<UserPage> {
               });
             },
             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서 또는 상세내용 검색...", context: context, prefixIcon: Icons.search),
+            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서 또는 추가 상세내용 검색...", context: context, prefixIcon: Icons.search),
           ),
         ],
       ),
@@ -654,7 +687,7 @@ class _UserPageState extends State<UserPage> {
                   content: SizedBox(
                       width: 480,
                       child: available.isEmpty
-                          ? const Text("추가 필드 없음", style: TextStyle(fontFamily: AppTheme.fontPretendard))
+                          ? const Text("추가 필드 없음", style: const TextStyle(fontFamily: AppTheme.fontPretendard))
                           : SingleChildScrollView(
                           child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -954,30 +987,86 @@ class _UserPageState extends State<UserPage> {
     return str.trim();
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [엑셀 내보내기 (Export)]
+  /// 기본 항목(성명, 사번, 부서, 태그ID)뿐만 아니라 사용자가 추가로 등록한
+  /// 모든 확장 정보(Metadata)를 동적으로 스캔하여 엑셀 파일의 열(Column)로
+  /// 모두 기록하여 다운로드하도록 구성했습니다.
+  /// (안정성을 위해 플러터 공식 권장 방식인 appendRow를 적용했습니다)
+  /// ---------------------------------------------------------------------------
   Future<void> _exportToExcel(List<UserModel> dataList) async {
     if (dataList.isEmpty) {
       return;
     }
     try {
       final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
+      // 기존에 존재하는 기본 시트를 찾아서 안전하게 이름을 변경합니다.
+      final String defaultSheet = excel.tables.keys.first;
+      excel.rename(defaultSheet, '인원리스트');
       final excel_pkg.Sheet sheet = excel['인원리스트'];
-      excel.rename('Sheet1', '인원리스트');
-      final List<String> headers = ['성명', '사번', '부서', '태그ID'];
-      for (int i = 0; i < headers.length; i++) {
-        sheet.cell(excel_pkg.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0)).value = excel_pkg.TextCellValue(headers[i]);
-      }
-      for (int r = 0; r < dataList.length; r++) {
-        final UserModel p = dataList[r];
-        final List<String> row = [p.name, p.code, p.department, p.tagId];
-        for (int c = 0; c < row.length; c++) {
-          sheet.cell(excel_pkg.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r + 1)).value = excel_pkg.TextCellValue(row[c]);
+
+      // 1. 기본 항목 헤더 정의
+      final List<String> baseHeaders = ['성명', '사번', '부서', '태그ID'];
+
+      // 2. 추가 확장 정보(Metadata) 헤더 동적 수집
+      final Set<String> metaKeySet = {};
+      for (final UserModel p in dataList) {
+        for (final String k in p.metadata.keys) {
+          if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+            metaKeySet.add(k);
+          }
         }
       }
-      final String? path = await FilePicker.platform.saveFile(fileName: 'User_Export_${DateTime.now().millisecondsSinceEpoch}.xlsx', type: FileType.custom, allowedExtensions: ['xlsx']);
+      // 수집된 추가 항목 헤더를 정렬합니다.
+      final List<String> metaHeaders = metaKeySet.toList()..sort();
+
+      // 3. 전체 헤더 결합 (기본항목 + 추가항목)
+      final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
+
+      // 4. [개선됨] 엑셀의 첫 번째 줄에 헤더를 appendRow 방식으로 안전하게 추가
+      final List<excel_pkg.CellValue> headerRow = allHeaders.map<excel_pkg.CellValue>((String h) => excel_pkg.TextCellValue(h)).toList();
+      sheet.appendRow(headerRow);
+
+      // 5. [개선됨] 각 인원 데이터를 appendRow를 통해 한 행씩 순차적으로 삽입 (인덱스 꼬임 원천 차단)
+      for (final UserModel p in dataList) {
+        final List<excel_pkg.CellValue> rowData = [
+          excel_pkg.TextCellValue(p.name),
+          excel_pkg.TextCellValue(p.code),
+          excel_pkg.TextCellValue(p.department),
+          excel_pkg.TextCellValue(p.tagId),
+        ];
+
+        // 추가 확장 정보가 있는 경우 헤더 순서에 맞춰 데이터를 매핑합니다.
+        for (final String metaKey in metaHeaders) {
+          rowData.add(excel_pkg.TextCellValue(_safeStr(p.metadata[metaKey])));
+        }
+
+        sheet.appendRow(rowData);
+      }
+
+      // 6. 파일 저장 팝업 표출 및 로컬 저장
+      final String? path = await FilePicker.platform.saveFile(
+          fileName: 'User_Export_${DateTime.now().millisecondsSinceEpoch}.xlsx',
+          type: FileType.custom,
+          allowedExtensions: ['xlsx']
+      );
+
       if (path != null) {
         await File(path).writeAsBytes(excel.encode()!);
+
+        // 7. 성공 시 알림 표시
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+              elevation: 0
+          ));
+        }
       }
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ 내보내기 실패: $e', style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
+      }
+    }
   }
 
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
@@ -1085,7 +1174,7 @@ class _UserPageState extends State<UserPage> {
                           safeUsername += '_u';
                         }
 
-                        // [중요 수정] 저장 시에도 신규가 아닐 때는 email, username을 전송하지 않도록 분기합니다.
+                        // 저장 시에도 신규가 아닐 때는 email, username을 전송하지 않도록 분기합니다.
                         final Map<String, dynamic> data = {
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),

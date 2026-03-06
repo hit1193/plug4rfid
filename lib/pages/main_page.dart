@@ -341,11 +341,22 @@ class _MainPageState extends State<MainPage> {
 
         Color seedColor;
         switch (type) {
-          case AppThemeType.pureWhite: seedColor = const Color(0xFF94A3B8); break;
-          case AppThemeType.industrial: seedColor = AppTheme.primary; break;
-          case AppThemeType.forest: seedColor = const Color(0xFF10B981); break;
-          case AppThemeType.solar: seedColor = const Color(0xFFF59E0B); break;
-          case AppThemeType.midnight: seedColor = const Color(0xFF6366F1); break;
+          case AppThemeType.pureWhite:
+            seedColor = const Color(0xFF94A3B8);
+            break;
+          case AppThemeType.industrial:
+            seedColor = AppTheme.primary;
+            break;
+          case AppThemeType.forest:
+            seedColor = const Color(0xFF10B981);
+            break;
+          case AppThemeType.solar:
+            seedColor = const Color(0xFFF59E0B);
+            break;
+          case AppThemeType.midnight:
+          // [수정됨] 직관적인 다크모드 인지를 위해 남색(0xFF6366F1)에서 완전한 검은색으로 변경했습니다.
+            seedColor = Colors.black;
+            break;
         }
 
         return GestureDetector(

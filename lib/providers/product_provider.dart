@@ -7,12 +7,14 @@ import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../models/product_model.dart';
-import '../services/pb_service.dart';
+// [중요 수정] 기존의 개별 PBService 대신, DataModule 역할을 하는 전역 클라이언트를 임포트합니다.
+import '../core/pocketbase_client.dart';
 
 /// ---------------------------------------------------------------------------
 /// [엑셀 파싱 Isolate 함수]
 /// 메인 스레드(UI)가 멈추는 것을 방지하기 위해 백그라운드(Isolate)에서 실행됩니다.
 /// 엑셀 파일의 바이트 데이터를 받아 분석한 뒤, 각 행을 Map 형태로 변환하여 반환합니다.
+/// C++Builder의 별도 Worker Thread 작업과 동일한 개념입니다.
 /// ---------------------------------------------------------------------------
 Map<String, dynamic>? _parseProductExcel(Uint8List bytes) {
   try {
@@ -68,6 +70,11 @@ Map<String, dynamic>? _parseProductExcel(Uint8List bytes) {
 /// 화면(UI)에서는 이 Provider를 바라보며 데이터가 변경될 때마다 화면을 갱신합니다.
 /// ---------------------------------------------------------------------------
 class ProductProvider extends ChangeNotifier {
+  // [중요 수정] 전역 pb 객체를 내부 변수로 매핑합니다.
+  // 이제 main.dart에서 획득한 '최고 관리자(Superuser) 권한'이 탑재된
+  // 신분증(토큰)을 그대로 이 프로바이더에서도 공유하여 사용하게 됩니다! (403 에러 원천 차단)
+  final PocketBase _pb = pb;
+
   // PocketBase 컬렉션 이름 정의
   final String _collectionName = 'products';
   final String _configCollection = 'app_configs';
@@ -125,7 +132,7 @@ class ProductProvider extends ChangeNotifier {
   /// 서버 실시간 구독 안전하게 해제
   Future<void> _safeUnsubscribe() async {
     try {
-      await PBService.pb.collection(_collectionName).unsubscribe('*');
+      await _pb.collection(_collectionName).unsubscribe('*');
     } catch (error) {
       // 구독 해제 중 발생하는 오류는 무시 (앱 동작에 영향 없음)
     }
@@ -136,7 +143,7 @@ class ProductProvider extends ChangeNotifier {
   /// 누군가 데이터를 추가, 수정, 삭제하면 자동으로 감지하여 목록을 새로고침합니다.
   /// ---------------------------------------------------------------------------
   void _subscribe() {
-    PBService.pb.collection(_collectionName).subscribe('*', (event) {
+    _pb.collection(_collectionName).subscribe('*', (event) {
       // 내가 직접 저장 중이거나 이미 종료된 화면이라면 무시
       if (_isDisposed || _isSaving) return;
 
@@ -157,7 +164,7 @@ class ProductProvider extends ChangeNotifier {
 
     try {
       // sort: '-updated' -> 최근 수정일 기준 내림차순 정렬
-      final records = await PBService.pb.collection(_collectionName).getFullList(sort: '-updated');
+      final records = await _pb.collection(_collectionName).getFullList(sort: '-updated');
 
       if (_isDisposed) return;
 
@@ -185,7 +192,7 @@ class ProductProvider extends ChangeNotifier {
   /// ---------------------------------------------------------------------------
   Future<void> fetchRemoteSettings() async {
     try {
-      final record = await PBService.pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
+      final record = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
       final dynamic value = record.data['value'];
 
       if (value is List) {
@@ -208,7 +215,7 @@ class ProductProvider extends ChangeNotifier {
 
       RecordModel? existingRecord;
       try {
-        existingRecord = await PBService.pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
+        existingRecord = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
       } catch (error) {
         // 기존 설정이 없으면 null 상태 유지
       }
@@ -220,10 +227,10 @@ class ProductProvider extends ChangeNotifier {
 
       if (existingRecord != null) {
         // 기존 설정이 있으면 업데이트
-        await PBService.pb.collection(_configCollection).update(existingRecord.id, body: requestBody);
+        await _pb.collection(_configCollection).update(existingRecord.id, body: requestBody);
       } else {
         // 기존 설정이 없으면 새로 생성
-        await PBService.pb.collection(_configCollection).create(body: requestBody);
+        await _pb.collection(_configCollection).create(body: requestBody);
       }
     } catch (error) {
       // 저장 실패 처리
@@ -251,10 +258,10 @@ class ProductProvider extends ChangeNotifier {
 
       if (product == null) {
         // 신규 등록
-        await PBService.pb.collection(_collectionName).create(body: data, files: files);
+        await _pb.collection(_collectionName).create(body: data, files: files);
       } else {
         // 기존 데이터 수정
-        await PBService.pb.collection(_collectionName).update(product.id, body: data, files: files);
+        await _pb.collection(_collectionName).update(product.id, body: data, files: files);
       }
       return true;
     } catch (error) {
@@ -276,7 +283,7 @@ class ProductProvider extends ChangeNotifier {
 
     try {
       for (var id in productIds) {
-        await PBService.pb.collection(_collectionName).delete(id);
+        await _pb.collection(_collectionName).delete(id);
       }
     } finally {
       _isSaving = false;
@@ -294,10 +301,10 @@ class ProductProvider extends ChangeNotifier {
 
     try {
       // 전체 목록의 ID만 먼저 가져옵니다. (트래픽 절약)
-      final records = await PBService.pb.collection(_collectionName).getFullList(fields: 'id');
+      final records = await _pb.collection(_collectionName).getFullList(fields: 'id');
 
       for (var record in records) {
-        await PBService.pb.collection(_collectionName).delete(record.id);
+        await _pb.collection(_collectionName).delete(record.id);
       }
       _items = []; // 로컬 리스트 비우기
     } finally {
@@ -376,7 +383,7 @@ class ProductProvider extends ChangeNotifier {
                 'original_row_data': row
               }
             };
-            await PBService.pb.collection(_collectionName).create(body: body);
+            await _pb.collection(_collectionName).create(body: body);
             successCount++;
           } else {
             // [형식 오류 데이터] - 누락된 건을 버리지 않고 '형식에 맞지 않는 건'으로 저장
@@ -391,7 +398,7 @@ class ProductProvider extends ChangeNotifier {
                 'original_row_data': row
               }
             };
-            await PBService.pb.collection(_collectionName).create(body: errorBody);
+            await _pb.collection(_collectionName).create(body: errorBody);
             errorCount++;
           }
         } catch (error) {

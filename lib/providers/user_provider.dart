@@ -7,7 +7,8 @@ import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../models/user_model.dart';
-import '../services/pb_service.dart';
+// [중요 수정] 기존 PBService를 지우고, DataModule 역할을 하는 전역 클라이언트를 임포트합니다.
+import '../core/pocketbase_client.dart';
 
 /// ---------------------------------------------------------------------------
 /// [엑셀 파싱 전용 백그라운드 워커 (Isolate)]
@@ -59,8 +60,10 @@ Map<String, dynamic>? _parseExcelIsolate(Uint8List bytes) {
 /// C++Builder의 DataModule 역할을 수행하며, UI 스레드에 데이터 변경을 통지합니다.
 /// ---------------------------------------------------------------------------
 class UserProvider extends ChangeNotifier {
-  // 포켓베이스 서버 통신용 서비스 객체 (Static 싱글톤 참조)
-  final PocketBase _pb = PBService.pb;
+  // [중요 수정] 전역 pb 객체를 내부 변수로 매핑합니다.
+  // 이제 main.dart에서 획득한 '최고 관리자(Superuser) 권한'이 탑재된
+  // 신분증(토큰)을 그대로 이 프로바이더에서도 공유하여 사용하게 됩니다! (403 에러 원천 차단)
+  final PocketBase _pb = pb;
 
   // 데이터 대상 컬렉션 이름 (포켓베이스 기본 Auth 테이블)
   final String _collectionName = 'users';
