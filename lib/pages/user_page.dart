@@ -20,6 +20,9 @@ import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
+/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
+/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
+/// C++Builder의 VarToStrDef 역할과 동일합니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -34,6 +37,8 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 
 /// ---------------------------------------------------------------------------
 /// [RFID 인원 관리 페이지 (UserPage)]
+/// 메인 화면의 우측 영역에 표출되는 인원 관리 통합 관제 화면입니다.
+/// 미니멀리즘과 키오스크 디자인 철학을 적용하여 직관적으로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class UserPage extends StatefulWidget {
   final String searchQuery;
@@ -63,17 +68,19 @@ class _UserPageState extends State<UserPage> {
   late String _currentFilter;
   String _activeMetricFilter = "전체";
 
-  // 다중 선택(일괄 처리)을 위한 Set 변수
+  // 단일 선택(String?)에서 다중 선택을 위한 Set<String>으로 변경 (일괄 처리 지원)
   final Set<String> _selectedUserIds = {};
 
-  // [신규 추가] 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
+  // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
   bool _isSelectionMode = false;
 
   bool _isFullScreenLoading = false;
 
+  // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
+  // UI에 노출되지 않아야 할 내부 시스템 키 목록
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
@@ -98,6 +105,7 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
+  // --- FA 대시보드용 통계 계산 로직 ---
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
@@ -122,6 +130,9 @@ class _UserPageState extends State<UserPage> {
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [수기 출입 처리]
+  /// ---------------------------------------------------------------------------
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -130,9 +141,8 @@ class _UserPageState extends State<UserPage> {
       },
     );
 
-    if (!mounted || result == null) {
-      return;
-    }
+    // [Linter 완벽 대응] async 갭 이후에 context를 사용하기 전 mounted 여부를 철저히 검사합니다.
+    if (!mounted || result == null) return;
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     final dynamic rawApprove = result['is_approved'];
@@ -172,6 +182,7 @@ class _UserPageState extends State<UserPage> {
       data: updateData,
     );
 
+    // [Linter 완벽 대응] DB 저장(await) 이후 mounted 재검사
     if (!mounted) return;
 
     if (success) {
@@ -182,11 +193,79 @@ class _UserPageState extends State<UserPage> {
         duration: const Duration(seconds: 1),
       ));
     } else {
+      // [오타 경고(Typo) 대응] 'Update Rule'의 따옴표를 제거하고 자연스럽게 번역하여 경고를 지웠습니다.
       _showInfoDialog(
           "처리 실패",
-          "데이터베이스 업데이트 중 오류가 발생했습니다.",
+          "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n💡 관리자 화면에서 users 컬렉션의 API Rules 중 Update 권한이 TRUE로 입력되어 있는지 다시 확인해 주세요.",
           Theme.of(context)
       );
+    }
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [신규 추가] 리스트뷰 내 인원 프로필 사진(아바타) 다이렉트 업데이트
+  /// 복잡한 수정 폼을 열지 않고 클릭 한 번으로 사진만 덮어씌우는 강력한 퀵 액션입니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _handleSingleUserImageUpdate(UserProvider provider, UserModel user, ThemeData theme) async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+
+    if (!mounted || image == null) return;
+
+    final bool? confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            title: AppTheme.dialogTitle("프로필 사진 변경", Icons.photo_camera_front),
+            content: Text(
+                "[${user.name}]님의 프로필 사진을 선택하신 이미지로 즉시 변경하시겠습니까?",
+                style: const TextStyle(fontFamily: AppTheme.fontPretendard)
+            ),
+            actions: [
+              AppTheme.actionButton(
+                  label: "취소",
+                  color: Colors.transparent,
+                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  onPressed: () => Navigator.pop(ctx, false)
+              ),
+              AppTheme.actionButton(
+                  label: "사진 변경",
+                  color: AppTheme.primary,
+                  onPressed: () => Navigator.pop(ctx, true)
+              ),
+            ]
+        )
+    );
+
+    if (!mounted || confirm != true) return;
+
+    setState(() { _isFullScreenLoading = true; });
+
+    try {
+      final Map<String, dynamic> data = {
+        'name': user.name,
+        'code': user.code,
+        'tag_id': user.tagId,
+        'department': user.department,
+        'is_approved': user.isApproved,
+        'metadata': user.metadata,
+      };
+
+      final bool success = await provider.handleSave(p: user, data: data, imageXFile: image);
+
+      if (!mounted) return;
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('✅ 사진이 성공적으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+          elevation: 0,
+        ));
+      } else {
+        _showInfoDialog("변경 실패", "사진 업데이트 중 오류가 발생했습니다.", theme);
+      }
+    } finally {
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+      }
     }
   }
 
@@ -196,6 +275,9 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
+    // -------------------------------------------------------------------------
+    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
+    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
       final bool matchesFilter = _currentFilter == '전체' ||
           (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
@@ -369,7 +451,6 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.refresh, "새로고침", () {
                       provider.fetchData();
                     }, theme),
-                    // [신규 기능] 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
                     _buildActionIcon(
                       _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
                       _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
@@ -377,12 +458,12 @@ class _UserPageState extends State<UserPage> {
                         setState(() {
                           _isSelectionMode = !_isSelectionMode;
                           if (!_isSelectionMode) {
-                            _selectedUserIds.clear(); // 모드를 끌 때는 선택 내역도 초기화
+                            _selectedUserIds.clear();
                           }
                         });
                       },
                       theme,
-                      color: _isSelectionMode ? AppTheme.primary : null, // 켜져 있을 땐 색상으로 강조
+                      color: _isSelectionMode ? AppTheme.primary : null,
                     ),
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
                       _handleBatchImport(provider, theme);
@@ -444,7 +525,6 @@ class _UserPageState extends State<UserPage> {
 
     return Column(
       children: [
-        // [신규 UI] 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
         AnimatedSize(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
@@ -510,7 +590,6 @@ class _UserPageState extends State<UserPage> {
           ),
         ),
 
-        // 메인 리스트 뷰
         Expanded(
           child: Container(
             margin: const EdgeInsets.only(bottom: 20.0),
@@ -526,7 +605,6 @@ class _UserPageState extends State<UserPage> {
 
                 return Row(
                   children: [
-                    // [신규 UI] AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
                     AnimatedSize(
                       duration: const Duration(milliseconds: 250),
                       curve: Curves.easeInOut,
@@ -572,11 +650,9 @@ class _UserPageState extends State<UserPage> {
                           : const SizedBox.shrink(),
                     ),
 
-                    // 기존 카드 영역
                     Expanded(
                       child: InkWell(
                         onTap: () {
-                          // 다중 선택 모드일 땐 카드를 클릭해도 체크되도록 UX를 향상시켰습니다.
                           if (_isSelectionMode) {
                             setState(() {
                               if (isSelected) {
@@ -595,7 +671,24 @@ class _UserPageState extends State<UserPage> {
                           decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
                           child: Row(
                             children: [
-                              _buildAvatar(item, theme, size: _colImgSize),
+                              GestureDetector(
+                                onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
+                                child: Stack(
+                                  alignment: Alignment.bottomRight,
+                                  children: [
+                                    _buildAvatar(item, theme, size: _colImgSize),
+                                    Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primary,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                                      ),
+                                      child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                                    ),
+                                  ],
+                                ),
+                              ),
                               const SizedBox(width: 20),
                               Expanded(
                                 child: Column(
@@ -687,17 +780,33 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildAvatar(UserModel item, ThemeData theme, {double size = 44}) {
     final String? url = item.getImageUrl(widget.baseUrl, thumb: '100x100');
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    if (url == null || url.isEmpty) {
+      return Container(
+          width: size, height: size,
+          decoration: BoxDecoration(
+              color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: const Icon(Icons.person_outline, color: Colors.black12, size: 30)
+      );
+    }
+
+    final String connector = url.contains('?') ? '&' : '?';
+    final String fullUrl = "$url${connector}t=${item.hashCode}";
+
     return Container(
         width: size, height: size,
         decoration: BoxDecoration(
-            color: theme.dividerTheme.color?.withValues(alpha: 0.1),
+            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
         ),
         clipBehavior: Clip.antiAlias,
-        child: (url != null)
-            ? Image.network(url, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12))
-            : const Icon(Icons.person_outline, color: Colors.black12, size: 30)
+        child: Image.network(fullUrl, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12))
     );
   }
 
@@ -783,7 +892,7 @@ class _UserPageState extends State<UserPage> {
         }
     );
 
-    if (resultValues == null || !mounted) return;
+    if (!mounted || resultValues == null) return;
 
     setState(() { _isFullScreenLoading = true; });
 
@@ -813,7 +922,6 @@ class _UserPageState extends State<UserPage> {
     setState(() {
       _isFullScreenLoading = false;
       _selectedUserIds.clear();
-      // 팁: 편집이 끝난 후 다중 선택 모드를 자동으로 꺼주면 UX가 더 깔끔합니다.
       _isSelectionMode = false;
     });
 
@@ -850,13 +958,12 @@ class _UserPageState extends State<UserPage> {
                         await provider.deletePerson(id);
                       }
 
-                      if (!mounted) {
-                        return;
-                      }
+                      if (!mounted) return;
+
                       setState(() {
                         _selectedUserIds.clear();
                         _isFullScreenLoading = false;
-                        _isSelectionMode = false; // 삭제 후 모드 자동 종료
+                        _isSelectionMode = false;
                       });
 
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 인원 정보가 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
@@ -945,6 +1052,8 @@ class _UserPageState extends State<UserPage> {
           initialSelection: provider.selectedColumns,
           onSave: (List<String> newColumns) async {
             await provider.saveRemoteSettings(newColumns);
+            if (!ctx.mounted) return;
+            Navigator.pop(ctx);
           },
         );
       },
@@ -970,11 +1079,13 @@ class _UserPageState extends State<UserPage> {
         }
     );
 
-    if (!mounted || confirm != true) {
-      return;
-    }
+    if (!mounted || confirm != true) return;
 
     setState(() { _isFullScreenLoading = true; });
+
+    // Linter 대응: ScaffoldMessenger와 Navigator를 미리 가져옵니다.
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final NavigatorState navigator = Navigator.of(context);
 
     showDialog(
       context: context,
@@ -1009,8 +1120,8 @@ class _UserPageState extends State<UserPage> {
     } finally {
       if (mounted) {
         setState(() { _isFullScreenLoading = false; });
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+        navigator.pop();
+        messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
       }
     }
   }
@@ -1018,17 +1129,14 @@ class _UserPageState extends State<UserPage> {
   Future<void> _handleBatchImport(UserProvider provider, ThemeData theme) async {
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
-      if (result == null || !mounted) {
-        return;
-      }
+      if (!mounted || result == null) return;
 
       Uint8List? bytes = result.files.single.bytes;
       if (bytes == null && result.files.single.path != null) {
         bytes = await File(result.files.single.path!).readAsBytes();
       }
-      if (bytes == null) {
-        return;
-      }
+
+      if (!mounted || bytes == null) return;
 
       final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
       String targetSheet = excel.tables.keys.first;
@@ -1036,9 +1144,7 @@ class _UserPageState extends State<UserPage> {
         targetSheet = '인원리스트';
       }
       final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
-      if (sheet == null || sheet.maxRows <= 1) {
-        return;
-      }
+      if (sheet == null || sheet.maxRows <= 1) return;
 
       final List<String> headers = [];
       for (final List<excel_pkg.Data?> rowData in sheet.rows.take(1)) {
@@ -1170,10 +1276,10 @@ class _UserPageState extends State<UserPage> {
         currentCountNotifier.value++;
       }
 
-      if (mounted) {
-        setState(() { _isFullScreenLoading = false; });
-        Navigator.of(context).pop();
-      }
+      if (!mounted) return;
+      setState(() { _isFullScreenLoading = false; });
+      Navigator.of(context).pop();
+
     } catch (e) {
       if (mounted) {
         setState(() { _isFullScreenLoading = false; });
@@ -1245,15 +1351,15 @@ class _UserPageState extends State<UserPage> {
           allowedExtensions: ['xlsx']
       );
 
-      if (path != null) {
-        await File(path).writeAsBytes(excel.encode()!);
+      if (!mounted || path == null) return;
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-              elevation: 0
-          ));
-        }
+      await File(path).writeAsBytes(excel.encode()!);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+            elevation: 0
+        ));
       }
     } catch (e) {
       if (mounted) {
@@ -1284,9 +1390,9 @@ class _UserPageState extends State<UserPage> {
     showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (BuildContext ctx) {
+        builder: (BuildContext dialogCtx) {
           return StatefulBuilder(
-              builder: (BuildContext dialogCtx, StateSetter setS) {
+              builder: (BuildContext innerCtx, StateSetter setS) {
                 return AlertDialog(
                     title: AppTheme.dialogTitle(p == null ? '신규 인원 등록' : '정보 수정 및 편집', p == null ? Icons.person_add : Icons.edit),
                     content: SizedBox(
@@ -1304,6 +1410,7 @@ class _UserPageState extends State<UserPage> {
                                               GestureDetector(
                                                   onTap: () async {
                                                     final XFile? img = await ImagePicker().pickImage(source: ImageSource.gallery);
+                                                    if (!dialogCtx.mounted) return;
                                                     if (img != null) {
                                                       final Uint8List b = await img.readAsBytes();
                                                       setS(() { file = img; preview = b; });
@@ -1315,8 +1422,9 @@ class _UserPageState extends State<UserPage> {
                                                       child: Center(
                                                           child: preview != null
                                                               ? Image.memory(preview!, fit: BoxFit.cover)
-                                                              : (p?.getImageUrl(widget.baseUrl) != null
-                                                              ? Image.network(p!.getImageUrl(widget.baseUrl)!, fit: BoxFit.cover)
+                                                          // [수정됨] Null Safety 에러 완벽 해결 (p 가 null 이 아니고 url 값도 비어있지 않을 때만 접근)
+                                                              : (p != null && p.getImageUrl(widget.baseUrl) != null && p.getImageUrl(widget.baseUrl)!.isNotEmpty
+                                                              ? Image.network("${p.getImageUrl(widget.baseUrl)!}?t=${p.hashCode}", fit: BoxFit.cover, errorBuilder: (BuildContext c, Object e, StackTrace? s) => const Icon(Icons.broken_image))
                                                               : const Icon(Icons.camera_alt, size: 40, color: Colors.grey))
                                                       )
                                                   )
@@ -1385,7 +1493,9 @@ class _UserPageState extends State<UserPage> {
                         }
 
                         final bool ok = await provider.handleSave(p: p, data: data, imageXFile: file);
-                        if (ok && dialogCtx.mounted) {
+                        if (!dialogCtx.mounted) return;
+
+                        if (ok) {
                           Navigator.pop(dialogCtx);
                         }
                       })
@@ -1418,7 +1528,9 @@ class _UserPageState extends State<UserPage> {
                 }),
                 AppTheme.actionButton(label: "삭제 실행", color: AppTheme.danger, onPressed: () async {
                   final bool ok = await provider.deletePerson(p.id);
-                  if (ok && c.mounted) {
+                  if (!c.mounted) return;
+
+                  if (ok) {
                     Navigator.pop(c);
                   }
                 })

@@ -71,7 +71,7 @@ class _ProductPageState extends State<ProductPage> {
 
   final Set<String> _selectedItemIds = {};
 
-  // [신규 추가] 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
+  // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
   bool _isSelectionMode = false;
 
   bool _isFullScreenLoading = false;
@@ -412,7 +412,7 @@ class _ProductPageState extends State<ProductPage> {
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
                       provider.fetchData();
                     }, theme),
-                    // [신규 기능] 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
+                    // 다중 선택(동그라미 토글) 모드 켜기/끄기 버튼
                     _buildActionIconButton(
                       _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
                       _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
@@ -501,7 +501,7 @@ class _ProductPageState extends State<ProductPage> {
           ),
         ),
 
-        // [신규 UI] 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
+        // 다중 선택 모드가 활성화되었을 때만 스르륵 나타나는 일괄 처리 액션 바
         AnimatedSize(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
@@ -579,7 +579,7 @@ class _ProductPageState extends State<ProductPage> {
 
               return Row(
                 children: [
-                  // [신규 UI] AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
+                  // AnimatedSize를 적용하여 선택 모드일 때만 체크박스가 스르륵 등장합니다.
                   AnimatedSize(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
@@ -629,7 +629,6 @@ class _ProductPageState extends State<ProductPage> {
                   Expanded(
                     child: InkWell(
                       onTap: () {
-                        // 다중 선택 모드일 땐 카드를 클릭해도 체크되도록 UX를 향상시켰습니다.
                         if (_isSelectionMode) {
                           setState(() {
                             if (isSelected) {
@@ -714,6 +713,159 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [복원 완료] 그룹 대표 이미지 일괄 업데이트 (카메라 아이콘 클릭 시 실행)
+  /// ---------------------------------------------------------------------------
+  Future<void> _handleGroupImageUpdate(ProductProvider provider, List<ProductModel> groupItems, ThemeData theme) async {
+    if (groupItems.isEmpty) return;
+
+    // 같은 이름을 가진 모든 자산을 타겟으로 잡습니다.
+    final String targetName = groupItems.first.name;
+    final List<ProductModel> targetItems = provider.items.where((p) => p.name == targetName).toList();
+
+    if (targetItems.isEmpty) return;
+
+    // 갤러리에서 새로운 이미지 선택
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+
+    if (!mounted || image == null) return;
+
+    // 일괄 적용 확인창 표출
+    final bool? confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            title: AppTheme.dialogTitle("대표 이미지 일괄 적용", Icons.photo_camera_front),
+            content: Text(
+                "선택하신 이미지를 '$targetName' 품명을 가진 모든 자산(${targetItems.length}개)에 일괄 적용하시겠습니까?\n\n(개별적으로 등록했던 특수 이미지가 있다면 덮어씌워집니다.)",
+                style: const TextStyle(fontFamily: AppTheme.fontPretendard)
+            ),
+            actions: [
+              AppTheme.actionButton(
+                  label: "취소",
+                  color: Colors.transparent,
+                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  onPressed: () => Navigator.pop(ctx, false)
+              ),
+              AppTheme.actionButton(
+                  label: "일괄 변경",
+                  color: AppTheme.primary,
+                  onPressed: () => Navigator.pop(ctx, true)
+              ),
+            ]
+        )
+    );
+
+    if (confirm != true || !mounted) return;
+
+    ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+    setState(() { _isFullScreenLoading = true; });
+
+    // 로딩 및 진행률 다이얼로그 표출
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: Center(
+          child: Card(
+            elevation: 10,
+            color: theme.cardTheme.color,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+              child: ValueListenableBuilder<int>(
+                valueListenable: currentCountNotifier,
+                builder: (context, currentCount, child) {
+                  final double progress = targetItems.isNotEmpty ? currentCount / targetItems.length : 0.0;
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: CircularProgressIndicator(
+                              value: progress,
+                              color: AppTheme.primary,
+                              backgroundColor: theme.dividerTheme.color?.withValues(alpha: 0.3),
+                              strokeWidth: 8,
+                            ),
+                          ),
+                          Text(
+                            '${(progress * 100).toInt()}%',
+                            style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 25),
+                      const Text(
+                        "이미지 일괄 적용 중...",
+                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        "총 ${targetItems.length}건 중 $currentCount건 처리 완료\n(창을 닫지 마세요)",
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    int successCount = 0;
+    int failCount = 0;
+
+    try {
+      for (var p in targetItems) {
+        // 기존 데이터를 그대로 유지하면서 이미지만 덮어씌웁니다.
+        final data = {
+          'name': p.name,
+          'tag_id': p.tagId,
+          'location': p.location,
+          'spec': p.spec,
+          'category': p.category,
+          'serial_number': p.serialNumber,
+          'safety_stock': p.safetyStock,
+          'status': p.status,
+          'is_approved': p.isApproved,
+          'metadata': p.metadata,
+        };
+
+        bool ok = await provider.handleSave(product: p, data: data, imageXFile: image);
+        if (ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+        currentCountNotifier.value++;
+      }
+    } finally {
+      if (mounted) {
+        setState(() { _isFullScreenLoading = false; });
+        Navigator.of(context).pop(); // Progress Dialog 닫기
+      }
+    }
+
+    if (!mounted) return;
+
+    _syncFiltering(provider.items);
+    _showInfoDialog(
+        "일괄 적용 완료",
+        "총 ${targetItems.length}개의 자산 중\n✅ $successCount개 적용 성공\n❌ $failCount개 적용 실패",
+        theme
+    );
+  }
+
   Widget _buildGroupTile(ProductProvider provider, String title, List<ProductModel> items, bool isSelected, ThemeData theme) {
     final double healthRatio = items.isEmpty ? 0.0 : items.where((ProductModel i) => !i.status.contains('출고')).length / items.length;
     final Color hCol = healthRatio == 1.0 ? AppTheme.success : (healthRatio > 0.4 ? AppTheme.warning : AppTheme.danger);
@@ -735,7 +887,25 @@ class _ProductPageState extends State<ProductPage> {
         ),
         child: Row(
             children: [
-              _buildThumbnail(items.isNotEmpty ? items.first : null, theme, size: 52),
+              // [복원 완료] 이미지 위에 카메라 아이콘을 덧씌우고 누르면 일괄 업데이트 실행
+              GestureDetector(
+                onTap: () => _handleGroupImageUpdate(provider, items, theme),
+                child: Stack(
+                  alignment: Alignment.bottomRight,
+                  children: [
+                    _buildThumbnail(items.isNotEmpty ? items.first : null, theme, size: 52),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                      ),
+                      child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
               const SizedBox(width: 16),
               Expanded(child: Text(title, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: isSelected ? FontWeight.w900 : FontWeight.bold, fontSize: 15, color: isSelected ? AppTheme.primary : null))),
               Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: hCol.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)), child: Text('${items.length}', style: TextStyle(fontFamily: AppTheme.fontPretendard, color: hCol, fontWeight: FontWeight.w900, fontSize: 13))),
@@ -796,10 +966,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // [신규 연동] 다중 선택 항목 일괄 편집 (공용 BulkEditDialog 연동)
-  // 물품 관리의 기본 항목과 추가 확장 항목(Metadata)을 모두 수집하여 공용 위젯에 넘깁니다.
-  // ---------------------------------------------------------------------------
   void _showBulkEditDialog(ProductProvider provider, List<ProductModel> visibleItems, ThemeData theme) async {
     final List<ProductModel> selectedProducts = visibleItems.where((ProductModel p) => _selectedItemIds.contains(p.id)).toList();
     if (selectedProducts.isEmpty) return;
@@ -877,7 +1043,6 @@ class _ProductPageState extends State<ProductPage> {
     setState(() {
       _isFullScreenLoading = false;
       _selectedItemIds.clear();
-      // 팁: 편집이 끝난 후 다중 선택 모드를 자동으로 꺼주면 UX가 더 깔끔합니다.
       _isSelectionMode = false;
     });
 
