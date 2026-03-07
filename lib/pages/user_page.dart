@@ -193,7 +193,6 @@ class _UserPageState extends State<UserPage> {
         duration: const Duration(seconds: 1),
       ));
     } else {
-      // [오타 경고(Typo) 대응] 'Update Rule'의 따옴표를 제거하고 자연스럽게 번역하여 경고를 지웠습니다.
       _showInfoDialog(
           "처리 실패",
           "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n💡 관리자 화면에서 users 컬렉션의 API Rules 중 Update 권한이 TRUE로 입력되어 있는지 다시 확인해 주세요.",
@@ -1368,6 +1367,12 @@ class _UserPageState extends State<UserPage> {
     }
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [인원 정보 등록 및 편집 다이얼로그]
+  /// C++Builder의 Edit Form에 해당하는 영역입니다.
+  /// 데이터베이스 전체에서 사용되는 추가 항목(사용자 정의 필드)들을 수집하여
+  /// 신규 등록 시에도 모두 편집할 수 있도록 동적으로 입력 란을 생성합니다.
+  /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
@@ -1378,14 +1383,43 @@ class _UserPageState extends State<UserPage> {
     XFile? file;
     Uint8List? preview;
 
+    // -----------------------------------------------------------------------
+    // [추가 항목(메타데이터) 필드 동적 수집 및 생성 로직]
+    // 1. 전체 인원(provider.list)을 순회하여 사용 중인 모든 '추가 항목'을 수집합니다.
+    // 2. 신규 등록(추가) 시에도 기존에 만들어진 추가 항목 입력란이 모두 제공됩니다.
+    // -----------------------------------------------------------------------
     final Map<String, TextEditingController> metaC = {};
-    if (p != null) {
-      p.metadata.forEach((String k, dynamic v) {
+    final Set<String> allMetaKeys = {};
+
+    // 1. 전체 데이터베이스에 존재하는 모든 추가 항목 키 수집
+    for (final UserModel user in provider.list) {
+      user.metadata.forEach((String k, dynamic v) {
+        // 내부 시스템 키가 아니고 리스트/맵 등 복합 데이터가 아니면 추가 항목으로 간주
         if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal') && v is! Map && v is! List) {
-          metaC[k] = TextEditingController(text: _safeStr(v));
+          allMetaKeys.add(k);
         }
       });
     }
+
+    // 2. 현재 편집 대상자(p)의 고유한 항목 키도 만약을 대비해 병합
+    if (p != null) {
+      p.metadata.forEach((String k, dynamic v) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal') && v is! Map && v is! List) {
+          allMetaKeys.add(k);
+        }
+      });
+    }
+
+    // 3. 수집된 키를 오름차순으로 정렬한 후 각각 텍스트 컨트롤러를 할당
+    final List<String> sortedMetaKeys = allMetaKeys.toList()..sort();
+    for (final String key in sortedMetaKeys) {
+      // 편집 모드면 기존 값을 넣고, 신규 추가 모드면 빈 칸으로 둡니다.
+      final String initialValue = p != null ? _safeStr(p.metadata[key]) : "";
+      metaC[key] = TextEditingController(text: initialValue);
+    }
+
+    // [개선] 아바타 URL 처리를 안전하고 깔끔하게 분리하여 널 세이프티 에러를 완벽히 차단합니다.
+    final String? avatarUrl = p?.getImageUrl(widget.baseUrl);
 
     showDialog(
         context: context,
@@ -1394,7 +1428,10 @@ class _UserPageState extends State<UserPage> {
           return StatefulBuilder(
               builder: (BuildContext innerCtx, StateSetter setS) {
                 return AlertDialog(
-                    title: AppTheme.dialogTitle(p == null ? '신규 인원 등록' : '정보 수정 및 편집', p == null ? Icons.person_add : Icons.edit),
+                    title: AppTheme.dialogTitle(
+                        p == null ? '신규 인원 등록' : '정보 수정 및 편집',
+                        p == null ? Icons.person_add : Icons.edit
+                    ),
                     content: SizedBox(
                         width: 900,
                         child: SingleChildScrollView(
@@ -1422,9 +1459,8 @@ class _UserPageState extends State<UserPage> {
                                                       child: Center(
                                                           child: preview != null
                                                               ? Image.memory(preview!, fit: BoxFit.cover)
-                                                          // [수정됨] Null Safety 에러 완벽 해결 (p 가 null 이 아니고 url 값도 비어있지 않을 때만 접근)
-                                                              : (p != null && p.getImageUrl(widget.baseUrl) != null && p.getImageUrl(widget.baseUrl)!.isNotEmpty
-                                                              ? Image.network("${p.getImageUrl(widget.baseUrl)!}?t=${p.hashCode}", fit: BoxFit.cover, errorBuilder: (BuildContext c, Object e, StackTrace? s) => const Icon(Icons.broken_image))
+                                                              : (avatarUrl != null && avatarUrl.isNotEmpty
+                                                              ? Image.network("$avatarUrl?t=${p!.hashCode}", fit: BoxFit.cover, errorBuilder: (BuildContext c, Object e, StackTrace? s) => const Icon(Icons.broken_image))
                                                               : const Icon(Icons.camera_alt, size: 40, color: Colors.grey))
                                                       )
                                                   )
@@ -1447,9 +1483,28 @@ class _UserPageState extends State<UserPage> {
                                         )
                                       ]
                                   ),
+                                  // DB에 저장된 추가 항목(메타데이터)가 하나라도 있다면 기본 항목 아래에 표시합니다.
                                   if (metaC.isNotEmpty) ...[
-                                    const SizedBox(height: 32), const Divider(), const SizedBox(height: 16),
-                                    Wrap(spacing: 16, runSpacing: 16, children: metaC.entries.map((MapEntry<String, TextEditingController> e) => SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme))).toList())
+                                    const SizedBox(height: 32),
+                                    const Divider(),
+                                    const SizedBox(height: 16),
+                                    // [추가] 추가 항목 구분을 위해 미니멀하고 친절한 타이틀을 제공합니다.
+                                    Row(
+                                      children: [
+                                        Icon(Icons.post_add, color: theme.colorScheme.primary, size: 20),
+                                        const SizedBox(width: 8),
+                                        const Text(
+                                            "추가 항목 (사용자 정의 필드)",
+                                            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blueGrey)
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Wrap(
+                                        spacing: 16,
+                                        runSpacing: 16,
+                                        children: metaC.entries.map((MapEntry<String, TextEditingController> e) => SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme))).toList()
+                                    )
                                   ]
                                 ]
                             )
@@ -1462,6 +1517,7 @@ class _UserPageState extends State<UserPage> {
                       AppTheme.actionButton(label: "통합 저장", onPressed: () async {
                         final Map<String, dynamic> meta = Map<String, dynamic>.from(p?.metadata ?? {});
                         metaC.forEach((String k, TextEditingController c) {
+                          // 추가 항목의 텍스트가 비어있어도 저장되도록 처리하여 필요 시 값을 비울 수 있게 합니다.
                           meta[k] = c.text.trim();
                         });
 
