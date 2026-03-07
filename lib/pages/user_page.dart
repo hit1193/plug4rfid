@@ -43,7 +43,7 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 class UserPage extends StatefulWidget {
   final String searchQuery;
   final String filter;
-  final bool isMobile;
+  final bool isMobile; // 화면 너비에 따라 전달받는 모바일 여부 플래그입니다.
   final String baseUrl;
 
   const UserPage({
@@ -76,7 +76,7 @@ class _UserPageState extends State<UserPage> {
 
   bool _isFullScreenLoading = false;
 
-  // 레이아웃 고정 치수 (미니멀 디자인 규격)
+  // 데스크탑 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
@@ -380,7 +380,39 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 상단 통계 대시보드 위젯
+  /// 모바일 화면일 경우 4개의 타일을 가로 1줄이 아닌 2x2 그리드로 자동 분할합니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildDashboard(Map<String, dynamic> m, UserProvider provider, ThemeData theme) {
+    // 1. 모바일 환경일 때의 레이아웃 (2줄로 나누어 공간 확보)
+    if (widget.isMobile) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        color: theme.scaffoldBackgroundColor,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(child: _buildStatTile("전체 보기", provider.list.length, Icons.people, Colors.blueGrey, theme, filterKey: "전체")),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatTile("당일 입장", m['in'] as int, Icons.login, AppTheme.success, theme, filterKey: "당일 입장")),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _buildStatTile("당일 퇴장", m['out'] as int, Icons.logout, AppTheme.warning, theme, filterKey: "당일 퇴장")),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatTile("현재 잔류", m['current'] as int, Icons.person_search, theme.colorScheme.primary, theme, filterKey: "현재 잔류")),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 2. 데스크탑(키오스크) 환경일 때의 레이아웃 (가로 1줄로 길게 배치)
     return Container(
       padding: const EdgeInsets.all(16),
       color: theme.scaffoldBackgroundColor,
@@ -435,12 +467,18 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 헤더 및 검색, 기능 버튼 영역
+  /// 모바일 화면일 때 상단 여백이나 버튼 배치가 깨지지 않도록 구조를 최적화했습니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
         children: [
           Row(
+            // 모바일 화면일 경우 버튼이 위로 올라가거나 잘리지 않도록 정렬 방식을 조정합니다.
+            crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Wrap(
@@ -479,9 +517,16 @@ class _UserPageState extends State<UserPage> {
                   ],
                 ),
               ),
-              AppTheme.actionButton(label: "신규 등록", icon: Icons.person_add_alt_1, onPressed: () {
-                _showForm(provider, null, theme);
-              }, color: theme.colorScheme.primary),
+              // 모바일에서는 버튼과 기능 영역 사이의 여백을 약간 더 줍니다.
+              if (widget.isMobile) const SizedBox(width: 8),
+              AppTheme.actionButton(
+                  label: widget.isMobile ? "등록" : "신규 등록", // 모바일에서는 라벨을 간결하게 줄입니다.
+                  icon: Icons.person_add_alt_1,
+                  onPressed: () {
+                    _showForm(provider, null, theme);
+                  },
+                  color: theme.colorScheme.primary
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -532,54 +577,57 @@ class _UserPageState extends State<UserPage> {
               ? Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                  child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.edit_note, size: 18),
-                  label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
-                  onPressed: () {
-                    _showBulkEditDialog(provider, list, theme);
-                  },
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.delete_sweep, size: 18),
-                  label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
-                  onPressed: () {
-                    _confirmBulkDelete(provider, theme);
-                  },
-                ),
-                const SizedBox(width: 16),
-                Container(width: 1, height: 24, color: theme.dividerTheme.color),
-                const SizedBox(width: 16),
-                OutlinedButton.icon(
-                  icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
-                  label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
-                    side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+            child: SingleChildScrollView( // 다중 선택 툴바도 좁은 화면에서 스크롤되도록 방어
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                    child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
                   ),
-                  onPressed: () {
-                    setState(() {
-                      if (isAllSelected) {
-                        _selectedUserIds.clear();
-                      } else {
-                        for (final UserModel e in list) {
-                          _selectedUserIds.add(e.id);
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit_note, size: 18),
+                    label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      _showBulkEditDialog(provider, list, theme);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.delete_sweep, size: 18),
+                    label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      _confirmBulkDelete(provider, theme);
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  Container(width: 1, height: 24, color: theme.dividerTheme.color),
+                  const SizedBox(width: 16),
+                  OutlinedButton.icon(
+                    icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                    label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                      side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        if (isAllSelected) {
+                          _selectedUserIds.clear();
+                        } else {
+                          for (final UserModel e in list) {
+                            _selectedUserIds.add(e.id);
+                          }
                         }
-                      }
-                    });
-                  },
-                ),
-              ],
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
           )
               : Container(
@@ -668,87 +716,10 @@ class _UserPageState extends State<UserPage> {
                         child: Container(
                           padding: const EdgeInsets.all(20),
                           decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-                          child: Row(
-                            children: [
-                              GestureDetector(
-                                onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
-                                child: Stack(
-                                  alignment: Alignment.bottomRight,
-                                  children: [
-                                    _buildAvatar(item, theme, size: _colImgSize),
-                                    Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.primary,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
-                                      ),
-                                      child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 20),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
-                                        const SizedBox(width: 12),
-                                        _buildStatusBadge(status),
-                                        if (!item.isApproved) ...[
-                                          const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
-                                        ]
-                                      ],
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Wrap(
-                                      spacing: 20, runSpacing: 8,
-                                      children: columns.map((String col) {
-                                        return SizedBox(
-                                          width: 140,
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(col, style: AppTheme.itemLabelStyle(context)),
-                                              Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
-                                            ],
-                                          ),
-                                        );
-                                      }).toList(),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
-                                  ],
-                                ),
-                              ),
-                              SizedBox(
-                                width: _colActionWidth,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
-                                      _showHistoryDialog(context, item, theme);
-                                    }),
-                                    const SizedBox(width: 12),
-                                    _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
-                                      _processAccessWithLocation(provider, item, '입장');
-                                    }),
-                                    const SizedBox(width: 12),
-                                    _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
-                                      _processAccessWithLocation(provider, item, '퇴장');
-                                    }),
-                                    const SizedBox(width: 12),
-                                    _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
-                                      _confirmDelete(provider, item, theme);
-                                    }),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
+                          // [핵심 변경] 모바일과 데스크탑 레이아웃을 분리하여 호출합니다.
+                          child: widget.isMobile
+                              ? _buildMobileListItem(item, provider, columns, status, theme)
+                              : _buildDesktopListItem(item, provider, columns, status, theme),
                         ),
                       ),
                     ),
@@ -757,6 +728,193 @@ class _UserPageState extends State<UserPage> {
               },
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃 (기존)
+  /// 가로로 넓은 공간을 활용하여 정보와 액션 버튼을 1줄(Row)에 배치합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildDesktopListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
+    return Row(
+      children: [
+        GestureDetector(
+          onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
+          child: Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              _buildAvatar(item, theme, size: _colImgSize),
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                ),
+                child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
+                  const SizedBox(width: 12),
+                  _buildStatusBadge(status),
+                  if (!item.isApproved) ...[
+                    const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
+                  ]
+                ],
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 20, runSpacing: 8,
+                children: columns.map((String col) {
+                  return SizedBox(
+                    width: 140,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(col, style: AppTheme.itemLabelStyle(context)),
+                        Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 8),
+              Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ),
+        SizedBox(
+          width: _colActionWidth,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
+                _showHistoryDialog(context, item, theme);
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
+                _processAccessWithLocation(provider, item, '입장');
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
+                _processAccessWithLocation(provider, item, '퇴장');
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                _confirmDelete(provider, item, theme);
+              }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃 (신규)
+  /// 좁은 화면에서 잘리지 않도록 세로(Column) 구조로 정보와 액션 버튼을 위아래로 분리합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildMobileListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 상단: 프로필 이미지 및 기본 정보
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  _buildAvatar(item, theme, size: _colImgSize),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                    ),
+                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(item.name,
+                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildStatusBadge(status),
+                      if (!item.isApproved) ...[
+                        const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
+                      ]
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // 중단: 상세 컬럼 항목 (Wrap으로 자동 줄바꿈)
+        Wrap(
+          spacing: 16, runSpacing: 8,
+          children: columns.map((String col) {
+            return SizedBox(
+              width: 120, // 모바일에서는 넓이를 약간 줄입니다.
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(col, style: AppTheme.itemLabelStyle(context)),
+                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
+        const SizedBox(height: 8),
+        // 하단: 액션 버튼 그룹 (화면 너비에 맞춰 균등 배치)
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
+              _showHistoryDialog(context, item, theme);
+            }),
+            _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
+              _processAccessWithLocation(provider, item, '입장');
+            }),
+            _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
+              _processAccessWithLocation(provider, item, '퇴장');
+            }),
+            _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+              _confirmDelete(provider, item, theme);
+            }),
+          ],
         ),
       ],
     );

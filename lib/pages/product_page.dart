@@ -44,7 +44,7 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 /// ---------------------------------------------------------------------------
 class ProductPage extends StatefulWidget {
   final String searchQuery;
-  final bool isMobile;
+  final bool isMobile; // 화면 너비에 따라 전달받는 반응형 UI 전환 플래그입니다.
   final String baseUrl;
 
   const ProductPage({
@@ -324,6 +324,7 @@ class _ProductPageState extends State<ProductPage> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (BuildContext ctx, BoxConstraints constraints) {
+                    // 화면 크기에 따라 데스크탑(Split) 뷰와 모바일(단일) 뷰를 자동 전환합니다.
                     if (constraints.maxWidth > 950 && !widget.isMobile) {
                       return _buildSplitLayout(provider, groupedMap, groupKeys, theme);
                     }
@@ -331,7 +332,6 @@ class _ProductPageState extends State<ProductPage> {
                   },
                 ),
               ),
-              const SizedBox(height: 20),
             ],
           ),
           if ((provider.isParsing || provider.isSaving || _isFullScreenLoading) && !_isFullScreenLoading) ...[
@@ -345,7 +345,39 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 상단 통계 대시보드 위젯
+  /// UserPage와 동일하게 모바일 화면일 경우 4개의 타일을 가로 1줄이 아닌 2x2 그리드로 자동 분할합니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
+    if (widget.isMobile) {
+      // 모바일 환경: 2줄 분할 배치로 찌그러짐 방지
+      return Container(
+        padding: const EdgeInsets.all(16),
+        color: theme.scaffoldBackgroundColor,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(child: _buildStatTile("자산 마스터", totalCount, Icons.list_alt, Colors.blueGrey, theme, filterKey: "전체")),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatTile("금일 입고", m['in'] as int, Icons.add_business_outlined, AppTheme.success, theme, filterKey: "금일 입고")),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: _buildStatTile("금일 출고", m['out'] as int, Icons.local_shipping_outlined, AppTheme.warning, theme, filterKey: "금일 출고")),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatTile("현재 실재고", m['stock'] as int, Icons.inventory_2_outlined, AppTheme.primary, theme, filterKey: "현재 실재고")),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 데스크탑 환경: 가로 1줄로 넓게 배치
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       color: theme.scaffoldBackgroundColor,
@@ -403,6 +435,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [데스크탑 전용] 분할 화면 뷰 (Split Layout)
+  /// 좌측에 그룹 목록, 우측에 상세 목록을 띄웁니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildSplitLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -444,12 +480,18 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 헤더 및 기능 버튼 영역
+  /// 모바일 화면일 때 레이아웃 붕괴 방지 및 신규 등록 버튼의 디자인을 UserPage와 통일했습니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
         children: [
           Row(
+            // 모바일 화면일 경우 위로 정렬하여 버튼이 잘리지 않도록 보호합니다.
+            crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Wrap(
@@ -488,9 +530,16 @@ class _ProductPageState extends State<ProductPage> {
                   ],
                 ),
               ),
-              _buildActionIconButton(Icons.add_box, "신규 등록", () {
-                _showForm(provider, null, theme);
-              }, theme, color: AppTheme.primary, isLarge: true),
+              if (widget.isMobile) const SizedBox(width: 8),
+              // UserPage와 동일한 시각적 일관성을 주기 위해 AppTheme.actionButton으로 교체
+              AppTheme.actionButton(
+                  label: widget.isMobile ? "등록" : "신규 등록",
+                  icon: Icons.add_box,
+                  onPressed: () {
+                    _showForm(provider, null, theme);
+                  },
+                  color: theme.colorScheme.primary
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -530,6 +579,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// 우측 (상세 보기 뷰) 렌더링 영역
+  /// 모바일과 데스크탑의 세부 아이템 렌더링 로직을 여기서 분기(Branch)합니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     final bool isAllSelected = items.isNotEmpty && items.every((ProductModel p) => _selectedItemIds.contains(p.id));
 
@@ -542,7 +595,13 @@ class _ProductPageState extends State<ProductPage> {
             children: [
               Container(width: 4, height: 20, color: AppTheme.primary),
               const SizedBox(width: 12),
-              Text(groupName, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w800, fontSize: 20, color: AppTheme.dataColor(theme.brightness == Brightness.dark), letterSpacing: -0.4)),
+              Expanded(
+                  child: Text(
+                    groupName,
+                    style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w800, fontSize: 20, color: AppTheme.dataColor(theme.brightness == Brightness.dark), letterSpacing: -0.4),
+                    overflow: TextOverflow.ellipsis,
+                  )
+              ),
             ],
           ),
         ),
@@ -555,54 +614,57 @@ class _ProductPageState extends State<ProductPage> {
               ? Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                  child: Text('${_selectedItemIds.length}개 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.edit_note, size: 18),
-                  label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
-                  onPressed: () {
-                    _showBulkEditDialog(provider, items, theme);
-                  },
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.delete_sweep, size: 18),
-                  label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
-                  onPressed: () {
-                    _confirmBulkDelete(provider, theme);
-                  },
-                ),
-                const SizedBox(width: 16),
-                Container(width: 1, height: 24, color: theme.dividerTheme.color),
-                const SizedBox(width: 16),
-                OutlinedButton.icon(
-                  icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
-                  label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
-                    side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                    child: Text('${_selectedItemIds.length}개 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
                   ),
-                  onPressed: () {
-                    setState(() {
-                      if (isAllSelected) {
-                        _selectedItemIds.clear();
-                      } else {
-                        for (final ProductModel e in items) {
-                          _selectedItemIds.add(e.id);
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit_note, size: 18),
+                    label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      _showBulkEditDialog(provider, items, theme);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.delete_sweep, size: 18),
+                    label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      _confirmBulkDelete(provider, theme);
+                    },
+                  ),
+                  const SizedBox(width: 16),
+                  Container(width: 1, height: 24, color: theme.dividerTheme.color),
+                  const SizedBox(width: 16),
+                  OutlinedButton.icon(
+                    icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                    label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                      side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        if (isAllSelected) {
+                          _selectedItemIds.clear();
+                        } else {
+                          for (final ProductModel e in items) {
+                            _selectedItemIds.add(e.id);
+                          }
                         }
-                      }
-                    });
-                  },
-                ),
-              ],
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
           )
               : Container(
@@ -686,81 +748,12 @@ class _ProductPageState extends State<ProductPage> {
                       },
                       borderRadius: BorderRadius.circular(AppTheme.cardRadius),
                       child: Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-                        child: Row(
-                          children: [
-                            GestureDetector(
-                              onTap: () => _handleGroupImageUpdate(provider, items, theme),
-                              child: Stack(
-                                alignment: Alignment.bottomRight,
-                                children: [
-                                  _buildThumbnail(p, theme, size: _colImgSize),
-                                  Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: AppTheme.primary,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
-                                    ),
-                                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 20),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                      children: [
-                                        Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
-                                        const SizedBox(width: 12),
-                                        _buildStatusBadge(p.status),
-                                        if (!p.isApproved)
-                                          const Padding(
-                                            padding: EdgeInsets.only(left: 8),
-                                            child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
-                                          ),
-                                      ]
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 20, runSpacing: 10,
-                                    children: provider.selectedColumns
-                                        .where((String col) => col != '품명')
-                                        .map((String col) => _buildKeyValue(col, _getAttributeValue(col, p), context))
-                                        .toList(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(
-                              width: _colActionWidth,
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () {
-                                    _showHistoryDialog(p, theme);
-                                  }),
-                                  const SizedBox(width: 12),
-                                  _buildCircleAction(Icons.login, AppTheme.success, "입고", () {
-                                    _processAssetAccess(provider, p, '수기입고', theme);
-                                  }),
-                                  const SizedBox(width: 12),
-                                  _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () {
-                                    _processAssetAccess(provider, p, '수기출고', theme);
-                                  }),
-                                  const SizedBox(width: 12),
-                                  _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
-                                    _confirmIndividualDelete(provider, p, theme);
-                                  }),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                          padding: const EdgeInsets.all(20),
+                          decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
+                          // [핵심 반응형 분기] 모바일 화면 너비일 때는 세로로, 데스크탑일 때는 가로로 아이템을 렌더링합니다.
+                          child: widget.isMobile
+                              ? _buildMobileListItem(p, provider, items, statusColor, theme)
+                              : _buildDesktopListItem(p, provider, items, statusColor, theme)
                       ),
                     ),
                   ),
@@ -768,6 +761,187 @@ class _ProductPageState extends State<ProductPage> {
               );
             },
           ),
+        ),
+      ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃 (기존 유지)
+  /// 가로로 넓은 공간을 활용하여 정보와 액션 버튼을 1줄(Row)에 배치합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildDesktopListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
+    return Row(
+      children: [
+        GestureDetector(
+          onTap: () => _handleGroupImageUpdate(provider, items, theme),
+          child: Stack(
+            alignment: Alignment.bottomRight,
+            children: [
+              _buildThumbnail(p, theme, size: _colImgSize),
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                ),
+                child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                  children: [
+                    Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
+                    const SizedBox(width: 12),
+                    _buildStatusBadge(p.status),
+                    if (!p.isApproved)
+                      const Padding(
+                        padding: EdgeInsets.only(left: 8),
+                        child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+                      ),
+                  ]
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 20, runSpacing: 10,
+                children: provider.selectedColumns
+                    .where((String col) => col != '품명')
+                    .map((String col) => _buildKeyValue(col, _getAttributeValue(col, p), context))
+                    .toList(),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          width: _colActionWidth,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () {
+                _showHistoryDialog(p, theme);
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.login, AppTheme.success, "입고", () {
+                _processAssetAccess(provider, p, '수기입고', theme);
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () {
+                _processAssetAccess(provider, p, '수기출고', theme);
+              }),
+              const SizedBox(width: 12),
+              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                _confirmIndividualDelete(provider, p, theme);
+              }),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃 (신규)
+  /// 좁은 화면에서 액션 버튼이 잘리지 않도록 세로(Column) 구조로 정보와 버튼을 위아래로 분리합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildMobileListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 상단: 썸네일 및 기본 타이틀 렌더링
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () => _handleGroupImageUpdate(provider, items, theme),
+              child: Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  _buildThumbnail(p, theme, size: _colImgSize),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
+                    ),
+                    child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                      children: [
+                        Flexible(
+                            child: Text(p.name,
+                              style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
+                              overflow: TextOverflow.ellipsis,
+                            )
+                        ),
+                        const SizedBox(width: 8),
+                        _buildStatusBadge(p.status),
+                        if (!p.isApproved)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 4),
+                            child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18),
+                          ),
+                      ]
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // 중단: 상세 컬럼 데이터 (모바일에 맞게 공간 축소)
+        Wrap(
+          spacing: 16, runSpacing: 8,
+          children: provider.selectedColumns
+              .where((String col) => col != '품명')
+              .map((String col) {
+            return SizedBox(
+              width: 120, // 모바일에 맞춰 가로 폭 축소
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(col, style: AppTheme.itemLabelStyle(context)),
+                  Text(_getAttributeValue(col, p), style: AppTheme.itemValueStyle(context).copyWith(fontSize: 14), overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 16),
+        Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
+        const SizedBox(height: 8),
+        // 하단: 가로 균등 분할된 모바일 전용 액션 버튼 그룹
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () {
+              _showHistoryDialog(p, theme);
+            }),
+            _buildCircleAction(Icons.login, AppTheme.success, "입고", () {
+              _processAssetAccess(provider, p, '수기입고', theme);
+            }),
+            _buildCircleAction(Icons.logout, AppTheme.warning, "출고", () {
+              _processAssetAccess(provider, p, '수기출고', theme);
+            }),
+            _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+              _confirmIndividualDelete(provider, p, theme);
+            }),
+          ],
         ),
       ],
     );
@@ -1101,10 +1275,11 @@ class _ProductPageState extends State<ProductPage> {
     _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedProducts.length}개의 항목이 성공적으로 업데이트 되었습니다.", theme);
   }
 
-  // ---------------------------------------------------------------------------
-  // [신규 및 수정 폼 로직]
-  // 신규 추가일 때만 벌크 생성(Bulk Create) 수량을 폼 최하단에서 입력받습니다.
-  // ---------------------------------------------------------------------------
+  /// ---------------------------------------------------------------------------
+  /// [신규 등록 및 편집 다이얼로그]
+  /// UserPage와 동일하게 데이터베이스 전수 조사를 통해 모든 추가 필드(메타데이터)를
+  /// 신규 작성 시점에서도 완벽하게 불러오도록 로직을 일치시켰습니다.
+  /// ---------------------------------------------------------------------------
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
@@ -1121,25 +1296,34 @@ class _ProductPageState extends State<ProductPage> {
     XFile? file;
     Uint8List? preview;
 
+    // -----------------------------------------------------------------------
+    // [메타데이터 전수조사 로직 동기화]
+    // 100개만 스캔하던 기존 방식을 버리고 전체를 안전하게 훑어서 모든 키를 찾아냅니다.
+    // -----------------------------------------------------------------------
     final Map<String, TextEditingController> metaC = {};
+    final Set<String> allMetaKeys = {};
+
+    for (final ProductModel item in provider.items) {
+      for (final String key in item.metadata.keys) {
+        final dynamic val = item.metadata[key];
+        if (!_excludedSystemKeys.contains(key) && !key.endsWith('_internal') && val is! Map && val is! List) {
+          allMetaKeys.add(key);
+        }
+      }
+    }
+
     if (p != null) {
-      p.metadata.forEach((String k, dynamic v) {
-        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
-          metaC[k] = TextEditingController(text: _safeStr(v));
+      p.metadata.forEach((String key, dynamic val) {
+        if (!_excludedSystemKeys.contains(key) && !key.endsWith('_internal') && val is! Map && val is! List) {
+          allMetaKeys.add(key);
         }
       });
-    } else {
-      final Set<String> availableMetaKeys = {};
-      for (final ProductModel item in provider.items.take(100)) {
-        for (final String key in item.metadata.keys) {
-          if (!_excludedSystemKeys.contains(key) && !key.endsWith('_internal')) {
-            availableMetaKeys.add(key);
-          }
-        }
-      }
-      for (final String k in availableMetaKeys) {
-        metaC[k] = TextEditingController(text: "");
-      }
+    }
+
+    final List<String> sortedMetaKeys = allMetaKeys.toList()..sort();
+    for (final String key in sortedMetaKeys) {
+      final String initialValue = p != null ? _safeStr(p.metadata[key]) : "";
+      metaC[key] = TextEditingController(text: initialValue);
     }
 
     showDialog(
@@ -1474,11 +1658,38 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // [사라졌던 UI 렌더링 함수들 완벽 복원]
-  // ---------------------------------------------------------------------------
-
+  /// ---------------------------------------------------------------------------
+  /// [모바일 전용 레이아웃] 모바일에서는 그룹 리스트와 디테일 리스트를 분리 호출합니다.
+  /// _selectedGroupKey가 있으면 상세 화면을, 없으면 그룹 리스트를 띄워줍니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
+    // 1. 그룹 중 하나를 선택한 상태 (상세 목록 모드)
+    if (_selectedGroupKey != null) {
+      return Column(
+        children: [
+          _buildHeader(provider, theme),
+          // 모바일 화면용 동적 "뒤로가기" 버튼
+          Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 8),
+            child: TextButton.icon(
+              onPressed: () => setState(() {
+                _selectedGroupKey = null;
+                _selectedItemIds.clear();
+              }),
+              icon: const Icon(Icons.arrow_back_rounded, size: 20),
+              label: const Text("그룹 목록으로 돌아가기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
+              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+            ),
+          ),
+          Expanded(
+            child: _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? [], theme),
+          ),
+        ],
+      );
+    }
+
+    // 2. 초기 상태 (전체 그룹 목록 모드)
     return Column(
       children: [
         _buildHeader(provider, theme),
