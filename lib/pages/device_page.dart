@@ -280,7 +280,8 @@ class _DevicePageState extends State<DevicePage> {
               ),
               if (widget.isMobile) const SizedBox(width: 8),
               AppTheme.actionButton(
-                  label: widget.isMobile ? "등록" : "신규 장치 등록",
+                // [수정됨] 다른 페이지와의 통일성을 위해 "신규 장치 등록" -> "신규 등록"으로 텍스트를 간결하게 변경했습니다.
+                  label: widget.isMobile ? "등록" : "신규 등록",
                   icon: Icons.add_box,
                   onPressed: () {
                     _showForm(context, provider, null);
@@ -743,11 +744,9 @@ class _DevicePageState extends State<DevicePage> {
   /// ---------------------------------------------------------------------------
   /// [신규 UI] 안테나 출력(Power) 제어 다이얼로그
   /// 키오스크와 유사하게 크고 직관적인 슬라이더(Slider)를 통해 주파수 세기를 설정합니다.
-  /// Linter 규칙에 따라 지역 변수명에서 언더스코어(_)를 제거했습니다.
   /// ---------------------------------------------------------------------------
   void _showPowerControlDialog(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
-    // [수정됨] Dart Linter 권장사항에 따라 로컬 변수의 _ 접두사를 제거했습니다.
     int selectedAntenna = 0; // 0: 전체공통, 1~4: 개별 포트
     double currentPower = 300; // 고정식 리더기 매뉴얼상 Default는 300 (30.0 dBm)
 
@@ -777,7 +776,7 @@ class _DevicePageState extends State<DevicePage> {
                               ButtonSegment(value: 3, label: Text("ANT 3")),
                               ButtonSegment(value: 4, label: Text("ANT 4")),
                             ],
-                            selected: {selectedAntenna}, // [수정됨] 변수명 수정 반영
+                            selected: {selectedAntenna},
                             onSelectionChanged: (val) {
                               setDialogState(() { selectedAntenna = val.first; });
                             },
@@ -793,7 +792,7 @@ class _DevicePageState extends State<DevicePage> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text("주파수 출력 파워", style: AppTheme.itemLabelStyle(context)),
-                            Text("${(currentPower / 10).toStringAsFixed(1)} dBm", // [수정됨] 변수명 수정 반영
+                            Text("${(currentPower / 10).toStringAsFixed(1)} dBm",
                                 style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, fontWeight: FontWeight.w900, color: Colors.blueAccent)
                             ),
                           ],
@@ -801,7 +800,7 @@ class _DevicePageState extends State<DevicePage> {
                         const SizedBox(height: 8),
                         // 슬라이더: 50(5dBm) ~ 310(31dBm) 범위, 간격은 10(1dBm) 단위
                         Slider(
-                          value: currentPower, // [수정됨] 변수명 수정 반영
+                          value: currentPower,
                           min: 50,
                           max: 310,
                           divisions: 26,
@@ -835,7 +834,7 @@ class _DevicePageState extends State<DevicePage> {
                         color: Colors.blueAccent,
                         onPressed: () {
                           // 브릿지 함수(Provider)를 통해 하드웨어 객체로 파워 변경 명령을 쏘아줍니다!
-                          provider.setDevicePower(d.id, selectedAntenna, currentPower.toInt()); // [수정됨] 변수명 수정 반영
+                          provider.setDevicePower(d.id, selectedAntenna, currentPower.toInt());
                           Navigator.pop(ctx);
                           ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(content: Text("안테나 출력 설정 명령이 전송되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
@@ -851,7 +850,7 @@ class _DevicePageState extends State<DevicePage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [기능] 장치 등록/수정 다이얼로그
+  /// [기능] 장치 등록/수정 다이얼로그 (편집창)
   /// ---------------------------------------------------------------------------
   Future<void> _showForm(BuildContext context, DeviceProvider provider, DeviceModel? d) async {
     final theme = Theme.of(context);
@@ -888,7 +887,8 @@ class _DevicePageState extends State<DevicePage> {
                           children: [
                             _buildImagePickerBox(context, d, null, (file, bytes) {}, theme),
                             const SizedBox(width: 30),
-                            Expanded(child: _buildFormFields(nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
+                            // 폼 필드 생성 함수에 context, provider, d 객체를 전달하여 내부에서 버튼을 그릴 수 있게 합니다.
+                            Expanded(child: _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
                               setDialogState(() {
                                 if (m != null) modelV = m;
                                 if (a != null) activeV = a;
@@ -900,7 +900,8 @@ class _DevicePageState extends State<DevicePage> {
                       else ...[
                         _buildImagePickerBox(context, d, null, (file, bytes) { }, theme),
                         const SizedBox(height: 20),
-                        _buildFormFields(nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
+                        // 모바일 레이아웃 호출 시에도 동일하게 파라미터 전달
+                        _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
                           setDialogState(() {
                             if (m != null) modelV = m;
                             if (a != null) activeV = a;
@@ -985,7 +986,8 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  Widget _buildFormFields(TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, Function(String?, bool?, bool?) onC, ThemeData theme) {
+  // 편집 폼 내부에서도 장치의 상태(d)와 프로바이더를 사용할 수 있도록 파라미터를 추가했습니다.
+  Widget _buildFormFields(BuildContext context, DeviceProvider provider, DeviceModel? d, TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, Function(String?, bool?, bool?) onC, ThemeData theme) {
     return Column(
       children: [
         _buildDialogTextField("장치 관리 명칭 (필수)", n, theme, icon: Icons.label_outline),
@@ -1007,6 +1009,35 @@ class _DevicePageState extends State<DevicePage> {
           onChanged: (v) => onC(v, null, null),
         ),
         const SizedBox(height: 24),
+
+        // 장치 편집창 내부에서도 실시간 파워 제어 다이얼로그를 띄울 수 있는 버튼을 추가합니다!
+        // 사용자가 실수하지 않도록 장비가 '연결(Online)' 되어있을 때만 동작하도록 방어 로직을 적용했습니다.
+        if (d != null) ...[
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.tune, size: 20),
+              label: const Text("안테나 출력(RF Power) 실시간 제어", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.1),
+                  foregroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent : Colors.grey,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  side: BorderSide(color: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3))
+              ),
+              onPressed: d.status.toLowerCase() == 'online' ? () {
+                // 편집창 위에 파워 제어 팝업창을 겹쳐서 띄웁니다.
+                _showPowerControlDialog(context, provider, d);
+              } : () {
+                // 연결되지 않았을 때는 툴팁처럼 스낵바를 띄워 직관성을 높입니다.
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("장치가 온라인(연결됨) 상태일 때만 제어할 수 있습니다.")));
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
