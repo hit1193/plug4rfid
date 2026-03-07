@@ -46,6 +46,7 @@ dependencies:
   excel: ^4.0.6
   spreadsheet_decoder: ^2.1.1
   shared_preferences: ^2.5.4
+  system_tray: ^2.0.3
 
 dev_dependencies:
   flutter_test:
@@ -79,6 +80,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/PLUG4ASSET.png
+    - assets/app_icon.ico
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see

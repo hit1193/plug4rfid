@@ -12,6 +12,10 @@ class DeviceModel {
   final int port;             // 통신 포트
   final String status;        // 현재 상태 (Online, Offline, Error)
   final bool isActive;        // 장치 활성화 여부
+
+  // [신규 추가] 앱(프로그램) 구동 시 백그라운드에서 자동으로 연결을 시도할지 여부
+  final bool isAutoConnect;
+
   final String clientId;      // Host Serial ID
   final String? image;        // 장치 사진 파일명
   final double posX;          // 도면 내 X 좌표 (0.0~1.0)
@@ -31,6 +35,7 @@ class DeviceModel {
     this.port = 8080,
     this.status = 'Offline',
     this.isActive = true,
+    this.isAutoConnect = false, // 기본값은 '수동 연결(false)'로 둡니다.
     this.image,
     this.posX = 0.0,
     this.posY = 0.0,
@@ -52,6 +57,8 @@ class DeviceModel {
       port: record.getIntValue('port', 8080),
       status: record.getStringValue('status', 'Offline'),
       isActive: record.getBoolValue('is_active', true),
+      // [신규 추가] DB의 is_auto_connect 필드를 읽어와서 매핑합니다.
+      isAutoConnect: record.getBoolValue('is_auto_connect', false),
       image: record.getStringValue('image'),
       posX: record.getDoubleValue('pos_x', 0.0),
       posY: record.getDoubleValue('pos_y', 0.0),

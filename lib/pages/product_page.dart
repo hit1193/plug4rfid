@@ -332,6 +332,8 @@ class _ProductPageState extends State<ProductPage> {
                   },
                 ),
               ),
+              // [수정됨] 화면 최하단이 바닥에 딱 달라붙어 답답해 보이지 않도록 20px의 여백을 줍니다.
+              const SizedBox(height: 20),
             ],
           ),
           if ((provider.isParsing || provider.isSaving || _isFullScreenLoading) && !_isFullScreenLoading) ...[

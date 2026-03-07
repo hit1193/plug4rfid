@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:system_tray/system_tray.dart'; // [패치] 시스템 트레이 패키지 임포트
 import 'package:provider/provider.dart';
 import 'dart:io';
 
@@ -29,12 +30,17 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
-class _MainPageState extends State<MainPage> {
+// WindowListener를 믹스인(with)하여 윈도우 창의 상태 변화(최소화, 복원 등)를 감지합니다.
+class _MainPageState extends State<MainPage> with WindowListener {
   // --- 메인 상태 제어 변수 ---
   bool _isKioskMode = false;         // 전체화면 키오스크 모드 활성화 여부
   bool _isSidebarExtended = true;    // 좌측 사이드바의 펼침/접힘 상태
   int _selectedIndex = 0;            // 현재 선택된 메뉴의 인덱스 번호
   final String _pbBaseUrl = "http://127.0.0.1:8090"; // PocketBase 서버 주소
+
+  // 시스템 트레이 제어용 객체 선언
+  final SystemTray _systemTray = SystemTray();
+  final AppWindow _appWindow = AppWindow();
 
   // 사이드바에 표시될 메뉴 아이템 목록 (향후 DB에서 불러오도록 확장 가능합니다)
   final List<Map<String, dynamic>> _menuItems = [
@@ -45,6 +51,89 @@ class _MainPageState extends State<MainPage> {
     {'title': '출입 기록', 'icon': FontAwesomeIcons.clockRotateLeft},
     {'title': '환경 설정', 'icon': FontAwesomeIcons.gears},
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 플러터 윈도우 매니저에 현재 위젯을 리스너로 등록하여 창 이벤트를 수신합니다.
+    windowManager.addListener(this);
+    // 비동기 함수로 시스템 트레이를 초기화합니다.
+    _initSystemTray();
+  }
+
+  @override
+  void dispose() {
+    // 메모리 누수를 방지하기 위해 위젯 종료 시 리스너를 반드시 해제합니다.
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [시스템 트레이 (System Tray) 초기화 함수]
+  /// 윈도우 우측 하단 시계 옆에 숨겨지는 트레이 아이콘과 메뉴를 구성합니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _initSystemTray() async {
+    if (!kIsWeb && Platform.isWindows) {
+      // 1. 트레이 아이콘 설정
+      // [주의] 윈도우 환경에서는 반드시 .ico 확장자 파일이 필요합니다.
+      // 실제 프로젝트의 assets 폴더에 app_icon.ico 파일을 생성/추가해 주셔야 합니다.
+      await _systemTray.initSystemTray(
+        title: "RFID 통합 관제",
+        iconPath: 'assets/app_icon.ico',
+      );
+
+      // 2. 트레이 아이콘 우클릭 시 나타날 컨텍스트 메뉴(Pop-up Menu) 구성
+      final Menu menu = Menu();
+      await menu.buildFrom([
+        MenuItemLabel(
+            label: '화면 다시 열기 (Restore)',
+            // [수정됨] 최신 system_tray 패키지에 맞게 onClick -> onClicked 로 변경했습니다.
+            onClicked: (menuItem) async {
+              // 앱 창을 화면에 다시 띄우고 강제로 전체화면을 덮어씌웁니다.
+              await _appWindow.show();
+              await windowManager.setFullScreen(true);
+            }
+        ),
+        MenuSeparator(), // 메뉴 구분선
+        MenuItemLabel(
+            label: '프로그램 완전 종료',
+            // [수정됨] 최신 system_tray 패키지에 맞게 onClick -> onClicked 로 변경했습니다.
+            onClicked: (menuItem) async {
+              await windowManager.close();
+            }
+        ),
+      ]);
+
+      // 구성한 메뉴를 시스템 트레이에 연결합니다.
+      await _systemTray.setContextMenu(menu);
+
+      // 3. 트레이 아이콘 마우스 클릭 이벤트 감지 루틴
+      _systemTray.registerSystemTrayEventHandler((String eventName) async {
+        if (eventName == kSystemTrayEventClick) {
+          // 좌클릭 시: 창을 다시 보여주고 전체화면 복구
+          await _appWindow.show();
+          await windowManager.setFullScreen(true);
+        } else if (eventName == kSystemTrayEventRightClick) {
+          // 우클릭 시: 컨텍스트 메뉴 띄우기
+          await _systemTray.popUpContextMenu();
+        }
+      });
+    }
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [윈도우 창 이벤트 감지 - OnRestore]
+  /// 혹시라도 다른 경로를 통해 창이 다시 띄워졌을 때 전체화면을 보장하는 방어 코드입니다.
+  /// ---------------------------------------------------------------------------
+  @override
+  void onWindowRestore() async {
+    if (!kIsWeb && Platform.isWindows) {
+      bool isFull = await windowManager.isFullScreen();
+      if (!isFull) {
+        await windowManager.setFullScreen(true);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -132,7 +221,7 @@ class _MainPageState extends State<MainPage> {
       ),
       child: Column(
         children: [
-          // [로고 및 접기 버튼 헤더] - 로고 크기를 줄이고 위로 바짝 올렸습니다.
+          // [로고 및 접기 버튼 헤더]
           _buildSidebarHeader(extended, theme),
 
           // 로고와 메뉴 사이의 간격을 줄여 메뉴들이 위로 끌어올려지도록 했습니다.
@@ -161,9 +250,7 @@ class _MainPageState extends State<MainPage> {
                 Divider(color: theme.dividerTheme.color),
                 const SizedBox(height: 20),
 
-                // 테마 선택 기능은 삭제하고, 추후 '환경 설정' 메뉴에서 개발하시도록 비워두었습니다.
-
-                // 2. 부가 기능 메뉴 (키오스크 모드, 로그아웃, 시스템 종료)
+                // 2. 부가 기능 메뉴 (키오스크 모드, 로그아웃, 시스템 제어)
                 _buildMenuItem(
                   title: "키오스크 모드",
                   icon: FontAwesomeIcons.lockOpen,
@@ -187,8 +274,23 @@ class _MainPageState extends State<MainPage> {
                   },
                 ),
 
-                // 윈도우 데스크탑 환경일 경우에만 '종료하기' 버튼을 노출합니다.
+                // 윈도우 데스크탑 환경일 경우에만 시스템 제어 버튼들을 노출합니다.
                 if (!kIsWeb && Platform.isWindows) ...[
+                  const SizedBox(height: 4),
+                  // 시스템 트레이로 완전히 숨깁니다.
+                  _buildMenuItem(
+                    title: "트레이로 숨기기",
+                    icon: Icons.visibility_off,
+                    extended: extended,
+                    isSelected: false,
+                    color: Colors.blueGrey,
+                    theme: theme,
+                    onTap: () async {
+                      // 윈도우 매니저의 hide() 함수를 호출하여 화면 및 작업표시줄에서 앱을 완벽히 지웁니다.
+                      // (트레이 아이콘은 _initSystemTray()를 통해 우측 하단에 남아있게 됩니다)
+                      await windowManager.hide();
+                    },
+                  ),
                   const SizedBox(height: 4),
                   _buildMenuItem(
                     title: "종료하기",
@@ -212,14 +314,12 @@ class _MainPageState extends State<MainPage> {
 
   /// ---------------------------------------------------------------------------
   /// [사이드바 상단 헤더 (로고 및 메뉴 접기 버튼)]
-  /// 사장님의 요청에 따라 로고 크기를 줄이고, 위쪽 공백을 대폭 축소하였습니다.
-  /// 이로 인해 하단의 메뉴 항목들이 자연스럽게 위쪽으로 끌어올려집니다.
   /// ---------------------------------------------------------------------------
   Widget _buildSidebarHeader(bool extended, ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
     return Container(
-      // [수정] 상단 여백(top)을 기존 60에서 24로 줄여서 전체적으로 위로 끌어올렸습니다.
+      // 상단 여백(top)을 24로 줄여서 전체적으로 위로 끌어올렸습니다.
       padding: EdgeInsets.fromLTRB(14, extended ? 24 : 20, 14, 10),
       child: Stack(
         alignment: Alignment.center,
@@ -230,7 +330,6 @@ class _MainPageState extends State<MainPage> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               constraints: BoxConstraints(
-                // [수정] maxHeight를 80으로 대폭 줄여서 미니멀하고 깔끔하게 변경했습니다.
                 maxHeight: extended ? 80 : 40,
                 maxWidth: extended ? 180 : 50,
               ),
@@ -255,7 +354,6 @@ class _MainPageState extends State<MainPage> {
 
           // 2. 메뉴 토글 아이콘 (접기/펴기 버튼)
           Positioned(
-            // [수정] 로고 크기와 여백이 줄어든 것에 맞추어 토글 버튼의 좌표도 자연스럽게 조정했습니다.
             top: extended ? -16 : -10,
             right: extended ? -12 : null,
             left: extended ? null : -12,
