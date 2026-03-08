@@ -7,8 +7,8 @@ import '../theme/app_theme.dart';
 
 /// RFID 게이트의 운영 모드를 정의하는 열거형입니다.
 enum GateScanMode {
-  personnelOnly, // 인원 출입 전용 모드 (단순 통과 감지)
-  itemWorkerMatch // 물품 + 작업자 매칭 모드 (자산 반출입 감지)
+  personnelOnly, // 인원 출입 전용 모드
+  itemWorkerMatch // 물품 + 작업자 매칭 모드
 }
 
 /// ---------------------------------------------------------------------------
@@ -16,10 +16,11 @@ enum GateScanMode {
 /// 평소에는 미니멀한 대기화면(Standby)을 띄워두고,
 /// RFID 감지가 발생하면 즉각적으로 입/출고 리스트 화면으로 전환됩니다.
 ///
-/// [최종 업데이트 - 대량 리스트 및 시인성 최적화]
-/// 1. 물품 수량(Quantity) 하이라이트: 누락 여부를 즉시 판단하도록 수량 폰트 극대화
-/// 2. 대량 데이터 대응: 리스트가 길어져도 카드 내부에서 스크롤이 가능하도록 설계
-/// 3. 인원-작업자 분리: 일반 통행자와 책임 작업자의 UI 위계를 명확히 구분
+/// [최종 업데이트 사항]
+/// 1. 이미지 여백 제거: 이미지 프레임 내부의 여백(Padding)을 모두 없애서 꽉 찬 느낌을 주었습니다.
+/// 2. 수량 폰트 최적화: 너무 두꺼웠던 수량 폰트를 w800(weightMenu)으로 유지합니다.
+/// 3. 최상단 삽입(Push-down) 방식: 새로운 감지 내역이 최상단에 꽂히며 기존 내역을 밀어냅니다.
+/// 4. 독립 스크롤러: 개별 로그 카드가 독립적인 ScrollController를 가져 충돌을 방지합니다.
 /// ---------------------------------------------------------------------------
 class KioskView extends StatefulWidget {
   /// 키오스크 모드를 종료하고 메인 화면으로 돌아가기 위한 콜백 함수입니다.
@@ -47,7 +48,7 @@ class _KioskViewState extends State<KioskView> {
   Duration _timeOffset = Duration.zero;
 
   bool _useStandbyMode = true;
-  // 샘플 데이터 시연을 위해 초기 상태를 false(리스트 노출)로 시작합니다.
+  // 초기 샘플 시연을 위해 리스트 화면이 활성화된 상태로 시작합니다.
   bool _isStandbyActive = false;
 
   final int _standbyTimeoutSeconds = 10;
@@ -57,7 +58,7 @@ class _KioskViewState extends State<KioskView> {
   GateScanMode _currentScanMode = GateScanMode.itemWorkerMatch;
 
   // -------------------------------------------------------------------------
-  // [슬라이드쇼 및 공지사항 데이터]
+  // [슬라이드쇼 이미지 데이터]
   // -------------------------------------------------------------------------
   final List<String> _backgroundImages = [
     "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=2000&auto=format&fit=crop",
@@ -70,52 +71,46 @@ class _KioskViewState extends State<KioskView> {
       "[사내 공지] 2026년 상반기 정기 재물조사가 다음 주 월요일부터 시작됩니다. 각 부서 자산관리자는 RFID 태그 부착 상태를 점검해 주시기 바랍니다.   *** [안전 수칙] 물류 창고 진입 시 반드시 안전모를 착용해 주십시오.";
 
   // -------------------------------------------------------------------------
-  // [샘플 데이터 - 대량 리스트 상황 가정]
+  // [실시간 로그 데이터 - 시연용 샘플]
   // -------------------------------------------------------------------------
   final List<Map<String, dynamic>> _realtimeLogs = [
     {
       'type': 'matched',
-      'content': '이작업 주임',
+      'content': '홍길동 책임',
+      'imageUrl': 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200',
       'spot': 'B구역 1번 자재고 게이트',
       'status': '출고(대여)',
       'time': '13:15:22',
       'isEntry': false,
       'items': [
-        '전동 드릴 (DEWALT-88)',
-        '산업용 태블릿 (G-Tab v4)',
-        '검교정 키트 (SK-202)',
-        '절연 장갑 L-size',
-        '보호 안경 (3M-Pro)',
-        '무선 충전기 (W-Pack)',
-        '수평계 (Laser-99)',
-        '연마기 (H-Grinder)',
-        '테스트용 PCB 기판 A',
-        '테스트용 PCB 기판 B',
-      ] // 총 10개 감지 상황 시뮬레이션
+        {'name': '전동 드릴 (DEWALT-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200'},
+        {'name': '산업용 태블릿 (G-Tab v4)', 'image': 'https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?q=80&w=200'},
+        {'name': '검교정 키트 (SK-202)', 'image': 'https://images.unsplash.com/photo-1530124566582-a618bc2615ad?q=80&w=200'},
+        {'name': '절연 장갑 L-size', 'image': 'https://images.unsplash.com/photo-1599408162162-6b0af444014e?q=80&w=200'},
+        {'name': '휴대용 손전등 (Led-Pro)', 'image': 'https://images.unsplash.com/photo-1554734867-bf3c00a49371?q=80&w=200'},
+      ]
     },
   ];
 
   @override
   void initState() {
     super.initState();
-
-    // 서버 시간 동기화 시도
     _syncServerTime();
 
-    // 1. 실시간 시계 타이머 시작
+    // 1. 실시간 시계 타이머
     _updateClock();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       _updateClock();
     });
 
-    // 2. 초기 샘플 데이터 대응 자동 저장 타이머 가동
+    // 2. 초기 리스트가 존재할 경우 자동 저장 타이머 가동
     if (_realtimeLogs.isNotEmpty) {
       _startAutoSaveTimer();
     } else {
       _resetStandbyTimer();
     }
 
-    // 3. 슬라이드쇼 배경 교체 타이머 시작
+    // 3. 배경 슬라이드쇼 타이머
     _slideshowTimer = Timer.periodic(const Duration(seconds: 8), (Timer timer) {
       if (mounted && _useStandbyMode && _isStandbyActive) {
         setState(() {
@@ -148,11 +143,10 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [비즈니스 로직] 실시간 시계 업데이트 (보정 시간 반영)
+  /// [비즈니스 로직] 시계 업데이트 (요일 포함)
   /// ---------------------------------------------------------------------------
   void _updateClock() {
     final DateTime now = DateTime.now().add(_timeOffset);
-
     final String yyyy = now.year.toString();
     final String mm = now.month.toString().padLeft(2, '0');
     final String dd = now.day.toString().padLeft(2, '0');
@@ -169,11 +163,10 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [비즈니스 로직] 무방비 상태 타이머 초기화 (대기화면 복귀)
+  /// [비즈니스 로직] 무방비 상태 타이머 (대기화면 복귀)
   /// ---------------------------------------------------------------------------
   void _resetStandbyTimer() {
     _standbyTimer?.cancel();
-
     if (_useStandbyMode && _realtimeLogs.isEmpty) {
       _standbyTimer = Timer(Duration(seconds: _standbyTimeoutSeconds), () {
         if (mounted) {
@@ -191,11 +184,9 @@ class _KioskViewState extends State<KioskView> {
   void _startAutoSaveTimer() {
     _autoSaveTimer?.cancel();
     _standbyTimer?.cancel();
-
     setState(() {
       _autoSaveCountdown = _autoSaveDurationSeconds;
     });
-
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
@@ -210,43 +201,35 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [비즈니스 로직] 데이터 저장 및 화면 초기화
+  /// [비즈니스 로직] 데이터 저장 완료 및 리스트 비우기
   /// ---------------------------------------------------------------------------
   void _executeSaveAndClear() {
     _autoSaveTimer?.cancel();
-
     debugPrint("======== 서버 자동 저장 실행 ========");
     debugPrint("저장 내역: ${_realtimeLogs.length}건");
     debugPrint("=================================");
 
     setState(() {
       _realtimeLogs.clear();
-      if (_useStandbyMode) {
-        _isStandbyActive = true;
-      }
+      if (_useStandbyMode) _isStandbyActive = true;
     });
-
     _resetStandbyTimer();
   }
 
   /// ---------------------------------------------------------------------------
-  /// [비즈니스 로직] 감지 내역 취소
+  /// [비즈니스 로직] 감지 내역 취소 및 초기화
   /// ---------------------------------------------------------------------------
   void _executeCancelAndClear() {
     _autoSaveTimer?.cancel();
-
     setState(() {
       _realtimeLogs.clear();
-      if (_useStandbyMode) {
-        _isStandbyActive = true;
-      }
+      if (_useStandbyMode) _isStandbyActive = true;
     });
-
     _resetStandbyTimer();
   }
 
   /// ---------------------------------------------------------------------------
-  /// [비즈니스 로직] 새로운 RFID 태그 감지 시뮬레이션
+  /// [비즈니스 로직] 가상 RFID 감지 시뮬레이션
   /// ---------------------------------------------------------------------------
   void _simulateNewDetection() {
     if (_isStandbyActive) {
@@ -264,44 +247,46 @@ class _KioskViewState extends State<KioskView> {
     if (_currentScanMode == GateScanMode.personnelOnly) {
       newLog = {
         'type': 'person',
-        'content': '방문객 (V-801)',
-        'spot': 'A구역 로비 입구',
+        'content': '박개발 선임',
+        'imageUrl': 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=200',
+        'spot': 'A구역 연구소 게이트',
         'status': '입고(출근)',
         'time': '$hh:$min:$ss',
         'isEntry': true,
-        'items': <String>[]
+        'items': <Map<String, String>>[]
       };
     } else {
       newLog = {
         'type': 'matched',
-        'content': '김현장 책임',
-        'spot': 'B구역 공정 게이트',
+        'content': '홍길동 책임',
+        'imageUrl': 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200',
+        'spot': 'B구역 2번 공정 게이트',
         'status': '출고(작업)',
         'time': '$hh:$min:$ss',
         'isEntry': false,
-        'items': ['측정기 A', '정비 바스켓 (L)', '안전 헬멧', '개인공구함']
+        'items': [
+          {'name': '측정기 A-type', 'image': 'https://images.unsplash.com/photo-1581092160562-40aa08e78837?q=80&w=200'},
+          {'name': '정비 바스켓 (L)', 'image': 'https://images.unsplash.com/photo-1532634896-26909d0d4b89?q=80&w=200'},
+          {'name': '개인 공구함', 'image': 'https://images.unsplash.com/photo-1530124566582-a618bc2615ad?q=80&w=200'},
+        ]
       };
     }
 
     setState(() {
-      // 새로운 감지 데이터가 항상 리스트의 가장 처음에 나오도록 추가합니다.
+      // 새로운 감지 데이터를 리스트 최상단(Index 0)에 삽입합니다.
       _realtimeLogs.insert(0, newLog);
     });
 
     _startAutoSaveTimer();
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [UI 렌더링] 메인 빌드 함수
-  /// ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
-    final Color backgroundColor = theme.scaffoldBackgroundColor;
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
         child: AnimatedSwitcher(
           duration: const Duration(milliseconds: 800),
@@ -389,7 +374,7 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [위젯 컴포넌트] 감지 모드 실행 버튼 (테스트용)
+  /// [위젯 컴포넌트] 감지 모드 테스트 버튼
   /// ---------------------------------------------------------------------------
   Widget _buildTestButton() {
     return ElevatedButton.icon(
@@ -416,7 +401,7 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [서브 화면 1] 대기화면 (Standby Screen)
+  /// [서브 화면 1] 대기화면 (사진 원본 노출)
   /// ---------------------------------------------------------------------------
   Widget _buildStandbyScreen({required Key key, required bool isDark}) {
     return SizedBox(
@@ -501,7 +486,7 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [서브 화면 2] 실시간 입출고 리스트 화면 (Log Screen)
+  /// [서브 화면 2] 실시간 입출고 리스트 화면
   /// ---------------------------------------------------------------------------
   Widget _buildLogScreen({required Key key, required bool isDark, required ThemeData theme}) {
     return Padding(
@@ -534,10 +519,15 @@ class _KioskViewState extends State<KioskView> {
             )
                 : ListView.separated(
               itemCount: _realtimeLogs.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 24), // 카드 간의 간격을 넉넉히 줌
+              separatorBuilder: (context, index) => const SizedBox(height: 24),
               itemBuilder: (context, index) {
                 final Map<String, dynamic> log = _realtimeLogs[index];
-                return _buildLogCard(log, isDark: isDark, theme: theme);
+                return _LogCardWidget(
+                  key: ValueKey('log_card_${log['time']}_$index'),
+                  log: log,
+                  isDark: isDark,
+                  theme: theme,
+                );
               },
             ),
           ),
@@ -552,7 +542,7 @@ class _KioskViewState extends State<KioskView> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [위젯 컴포넌트] 자동 저장 컨트롤 패널
+  /// [위젯 컴포넌트] 하단 자동 저장 액션 패널
   /// ---------------------------------------------------------------------------
   Widget _buildAutoSaveActionPanel({required bool isDark, required ThemeData theme}) {
     final Color panelBgColor = isDark ? const Color(0xFF1E293B) : Colors.white;
@@ -566,8 +556,12 @@ class _KioskViewState extends State<KioskView> {
         color: panelBgColor,
         borderRadius: BorderRadius.circular(16.0),
         border: Border.all(color: borderColor, width: 1.5),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 15, offset: Offset(0, -4))
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          )
         ],
       ),
       child: Row(
@@ -664,9 +658,6 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [위젯 컴포넌트] 리스트 화면 상단 헤더
-  /// ---------------------------------------------------------------------------
   Widget _buildHeader({required bool isDark}) {
     final Color titleColor = AppTheme.dataColor(isDark);
     final Color subColor = AppTheme.labelColor(isDark);
@@ -726,8 +717,8 @@ class _KioskViewState extends State<KioskView> {
                 fontFamily: AppTheme.fontPretendard,
                 color: titleColor,
                 fontSize: 28,
-                fontWeight: FontWeight.w400,
-                letterSpacing: 2.0,
+                fontWeight: AppTheme.weightMenu,
+                letterSpacing: 1.2,
               ),
             ),
             const SizedBox(width: 40),
@@ -742,9 +733,6 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [위젯 컴포넌트] 대기화면 기능 토글
-  /// ---------------------------------------------------------------------------
   Widget _buildStandbyToggle({required bool isDark, bool forceWhiteText = false}) {
     final Color textColor = forceWhiteText
         ? (_useStandbyMode ? Colors.white : Colors.white70)
@@ -785,22 +773,80 @@ class _KioskViewState extends State<KioskView> {
       ],
     );
   }
+}
+
+class _LogCardWidget extends StatefulWidget {
+  final Map<String, dynamic> log;
+  final bool isDark;
+  final ThemeData theme;
+
+  const _LogCardWidget({
+    super.key,
+    required this.log,
+    required this.isDark,
+    required this.theme,
+  });
+
+  @override
+  State<_LogCardWidget> createState() => _LogCardWidgetState();
+}
+
+class _LogCardWidgetState extends State<_LogCardWidget> {
+  final ScrollController _innerScrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _innerScrollController.dispose();
+    super.dispose();
+  }
 
   /// ---------------------------------------------------------------------------
-  /// [위젯 컴포넌트] 개별 로그 카드 생성기 (매칭 전용 UI 고도화)
-  /// 대표님의 요청에 따라 수량을 가장 크게 하고, 대량 리스트에도 대응하도록 개선했습니다.
+  /// [이미지 위젯 보완] 대표님의 요청에 따라 안쪽 여백(Padding)을 완전히 없앴습니다.
   /// ---------------------------------------------------------------------------
-  Widget _buildLogCard(Map<String, dynamic> log, {required bool isDark, required ThemeData theme}) {
-    final bool isMatched = log['type'] == 'matched';
-    final bool isEntry = log['isEntry'] == true;
+  Widget _buildImage(String? url, {required double size, bool isCircle = false}) {
+    return Container(
+      width: size,
+      height: size,
+      // [수정] 대표님의 요청으로 안쪽 여백을 삭제(EdgeInsets.zero)했습니다.
+      padding: EdgeInsets.zero,
+      decoration: BoxDecoration(
+        color: AppTheme.silver.withValues(alpha: 0.1),
+        shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: isCircle ? null : BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.silver.withValues(alpha: 0.3), width: 1),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: url != null && url.isNotEmpty
+          ? Image.network(
+        url,
+        // [팁] BoxFit.cover를 사용하여 여백 없이 가득 채웁니다.
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => Icon(
+            isCircle ? Icons.person : Icons.inventory_2,
+            color: AppTheme.silver,
+            size: size * 0.6
+        ),
+      )
+          : Icon(
+          isCircle ? Icons.person : Icons.inventory_2,
+          color: AppTheme.silver,
+          size: size * 0.6
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isMatched = widget.log['type'] == 'matched';
+    final bool isEntry = widget.log['isEntry'] == true;
     final Color statusColor = isEntry ? AppTheme.success : AppTheme.primary;
 
-    final Color cardBgColor = theme.cardTheme.color ?? Colors.white;
-    final Color cardBorderColor = isDark
+    final Color cardBgColor = widget.theme.cardTheme.color ?? Colors.white;
+    final Color cardBorderColor = widget.isDark
         ? Colors.white.withValues(alpha: 0.15)
         : Colors.black.withValues(alpha: 0.1);
-    final Color mainTextColor = AppTheme.dataColor(isDark);
-    final Color subTextColor = AppTheme.labelColor(isDark);
+    final Color mainTextColor = AppTheme.dataColor(widget.isDark);
+    final Color subTextColor = AppTheme.labelColor(widget.isDark);
 
     return Container(
       decoration: BoxDecoration(
@@ -808,70 +854,63 @@ class _KioskViewState extends State<KioskView> {
         borderRadius: BorderRadius.circular(AppTheme.cardRadius),
         border: Border.all(
           color: isMatched ? statusColor.withValues(alpha: 0.5) : cardBorderColor,
-          width: isMatched ? 3.0 : 1.5, // 매칭 시 테두리 두께 강화
+          width: isMatched ? 3.0 : 1.5,
         ),
         boxShadow: isMatched ? [
           BoxShadow(color: statusColor.withValues(alpha: 0.1), blurRadius: 20, spreadRadius: 2)
         ] : null,
       ),
-      padding: const EdgeInsets.all(32.0), // 내부 여백 확대하여 키오스크 느낌 강조
+      padding: const EdgeInsets.all(32.0),
       child: isMatched
           ? Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. 작업자 상단 배지 (책임자 식별)
           Row(
             children: [
+              _buildImage(widget.log['imageUrl'], size: 64, isCircle: true),
+              const SizedBox(width: 20),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 decoration: BoxDecoration(
                   color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
                 ),
-                child: Row(
-                  children: [
-                    Icon(Icons.person_pin_rounded, color: AppTheme.primary, size: 24),
-                    const SizedBox(width: 10),
-                    Text(
-                      "책임 작업자: ${log['content']}",
-                      style: TextStyle(
-                        fontFamily: AppTheme.fontPretendard,
-                        color: mainTextColor,
-                        fontSize: 20,
-                        fontWeight: AppTheme.weightMenu,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  "작업 담당자: ${widget.log['content']}",
+                  style: TextStyle(
+                    fontFamily: AppTheme.fontPretendard,
+                    color: mainTextColor,
+                    fontSize: 26,
+                    fontWeight: AppTheme.weightMenu,
+                  ),
                 ),
               ),
               const SizedBox(width: 20),
-              Icon(Icons.location_on_outlined, color: subTextColor, size: 20),
-              const SizedBox(width: 6),
+              Icon(Icons.location_on_outlined, color: subTextColor, size: 22),
+              const SizedBox(width: 8),
               Text(
-                log['spot'],
+                widget.log['spot'],
                 style: TextStyle(
                   fontFamily: AppTheme.fontPretendard,
                   color: subTextColor,
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: AppTheme.weightOthers,
                 ),
               ),
               const Spacer(),
-              // 상태 정보
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(30),
                   border: Border.all(color: statusColor, width: 2.5),
                 ),
                 child: Text(
-                  log['status'],
+                  widget.log['status'],
                   style: TextStyle(
                     fontFamily: AppTheme.fontPretendard,
                     color: statusColor,
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: AppTheme.weightMenu,
                   ),
                 ),
@@ -883,7 +922,6 @@ class _KioskViewState extends State<KioskView> {
           Divider(color: cardBorderColor, thickness: 2),
           const SizedBox(height: 24),
 
-          // 2. [가장 중요] 감지된 물품 수량 (Hero Section)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -896,46 +934,45 @@ class _KioskViewState extends State<KioskView> {
                     style: TextStyle(
                       fontFamily: AppTheme.fontPretendard,
                       color: Colors.grey,
-                      fontSize: 20,
+                      fontSize: 22,
                       fontWeight: AppTheme.weightMenu,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    "인식 누락이 있다면 재태그가 필요합니다.",
+                    "실제 소지하신 물품 개수와 아래 수량을 대조해 주세요.",
                     style: TextStyle(
                       fontFamily: AppTheme.fontPretendard,
                       color: subTextColor,
-                      fontSize: 15,
+                      fontSize: 17,
                       fontWeight: AppTheme.weightOthers,
                     ),
                   ),
                 ],
               ),
-              // [수정] 수량을 화면에서 가장 돋보이게 큼직하게 배치
               Row(
                 crossAxisAlignment: CrossAxisAlignment.baseline,
                 textBaseline: TextBaseline.alphabetic,
                 children: [
                   Text(
                     "Total",
-                    style: TextStyle(fontFamily: AppTheme.fontPretendard, color: subTextColor, fontSize: 24, fontWeight: AppTheme.weightMenu),
+                    style: TextStyle(fontFamily: AppTheme.fontPretendard, color: subTextColor, fontSize: 26, fontWeight: AppTheme.weightMenu),
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    "${(log['items'] as List).length}",
+                    "${(widget.log['items'] as List).length}",
                     style: TextStyle(
                       fontFamily: AppTheme.fontPretendard,
                       color: statusColor,
-                      fontSize: 80, // 압도적 크기 (900 굵기)
-                      fontWeight: FontWeight.w900,
+                      fontSize: 90,
+                      fontWeight: AppTheme.weightMenu,
                       height: 1.0,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
                     "Items",
-                    style: TextStyle(fontFamily: AppTheme.fontPretendard, color: mainTextColor, fontSize: 24, fontWeight: AppTheme.weightMenu),
+                    style: TextStyle(fontFamily: AppTheme.fontPretendard, color: mainTextColor, fontSize: 26, fontWeight: AppTheme.weightMenu),
                   ),
                 ],
               ),
@@ -944,46 +981,60 @@ class _KioskViewState extends State<KioskView> {
 
           const SizedBox(height: 24),
 
-          // 3. [물량 폭주 대응] 물품 리스트 영역 (카드 내 스크롤 적용)
-          if (log['items'] != null && (log['items'] as List).isNotEmpty)
+          if (widget.log['items'] != null && (widget.log['items'] as List).isNotEmpty)
             Container(
-              height: 280, // 고정 높이를 주어 대량 데이터 시 스크롤 유도
+              height: 380,
               width: double.infinity,
               decoration: BoxDecoration(
-                color: isDark ? Colors.black.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.02),
-                borderRadius: BorderRadius.circular(12),
+                color: widget.isDark ? Colors.black.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.03),
+                borderRadius: BorderRadius.circular(15),
                 border: Border.all(color: cardBorderColor.withValues(alpha: 0.5)),
               ),
               child: Scrollbar(
-                thumbVisibility: true, // 스크롤바 항상 표시로 직관성 부여
-                thickness: 8.0,
+                controller: _innerScrollController,
+                thumbVisibility: false,
+                thickness: 10.0,
                 radius: const Radius.circular(10),
                 child: ListView.builder(
-                  padding: const EdgeInsets.all(20),
+                  controller: _innerScrollController,
+                  padding: const EdgeInsets.all(24),
                   shrinkWrap: true,
-                  itemCount: (log['items'] as List).length,
+                  itemCount: (widget.log['items'] as List).length,
                   itemBuilder: (context, itemIdx) {
+                    final item = widget.log['items'][itemIdx];
                     return Padding(
-                      padding: const EdgeInsets.only(bottom: 14.0),
+                      padding: const EdgeInsets.only(bottom: 20.0),
                       child: Row(
                         children: [
-                          Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 30),
-                          const SizedBox(width: 16),
+                          _buildImage(item['image'], size: 70),
+                          const SizedBox(width: 24),
                           Expanded(
-                            child: Text(
-                              log['items'][itemIdx],
-                              style: TextStyle(
-                                fontFamily: AppTheme.fontPretendard,
-                                color: mainTextColor,
-                                fontSize: 26, // 물품명도 매우 크게
-                                fontWeight: AppTheme.weightMenu,
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item['name'],
+                                  style: TextStyle(
+                                    fontFamily: AppTheme.fontPretendard,
+                                    color: mainTextColor,
+                                    fontSize: 28,
+                                    fontWeight: AppTheme.weightMenu,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  "정상 감지 (Sequence No. ${itemIdx + 1})",
+                                  style: TextStyle(
+                                    fontFamily: AppTheme.fontPretendard,
+                                    color: AppTheme.success,
+                                    fontSize: 16,
+                                    fontWeight: AppTheme.weightOthers,
+                                  ),
+                                )
+                              ],
                             ),
                           ),
-                          Text(
-                            "#${itemIdx + 1}", // 순번 표시로 수량 확인 보조
-                            style: TextStyle(fontFamily: AppTheme.fontPretendard, color: subTextColor, fontSize: 16),
-                          )
+                          Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 36),
                         ],
                       ),
                     );
@@ -993,32 +1044,19 @@ class _KioskViewState extends State<KioskView> {
             ),
         ],
       )
-      // -------------------------------------------------------------------
-      // [UI 패턴 2] 인원 전용 모드 UI (심플 레이아웃 유지)
-      // -------------------------------------------------------------------
           : Row(
         children: [
-          Container(
-            width: 70,
-            height: 70,
-            decoration: BoxDecoration(
-              color: AppTheme.warning.withValues(alpha: 0.15),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: FaIcon(FontAwesomeIcons.userTie, color: AppTheme.warning, size: 32),
-            ),
-          ),
+          _buildImage(widget.log['imageUrl'], size: 80, isCircle: true),
           const SizedBox(width: 32),
 
           Expanded(
             flex: 5,
             child: Text(
-              log['content'],
+              widget.log['content'],
               style: TextStyle(
                 fontFamily: AppTheme.fontPretendard,
                 color: mainTextColor,
-                fontSize: 30,
+                fontSize: 34,
                 fontWeight: AppTheme.weightMenu,
               ),
             ),
@@ -1028,15 +1066,15 @@ class _KioskViewState extends State<KioskView> {
             flex: 5,
             child: Row(
               children: [
-                Icon(Icons.location_on_outlined, color: subTextColor, size: 24),
-                const SizedBox(width: 10),
+                Icon(Icons.location_on_outlined, color: subTextColor, size: 28),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    log['spot'],
+                    widget.log['spot'],
                     style: TextStyle(
                       fontFamily: AppTheme.fontPretendard,
                       color: subTextColor,
-                      fontSize: 22,
+                      fontSize: 24,
                       fontWeight: AppTheme.weightOthers,
                     ),
                     overflow: TextOverflow.ellipsis,
@@ -1050,11 +1088,11 @@ class _KioskViewState extends State<KioskView> {
             flex: 3,
             child: Center(
               child: Text(
-                log['time'],
+                widget.log['time'],
                 style: TextStyle(
                   fontFamily: AppTheme.fontPretendard,
                   color: subTextColor,
-                  fontSize: 24,
+                  fontSize: 26,
                   fontWeight: AppTheme.weightMenu,
                 ),
               ),
@@ -1062,21 +1100,21 @@ class _KioskViewState extends State<KioskView> {
           ),
 
           SizedBox(
-            width: 160,
+            width: 180,
             child: Center(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: statusColor, width: 2),
+                  border: Border.all(color: statusColor, width: 2.5),
                 ),
                 child: Text(
-                  log['status'],
+                  widget.log['status'],
                   style: TextStyle(
                     fontFamily: AppTheme.fontPretendard,
                     color: statusColor,
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: AppTheme.weightMenu,
                   ),
                 ),
@@ -1089,9 +1127,6 @@ class _KioskViewState extends State<KioskView> {
   }
 }
 
-/// ---------------------------------------------------------------------------
-/// [사용자 정의 위젯] 흐르는 텍스트 (Marquee)
-/// ---------------------------------------------------------------------------
 class _MarqueeWidget extends StatefulWidget {
   final String text;
   final Color backgroundColor;
@@ -1107,9 +1142,7 @@ class _MarqueeWidget extends StatefulWidget {
   });
 
   @override
-  State<_MarqueeWidget> createState() {
-    return _MarqueeWidgetState();
-  }
+  State<_MarqueeWidget> createState() => _MarqueeWidgetState();
 }
 
 class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProviderStateMixin {
@@ -1120,7 +1153,7 @@ class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProvide
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 25), // 텍스트가 길어질 경우를 위해 속도를 약간 늦춤
+      duration: const Duration(seconds: 25),
     )..repeat();
   }
 
@@ -1147,7 +1180,6 @@ class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProvide
               animation: _controller,
               builder: (context, child) {
                 final double moveOffset = constraints.maxWidth - (_controller.value * (constraints.maxWidth + 2000));
-
                 return Transform.translate(
                   offset: Offset(moveOffset, 0),
                   child: child,
