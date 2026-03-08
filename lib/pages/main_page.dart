@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:system_tray/system_tray.dart'; // [패치] 시스템 트레이 패키지 임포트
+import 'package:system_tray/system_tray.dart'; // 시스템 트레이 패키지 임포트
 import 'package:provider/provider.dart';
 import 'dart:io';
 
@@ -27,7 +27,9 @@ class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
   @override
-  State<MainPage> createState() => _MainPageState();
+  State<MainPage> createState() {
+    return _MainPageState();
+  }
 }
 
 // WindowListener를 믹스인(with)하여 윈도우 창의 상태 변화(최소화, 복원 등)를 감지합니다.
@@ -42,14 +44,18 @@ class _MainPageState extends State<MainPage> with WindowListener {
   final SystemTray _systemTray = SystemTray();
   final AppWindow _appWindow = AppWindow();
 
-  // 사이드바에 표시될 메뉴 아이템 목록 (향후 DB에서 불러오도록 확장 가능합니다)
+  // -------------------------------------------------------------------------
+  // [메뉴 순서 변경 적용]
+  // '관제 상황판 -> 장치 관리 -> 인원 관리 -> 물품 관리' 순서로
+  // 사이드바에 표시될 메뉴 아이템 목록이 배치되어 있습니다.
+  // -------------------------------------------------------------------------
   final List<Map<String, dynamic>> _menuItems = [
-    {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},
-    {'title': '인원 관리', 'icon': FontAwesomeIcons.users},
-    {'title': '장치 관리', 'icon': FontAwesomeIcons.microchip},
-    {'title': '물품 관리', 'icon': FontAwesomeIcons.boxesStacked},
-    {'title': '출입 기록', 'icon': FontAwesomeIcons.clockRotateLeft},
-    {'title': '환경 설정', 'icon': FontAwesomeIcons.gears},
+    {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},        // 인덱스 0
+    {'title': '장치 관리', 'icon': FontAwesomeIcons.microchip},            // 인덱스 1
+    {'title': '인원 관리', 'icon': FontAwesomeIcons.users},                // 인덱스 2
+    {'title': '물품 관리', 'icon': FontAwesomeIcons.boxesStacked},         // 인덱스 3
+    {'title': '출입 기록', 'icon': FontAwesomeIcons.clockRotateLeft},      // 인덱스 4
+    {'title': '환경 설정', 'icon': FontAwesomeIcons.gears},                // 인덱스 5
   ];
 
   @override
@@ -87,8 +93,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
       await menu.buildFrom([
         MenuItemLabel(
             label: '화면 다시 열기 (Restore)',
-            // [수정됨] 최신 system_tray 패키지에 맞게 onClick -> onClicked 로 변경했습니다.
-            onClicked: (menuItem) async {
+            // [오류 해결] MenuItem 클래스를 찾지 못하는 문제를 해결하기 위해 타입을 dynamic으로 지정합니다.
+            onClicked: (dynamic menuItem) async {
               // 앱 창을 화면에 다시 띄우고 강제로 전체화면을 덮어씌웁니다.
               await _appWindow.show();
               await windowManager.setFullScreen(true);
@@ -97,8 +103,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
         MenuSeparator(), // 메뉴 구분선
         MenuItemLabel(
             label: '프로그램 완전 종료',
-            // [수정됨] 최신 system_tray 패키지에 맞게 onClick -> onClicked 로 변경했습니다.
-            onClicked: (menuItem) async {
+            // [오류 해결] MenuItem 클래스를 찾지 못하는 문제를 해결하기 위해 타입을 dynamic으로 지정합니다.
+            onClicked: (dynamic menuItem) async {
               await windowManager.close();
             }
         ),
@@ -139,21 +145,25 @@ class _MainPageState extends State<MainPage> with WindowListener {
   Widget build(BuildContext context) {
     // 앱 전체의 테마 상태를 가져옵니다.
     // 여기서 디자인을 통제하므로 하위 위젯들은 기본적으로 이 테마를 따르게 됩니다.
-    final themeProvider = context.watch<ThemeProvider>();
-    final theme = themeProvider.themeData;
+    final ThemeProvider themeProvider = context.watch<ThemeProvider>();
+    final ThemeData theme = themeProvider.themeData;
 
     // 1. 키오스크 모드가 켜진 경우, 상단바/사이드바 없이 전체화면으로 덮어버립니다.
     if (_isKioskMode) {
       return Scaffold(
           body: KioskView(
-              onDismiss: () => setState(() => _isKioskMode = false)
+              onDismiss: () {
+                setState(() {
+                  _isKioskMode = false;
+                });
+              }
           )
       );
     }
 
     // 2. 일반 모드인 경우, 화면 크기에 따라 반응형(Responsive) 레이아웃을 제공합니다.
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (BuildContext context, BoxConstraints constraints) {
         // 화면 너비가 650픽셀 이하일 경우 모바일 환경으로 간주합니다.
         bool isMobile = constraints.maxWidth <= 650;
 
@@ -233,7 +243,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
               padding: const EdgeInsets.symmetric(horizontal: 14),
               children: [
                 // 1. 주요 메뉴 목록을 반복문으로 생성합니다.
-                ...List.generate(_menuItems.length, (index) {
+                ...List.generate(_menuItems.length, (int index) {
                   return _buildMenuItem(
                     title: _menuItems[index]['title'],
                     icon: _menuItems[index]['icon'],
@@ -241,7 +251,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
                     isSelected: _selectedIndex == index,
                     theme: theme,
                     // 메뉴 클릭 시 인덱스를 변경하여 우측 본문 화면을 전환합니다.
-                    onTap: () => setState(() => _selectedIndex = index),
+                    onTap: () {
+                      setState(() {
+                        _selectedIndex = index;
+                      });
+                    },
                   );
                 }),
 
@@ -257,7 +271,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
                   extended: extended,
                   isSelected: false,
                   theme: theme,
-                  onTap: () => setState(() => _isKioskMode = true),
+                  onTap: () {
+                    setState(() {
+                      _isKioskMode = true;
+                    });
+                  },
                 ),
 
                 const SizedBox(height: 4),
@@ -300,7 +318,9 @@ class _MainPageState extends State<MainPage> with WindowListener {
                     color: AppTheme.danger,
                     theme: theme,
                     // 윈도우 매니저를 통해 앱을 완전히 종료합니다.
-                    onTap: () async => await windowManager.close(),
+                    onTap: () async {
+                      await windowManager.close();
+                    },
                   ),
                 ],
                 const SizedBox(height: 20),
@@ -337,7 +357,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
                 'assets/images/PLUG4ASSET.png',
                 fit: BoxFit.contain,
                 // 이미지를 찾지 못할 경우의 안전장치 (텍스트로 대체 표시)
-                errorBuilder: (context, error, stackTrace) {
+                errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
                   return Text(
                     "PLUG4",
                     style: TextStyle(
@@ -361,7 +381,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
               color: Colors.transparent, // 배경 투명 처리로 깔끔하게 배치
               child: IconButton(
                 // 버튼을 누르면 사이드바 확장 상태 변수를 토글합니다.
-                onPressed: () => setState(() => _isSidebarExtended = !_isSidebarExtended),
+                onPressed: () {
+                  setState(() {
+                    _isSidebarExtended = !_isSidebarExtended;
+                  });
+                },
                 tooltip: extended ? "사이드바 접기" : "사이드바 펴기",
                 icon: Icon(
                   extended ? Icons.menu_open_rounded : Icons.menu_rounded,
@@ -474,11 +498,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
       // [종합 관제 상황판] 대시보드 화면
         return DeviceMapPage(baseUrl: _pbBaseUrl);
       case 1:
-      // [인원 관리] 화면
-        return UserPage(searchQuery: "", filter: '전체', isMobile: isMobile, baseUrl: _pbBaseUrl);
-      case 2:
       // [장치 관리] 화면
         return DevicePage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);
+      case 2:
+      // [인원 관리] 화면
+        return UserPage(searchQuery: "", filter: '전체', isMobile: isMobile, baseUrl: _pbBaseUrl);
       case 3:
       // [물품 관리] 화면
         return ProductPage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);

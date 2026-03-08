@@ -32,7 +32,7 @@ class DevicePage extends StatefulWidget {
 
 class _DevicePageState extends State<DevicePage> {
   // ---------------------------------------------------------------------------
-  // [상태 변수 선언부] (클래스 멤버 변수이므로 언더스코어 _ 사용이 올바름)
+  // [상태 변수 선언부]
   // ---------------------------------------------------------------------------
   final TextEditingController _searchController = TextEditingController();
   String _currentQuery = "";
@@ -45,7 +45,6 @@ class _DevicePageState extends State<DevicePage> {
 
   // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
-  // 파워 제어 버튼이 추가되었으므로 액션 영역의 가로폭을 조금 넓혀줍니다.
   static const double _colActionWidth = 300.0;
 
   @override
@@ -280,7 +279,6 @@ class _DevicePageState extends State<DevicePage> {
               ),
               if (widget.isMobile) const SizedBox(width: 8),
               AppTheme.actionButton(
-                // [수정됨] 다른 페이지와의 통일성을 위해 "신규 장치 등록" -> "신규 등록"으로 텍스트를 간결하게 변경했습니다.
                   label: widget.isMobile ? "등록" : "신규 등록",
                   icon: Icons.add_box,
                   onPressed: () {
@@ -504,6 +502,9 @@ class _DevicePageState extends State<DevicePage> {
   Widget _buildDesktopListItem(DeviceModel item, DeviceProvider provider, Color statusColor, ThemeData theme) {
     bool isOnline = item.status.toLowerCase() == 'online';
 
+    // [신규] 화면에 표시될 장비의 용도(Role) 텍스트를 추출합니다.
+    String usageText = item.settings['usage_role'] ?? '상시감지(출입/물류)';
+
     return Row(
       children: [
         _buildDeviceThumbnail(item, theme, size: _colImgSize),
@@ -529,8 +530,8 @@ class _DevicePageState extends State<DevicePage> {
                   _buildKeyValue("모델 (제조사)", item.model, context),
                   _buildKeyValue("IP 주소", item.ipAddress, context),
                   _buildKeyValue("포트 (Port)", item.port.toString(), context),
-                  _buildKeyValue("Client ID", item.clientId.isNotEmpty ? item.clientId : "-", context),
-                  _buildKeyValue("초기 자동 연결", item.isAutoConnect ? "사용 (ON)" : "수동 (OFF)", context),
+                  // [신규] 장비 리스트 화면에서도 어떤 용도인지 직관적으로 보여줍니다.
+                  _buildKeyValue("운용 용도", usageText, context),
                 ],
               ),
             ],
@@ -541,14 +542,12 @@ class _DevicePageState extends State<DevicePage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              // 장비가 온라인(연결됨) 상태일 때만 파워(출력) 조절 버튼을 활성화하여 보여줍니다.
               if (isOnline) ...[
                 _buildCircleAction(Icons.tune, Colors.blueAccent, "출력(파워) 제어", () {
                   _showPowerControlDialog(context, provider, item);
                 }),
                 const SizedBox(width: 12),
               ],
-              // 통신 연결/해제 버튼
               SizedBox(
                 width: 100,
                 child: isOnline
@@ -587,6 +586,7 @@ class _DevicePageState extends State<DevicePage> {
   /// ---------------------------------------------------------------------------
   Widget _buildMobileListItem(DeviceModel item, DeviceProvider provider, Color statusColor, ThemeData theme) {
     bool isOnline = item.status.toLowerCase() == 'online';
+    String usageText = item.settings['usage_role'] ?? '상시감지(출입/물류)';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -625,7 +625,8 @@ class _DevicePageState extends State<DevicePage> {
           children: [
             _buildKeyValue("IP 주소", item.ipAddress, context),
             _buildKeyValue("포트 (Port)", item.port.toString(), context),
-            _buildKeyValue("초기 자동 연결", item.isAutoConnect ? "사용 (ON)" : "수동 (OFF)", context),
+            // [신규] 모바일 환경에서도 용도를 보여줍니다.
+            _buildKeyValue("운용 용도", usageText, context),
           ],
         ),
         const SizedBox(height: 16),
@@ -634,7 +635,6 @@ class _DevicePageState extends State<DevicePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            // 모바일 환경에서도 파워 제어 아이콘 추가
             if (isOnline)
               _buildCircleAction(Icons.tune, Colors.blueAccent, "출력 제어", () {
                 _showPowerControlDialog(context, provider, item);
@@ -743,12 +743,11 @@ class _DevicePageState extends State<DevicePage> {
 
   /// ---------------------------------------------------------------------------
   /// [신규 UI] 안테나 출력(Power) 제어 다이얼로그
-  /// 키오스크와 유사하게 크고 직관적인 슬라이더(Slider)를 통해 주파수 세기를 설정합니다.
   /// ---------------------------------------------------------------------------
   void _showPowerControlDialog(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
-    int selectedAntenna = 0; // 0: 전체공통, 1~4: 개별 포트
-    double currentPower = 300; // 고정식 리더기 매뉴얼상 Default는 300 (30.0 dBm)
+    int selectedAntenna = 0;
+    double currentPower = 300;
 
     showDialog(
         context: context,
@@ -765,7 +764,6 @@ class _DevicePageState extends State<DevicePage> {
                       children: [
                         Text("안테나 포트 선택", style: AppTheme.itemLabelStyle(context)),
                         const SizedBox(height: 12),
-                        // SegmentedButton으로 터치 친화적인 안테나 선택기를 구성합니다.
                         SizedBox(
                           width: double.infinity,
                           child: SegmentedButton<int>(
@@ -798,7 +796,6 @@ class _DevicePageState extends State<DevicePage> {
                           ],
                         ),
                         const SizedBox(height: 8),
-                        // 슬라이더: 50(5dBm) ~ 310(31dBm) 범위, 간격은 10(1dBm) 단위
                         Slider(
                           value: currentPower,
                           min: 50,
@@ -833,7 +830,6 @@ class _DevicePageState extends State<DevicePage> {
                         label: "설정 적용하기",
                         color: Colors.blueAccent,
                         onPressed: () {
-                          // 브릿지 함수(Provider)를 통해 하드웨어 객체로 파워 변경 명령을 쏘아줍니다!
                           provider.setDevicePower(d.id, selectedAntenna, currentPower.toInt());
                           Navigator.pop(ctx);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -864,6 +860,9 @@ class _DevicePageState extends State<DevicePage> {
     bool activeV = d?.isActive ?? true;
     bool autoConnectV = d?.isAutoConnect ?? false;
 
+    // [신규] 장비의 논리적 라우팅 용도를 설정하는 변수 추가 (기본값 설정)
+    String usageRoleV = d?.settings['usage_role'] ?? '상시감지(출입/물류)';
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -887,12 +886,13 @@ class _DevicePageState extends State<DevicePage> {
                           children: [
                             _buildImagePickerBox(context, d, null, (file, bytes) {}, theme),
                             const SizedBox(width: 30),
-                            // 폼 필드 생성 함수에 context, provider, d 객체를 전달하여 내부에서 버튼을 그릴 수 있게 합니다.
-                            Expanded(child: _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
+                            // 콜백 함수에 usageRole(uR) 값을 받을 수 있도록 파라미터를 추가했습니다.
+                            Expanded(child: _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, usageRoleV, (m, a, ac, uR) {
                               setDialogState(() {
                                 if (m != null) modelV = m;
                                 if (a != null) activeV = a;
                                 if (ac != null) autoConnectV = ac;
+                                if (uR != null) usageRoleV = uR; // 용도 업데이트
                               });
                             }, theme)),
                           ],
@@ -900,12 +900,12 @@ class _DevicePageState extends State<DevicePage> {
                       else ...[
                         _buildImagePickerBox(context, d, null, (file, bytes) { }, theme),
                         const SizedBox(height: 20),
-                        // 모바일 레이아웃 호출 시에도 동일하게 파라미터 전달
-                        _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, (m, a, ac) {
+                        _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, usageRoleV, (m, a, ac, uR) {
                           setDialogState(() {
                             if (m != null) modelV = m;
                             if (a != null) activeV = a;
                             if (ac != null) autoConnectV = ac;
+                            if (uR != null) usageRoleV = uR;
                           });
                         }, theme),
                       ],
@@ -934,12 +934,11 @@ class _DevicePageState extends State<DevicePage> {
 
                     final nav = Navigator.of(ctx);
 
-                    // 기존 기기 수정 시, 변경된 IP나 Port로 인한 충돌을 막기 위해
-                    // 백그라운드 소켓 쓰레드를 안전하게 먼저 끊어버립니다.
                     if (d != null && d.status.toLowerCase() == 'online') {
                       provider.disconnectDevice(d.id);
                     }
 
+                    // [신규] 저장할 때 settings 객체 내부에 usage_role을 삽입합니다.
                     final data = {
                       'name': nameC.text.trim(),
                       'model': modelV,
@@ -948,6 +947,10 @@ class _DevicePageState extends State<DevicePage> {
                       'client_id': clientIdC.text.trim(),
                       'is_active': activeV,
                       'is_auto_connect': autoConnectV,
+                      'settings': {
+                        ...(d?.settings ?? {}),
+                        'usage_role': usageRoleV, // 핵심 라우팅 기준 저장!
+                      }
                     };
 
                     bool success = await provider.handleSave(d: d, data: data);
@@ -986,8 +989,8 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  // 편집 폼 내부에서도 장치의 상태(d)와 프로바이더를 사용할 수 있도록 파라미터를 추가했습니다.
-  Widget _buildFormFields(BuildContext context, DeviceProvider provider, DeviceModel? d, TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, Function(String?, bool?, bool?) onC, ThemeData theme) {
+  // [수정됨] uRV(Usage Role Value) 파라미터와 4개의 인자를 받는 콜백(onC)을 추가했습니다.
+  Widget _buildFormFields(BuildContext context, DeviceProvider provider, DeviceModel? d, TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, String uRV, Function(String?, bool?, bool?, String?) onC, ThemeData theme) {
     return Column(
       children: [
         _buildDialogTextField("장치 관리 명칭 (필수)", n, theme, icon: Icons.label_outline),
@@ -1004,33 +1007,46 @@ class _DevicePageState extends State<DevicePage> {
         const SizedBox(height: 16),
         DropdownButtonFormField<String>(
           initialValue: mV,
-          decoration: AppTheme.inputDecoration(label: "제조사/모델 프로토콜", context: context),
+          decoration: AppTheme.inputDecoration(label: "제조사/물리적 모델 프로토콜", context: context),
           items: SupportedDeviceModels.labels.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
-          onChanged: (v) => onC(v, null, null),
+          onChanged: (v) => onC(v, null, null, null),
+        ),
+        const SizedBox(height: 16),
+
+        // [신규 추가] 장비의 논리적인 '운용 용도(Role)'를 선택하는 드롭다운!
+        DropdownButtonFormField<String>(
+          initialValue: uRV,
+          decoration: AppTheme.inputDecoration(label: "장비 운용 용도 (데이터 라우팅 기준)", context: context),
+          items: ['상시감지(출입/물류)', '수동스캔(재고조사)', '수동스캔(단일등록)'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
+          onChanged: (v) => onC(null, null, null, v),
         ),
         const SizedBox(height: 24),
 
-        // 장치 편집창 내부에서도 실시간 파워 제어 다이얼로그를 띄울 수 있는 버튼을 추가합니다!
-        // 사용자가 실수하지 않도록 장비가 '연결(Online)' 되어있을 때만 동작하도록 방어 로직을 적용했습니다.
         if (d != null) ...[
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              icon: const Icon(Icons.tune, size: 20),
-              label: const Text("안테나 출력(RF Power) 실시간 제어", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+              // [수정됨] 버튼이 커진 만큼 아이콘 크기도 20 -> 24로 키워 밸런스를 맞춥니다.
+              icon: const Icon(Icons.tune, size: 24),
+
+              // [수정됨] 폰트 크기(16)와 굵기(w900)를 높여 입력 필드와 시각적인 무게감을 맞춥니다.
+              label: const Text("안테나 출력(RF Power) 실시간 제어", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w900)),
+
               style: ElevatedButton.styleFrom(
                   backgroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.1),
                   foregroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent : Colors.grey,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+
+                  // [핵심 수정됨] TextField의 기본 높이와 완벽하게 일치하도록 최소 높이를 60px로 강제 고정합니다.
+                  minimumSize: const Size(double.infinity, 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   side: BorderSide(color: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3))
               ),
               onPressed: d.status.toLowerCase() == 'online' ? () {
-                // 편집창 위에 파워 제어 팝업창을 겹쳐서 띄웁니다.
                 _showPowerControlDialog(context, provider, d);
               } : () {
-                // 연결되지 않았을 때는 툴팁처럼 스낵바를 띄워 직관성을 높입니다.
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("장치가 온라인(연결됨) 상태일 때만 제어할 수 있습니다.")));
               },
             ),
@@ -1053,7 +1069,7 @@ class _DevicePageState extends State<DevicePage> {
                   value: acV,
                   activeThumbColor: Colors.blueAccent,
                   activeTrackColor: Colors.blueAccent.withValues(alpha: 0.5),
-                  onChanged: (v) => onC(null, null, v)
+                  onChanged: (v) => onC(null, null, v, null)
               ),
             ],
           ),
@@ -1074,7 +1090,7 @@ class _DevicePageState extends State<DevicePage> {
                   value: aV,
                   activeThumbColor: AppTheme.success,
                   activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
-                  onChanged: (v) => onC(null, v, null)
+                  onChanged: (v) => onC(null, v, null, null)
               ),
             ],
           ),

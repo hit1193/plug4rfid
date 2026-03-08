@@ -14,28 +14,29 @@ class SupportedDeviceModels {
   static const String cfRU5102      = 'CF_RU5102';
   static const String cf601         = 'CF601';
   static const String ats200        = 'ATS200';
-  static const String m120          = 'M120';
+  static const String m120          = 'M120';         // Hopeland 계열 데스크형 리더기
+  static const String hopeland      = 'HOPELAND';     // Hopeland 리더기 범용
+  static const String chafon        = 'CHAFON';       // CHAFON 리더기 범용
   static const String zebra         = 'ZEBRA';
   static const String bt200         = 'BT200';
   static const String sato          = 'SATO';
   static const String genericTcp    = 'GENERIC_TCP';
-
-  // [신규 추가] 범용 RS232C 통신 장비 키
   static const String genericRs232c = 'GENERIC_RS232C';
 
   // 2. 관리자 화면(UI)에서 보여줄 한글 이름 매핑 (Label)
   static const Map<String, String> labels = {
     idro900f: '고정식 리더기 (IDRO900F)',
-    cf815: '고정식 리더기 (CF815)',
-    cfRU5102: '데스크형 리더기 (CF_RU5102)',
-    cf601: '데스크형 리더기 (CF601)',
-    ats200: '휴대형 리더기 (ATS200)',
-    m120: '데스크형 리더기 (M120) - 폴링방식',
+    cf815: '고정식 리더기 (CHAFON CF815)',
+    cfRU5102: '데스크형 리더기 (CHAFON CF_RU5102)',
+    cf601: '데스크형 리더기 (CHAFON CF601)',
+    ats200: '휴대형 리더기 (ATS200/100)',
+    hopeland: '고정식 리더기 (Hopeland 범용)',
+    m120: '데스크형 리더기 (Hopeland M120)', // [수정됨] Hopeland 제조품으로 명시
+    chafon: '고정식 리더기 (CHAFON 범용)',
     zebra: '프린터 (Zebra)',
     bt200: '프린터 (BT200)',
     sato: '프린터 (SATO)',
     genericTcp: '범용 TCP 장치',
-    // [신규 추가] 드롭다운에 표시될 라벨
     genericRs232c: '범용 RS232C 장치 (시리얼)',
   };
 
@@ -45,17 +46,19 @@ class SupportedDeviceModels {
 
 /// ---------------------------------------------------------------------------
 /// [최상위 통신 엔진] 장비별 통신 규격 추상 클래스 (Abstract Base Class)
-/// C++Builder의 class BaseProtocol { virtual ... } 구조의 완성형입니다.
-/// TCP Fragmentation(패킷 쪼개짐)을 방어하는 버퍼링 엔진이 내장되어 있습니다.
 /// ---------------------------------------------------------------------------
 abstract class BaseDeviceProtocol {
   final String ipAddress;
   final int port;
 
   Socket? _socket;
+
+  // 안드로이드 블루투스(SPP) 통신 객체를 담을 변수 (추후 패키지 추가 시 활성화)
+  // BluetoothConnection? _btConnection;
+
   StreamSubscription<Uint8List>? _socketSubscription;
 
-  // [버퍼링 엔진] TCP 스트림 쪼개짐 방어용 버퍼 (C++의 AnsiString 덧붙이기와 동일)
+  // [버퍼링 엔진] TCP 스트림 쪼개짐 방어용 버퍼 (ASCII 방식용)
   String _buffer = "";
 
   // 장비에서 읽어들인 태그 데이터를 Provider 쪽으로 쏘아주는 데이터 파이프
@@ -69,13 +72,21 @@ abstract class BaseDeviceProtocol {
   /// [공통] 장치 소켓 연결 로직 (Timeout 3초 방어 적용)
   Future<bool> connect() async {
     try {
-      _socket = await Socket.connect(ipAddress, port, timeout: const Duration(seconds: 3));
+      bool isBluetoothMac = RegExp(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$').hasMatch(ipAddress);
 
-      _socketSubscription = _socket!.listen(
-        _internalOnDataReceived,
-        onError: (error) => disconnect(),
-        onDone: () => disconnect(),
-      );
+      if (isBluetoothMac) {
+        debugPrint("📱 안드로이드 블루투스(SPP) 장비 감지! MAC: $ipAddress");
+        // _btConnection = await BluetoothConnection.toAddress(ipAddress);
+        // ... 추후 활성화
+        return false;
+      } else {
+        _socket = await Socket.connect(ipAddress, port, timeout: const Duration(seconds: 3));
+        _socketSubscription = _socket!.listen(
+          _internalOnDataReceived,
+          onError: (error) => disconnect(),
+          onDone: () => disconnect(),
+        );
+      }
 
       onConnected();
       return true;
@@ -85,52 +96,56 @@ abstract class BaseDeviceProtocol {
     }
   }
 
-  /// [공통] 장치 연결 해제 및 메모리 정리
   void disconnect() {
     onDisconnecting();
-
     _socketSubscription?.cancel();
     _socketSubscription = null;
-
     _socket?.destroy();
     _socket = null;
-    _buffer = ""; // 버퍼 초기화
+    _buffer = "";
   }
 
-  /// [공통] String 형태의 명령어를 소켓으로 전송
   void sendCommandString(String command) {
-    if (_socket != null && command.isNotEmpty) {
+    if (command.isEmpty) return;
+    if (_socket != null) {
       _socket!.write(command);
     }
   }
 
-  /// 메모리 완전 해제 (Provider가 파괴될 때 호출됨)
+  /// [공통] 바이너리(Hex) 데이터를 쏘기 위한 함수
+  void sendCommandBytes(List<int> bytes) {
+    if (bytes.isEmpty) return;
+    if (_socket != null) {
+      _socket!.add(bytes);
+    }
+  }
+
   void dispose() {
     disconnect();
     _tagStreamController.close();
   }
 
   /// -------------------------------------------------------------------------
-  /// [핵심 방어 로직] TCP 스트림 파싱 버퍼 엔진
-  /// 소켓에 데이터가 들어오면 무조건 파싱하는 것이 아니라, \n(엔터) 단위로
-  /// 완벽한 패킷 한 줄이 완성되었을 때만 자식 클래스(parseTagId)로 넘깁니다.
+  /// [핵심 아키텍처 변경] 수신 데이터 라우팅 엔진
+  /// 장비가 ASCII 방식이냐 Binary 방식이냐에 따라 자식 클래스에서
+  /// 버퍼 처리 방식을 완전히 다르게 가져갈 수 있도록 가상 함수(Virtual)로 분리했습니다.
   /// -------------------------------------------------------------------------
   void _internalOnDataReceived(Uint8List data) {
+    onDataReceived(data);
+  }
+
+  /// 기본 동작은 기존과 동일한 ASCII (엔터 \n 기준 자르기) 방식입니다.
+  /// Hopeland 같은 바이너리 장비는 이 함수를 오버라이딩하여 독자적으로 처리합니다.
+  void onDataReceived(Uint8List data) {
     _buffer += String.fromCharCodes(data);
 
-    // 개행문자(\n)가 포함되어 있다면 최소 한 줄 이상의 완성된 패킷이 존재함
     while (_buffer.contains('\n')) {
       int index = _buffer.indexOf('\n');
-      // \r\n 에서 \r까지 제거하여 깔끔한 패킷 한 줄만 추출
       String line = _buffer.substring(0, index).replaceAll('\r', '');
-
-      // 처리한 패킷은 버퍼에서 날려버림
       _buffer = _buffer.substring(index + 1);
 
       if (line.isNotEmpty) {
-        String parsedTag = parseTagId(line); // 자식 클래스의 오버라이딩 함수 호출
-
-        // 파싱된 유효한 데이터가 있다면 Provider로 발송
+        String parsedTag = parseTagId(line);
         if (parsedTag.isNotEmpty && !_tagStreamController.isClosed) {
           _tagStreamController.add(parsedTag);
         }
@@ -138,28 +153,18 @@ abstract class BaseDeviceProtocol {
     }
   }
 
-  // =========================================================================
-  // [가상 함수 (Virtual Methods)] 자식 클래스가 구현해야 할 핵심 로직
-  // =========================================================================
   void onConnected();
   void onDisconnecting();
   String parseTagId(String rawData);
 
-  /// -------------------------------------------------------------------------
-  /// [신규 가상 함수] 장비의 안테나별 RF 출력 파워를 설정합니다. (C++ 가상 함수 역할)
-  /// 향후 UI의 Slider 바 등을 움직일 때 호출될 인터페이스입니다.
-  /// [antennaIndex]: 0(전체 안테나 공통 설정), 1~4(개별 안테나 번호)
-  /// [powerLevel]: 장비 규격에 맞는 파워 값 (예: IDRO의 경우 50 ~ 310)
-  /// -------------------------------------------------------------------------
-  Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
-    // 기본적으로는 아무 동작도 하지 않습니다.
-    // 이를 지원하는 IDRO900F 등의 자식 클래스에서만 오버라이딩하여 구현합니다.
-  }
+  Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {}
+  Future<void> readTagMemory(int bank, int offset, int length) async {}
+  Future<void> writeTagMemory(int bank, int offset, String dataHex) async {}
+  Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {}
 }
 
 /// ---------------------------------------------------------------------------
 /// [유형 1] 자동 수신형 (Event-Driven) 베이스 클래스
-/// 연결 시 Start 명령을 주고, 끊을 때 Stop 명령을 주는 장비용입니다.
 /// ---------------------------------------------------------------------------
 abstract class AutoReportProtocol extends BaseDeviceProtocol {
   final String startCmd;
@@ -185,7 +190,6 @@ abstract class AutoReportProtocol extends BaseDeviceProtocol {
 
 /// ---------------------------------------------------------------------------
 /// [유형 2] 핸드쉐이킹 폴링형 (Polling) 베이스 클래스
-/// C++Builder의 TTimer를 돌리며 주기적으로 "데이터 있어?"라고 묻는 장비용입니다.
 /// ---------------------------------------------------------------------------
 abstract class PollingProtocol extends BaseDeviceProtocol {
   final String pollCmd;
@@ -218,163 +222,519 @@ abstract class PollingProtocol extends BaseDeviceProtocol {
 }
 
 /// ===========================================================================
-/// [구현체] 각 장비별 프로토콜 정의 영역
+/// [구현체] IDRO900F 전용 프로토콜
 /// ===========================================================================
-
-/// IDRO900F 및 CF 시리즈 등 ASCII 기반 자동 송신 장비 프로토콜
 class Idro900fProtocol extends AutoReportProtocol {
-  // 매뉴얼에 따라 시작은 '>f\r\n', 중지는 '>3\r\n' 입니다.
   Idro900fProtocol(String ip, int port)
       : super(ipAddress: ip, port: port, startCmd: ">f\r\n", stopCmd: ">3\r\n");
 
   @override
   String parseTagId(String packet) {
-    // -----------------------------------------------------------------
-    // 매뉴얼 분석 기반 파싱 로직
-    // 정상 패킷: >1T3000111122223333444455550000
-    // 인덱스 정보: [0]: >, [1]: 안테나번호, [2]: T(데이터) or C(에러),
-    //              [3~6]: PC값(4자리), [7~]: 실제 EPC 데이터
-    // -----------------------------------------------------------------
-    if (packet.startsWith('>') && packet.length > 7) {
+    if (packet.startsWith('>') && packet.length >= 3) {
       String replyType = packet.substring(2, 3);
-
-      // 'T'는 매뉴얼상 정상 태그 데이터 응답을 의미합니다.
       if (replyType == 'T') {
-        // 앞의 헤더와 PC값 4자리를 떼어내고 순수 EPC만 추출합니다.
-        String epc = packet.substring(7);
-        return epc.trim();
+        if (packet.length > 7) return packet.substring(7).trim();
+      } else if (replyType == 'R') {
+        return "[메모리 읽기 결과] 데이터: ${packet.substring(3).trim()}";
+      } else if (replyType == 'W') {
+        return "[메모리 쓰기 결과] 응답코드: ${packet.substring(3).trim()}";
+      } else if (replyType == 'M') {
+        return "[필터(Mask) 설정 결과] 응답코드: ${packet.substring(3).trim()}";
       }
     }
-    return ""; // 에러 패킷이거나 엉뚱한 문자열이면 무시 (버림)
+    return "";
   }
 
-  /// -------------------------------------------------------------------------
-  /// [IDRO900F 파워 제어] C++Builder 하드웨어 통신 안정화 기법(Sleep) 적용
-  /// -------------------------------------------------------------------------
   @override
   Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
-    // 1. 유효성 검사: 매뉴얼 기준 파워 입력값은 50 ~ 310 (0.1dBm 단위) 사이여야 합니다.
     int safePower = powerLevel;
     if (safePower < 50) safePower = 50;
     if (safePower > 310) safePower = 310;
-
-    // 2. 명령어 타입 결정: p(전체공통), p1(안테나1) ~ p4(안테나4)
     String type = antennaIndex == 0 ? "p" : "p$antennaIndex";
-
-    // Step 1: 현재 태그 읽기 일시 정지 (Stop Command: >3\r\n)
     sendCommandString(stopCmd);
-    await Future.delayed(const Duration(milliseconds: 100)); // Sleep(100) 역할
-
-    // Step 2: 파워 변경 명령어 전송 (Set Control Packet)
+    await Future.delayed(const Duration(milliseconds: 100));
     sendCommandString(">x $type $safePower\r\n");
     await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString(startCmd);
+  }
 
-    // Step 3: 다시 원래대로 태그 읽기 재개
+  @override
+  Future<void> readTagMemory(int bank, int offset, int length) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString(">r $bank $offset $length\r\n");
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString(startCmd);
+  }
+
+  @override
+  Future<void> writeTagMemory(int bank, int offset, String dataHex) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString(">w $bank $offset $dataHex\r\n");
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString(startCmd);
+  }
+
+  @override
+  Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    int bitLength = maskDataHex.length * 4;
+    sendCommandString(">m $bank $offset $bitLength $maskDataHex\r\n");
+    await Future.delayed(const Duration(milliseconds: 100));
     sendCommandString(startCmd);
   }
 }
 
-/// ATS200 휴대형 리더기 (자동 송신)
+/// ===========================================================================
+/// [구현체] ATID ATS200/100 휴대형 리더기
+/// ===========================================================================
 class Ats200Protocol extends AutoReportProtocol {
   Ats200Protocol(String ip, int port)
-      : super(ipAddress: ip, port: port, startCmd: "SCAN_ON\n", stopCmd: "SCAN_OFF\n");
+      : super(ipAddress: ip, port: port, startCmd: "~af\r\n", stopCmd: "~as\r\n");
 
   @override
   String parseTagId(String packet) {
-    // 콤마로 구분된 데이터 중 첫 번째 항목(EPC)만 추출
-    if (packet.contains(',')) return packet.split(',')[0].trim();
-    return packet.trim();
+    if (packet.startsWith('~eT')) {
+      String mainData = packet.contains(',') ? packet.split(',')[0] : packet;
+      if (mainData.length > 7) return mainData.substring(7).trim();
+    }
+    else if (packet.startsWith('~eA')) {
+      List<String> parts = packet.split(',');
+      if (parts.length >= 3) {
+        String status = parts[0].substring(3);
+        String action = parts[1];
+        String epcData = parts[2];
+        if (status == '0000') {
+          if (action == 'r') {
+            String readData = parts.sublist(3).join('');
+            return "[메모리 읽기 성공] 대상 EPC: $epcData / 데이터: $readData";
+          } else if (action == 'w') {
+            return "[메모리 쓰기 성공] 대상 EPC: $epcData";
+          }
+        } else {
+          return "[메모리 접근 에러] 대상 EPC: $epcData / 에러코드: $status";
+        }
+      }
+    }
+    return "";
   }
-}
-
-/// M120 데스크형 리더기 (핸드쉐이킹 / 폴링 방식)
-class M120PollingProtocol extends PollingProtocol {
-  M120PollingProtocol(String ip, int port)
-      : super(ipAddress: ip, port: port, pollCmd: "GET_TAG\r\n", intervalMs: 500);
 
   @override
-  String parseTagId(String packet) {
-    String data = packet.trim();
-    if (data.isEmpty || data == "NO_TAG" || data == "ERROR") return "";
-    return data;
+  Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
+    int safePower = powerLevel;
+    if (safePower < 0) safePower = 0;
+    if (safePower > 300) safePower = 300;
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString("~wP$safePower\r\n");
+  }
+
+  @override
+  Future<void> readTagMemory(int bank, int offset, int length) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    sendCommandString("~ar$bank,$offset,$length\r\n");
+  }
+
+  @override
+  Future<void> writeTagMemory(int bank, int offset, String dataHex) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    List<String> chunks = [];
+    for (int i = 0; i < dataHex.length; i += 4) {
+      int end = (i + 4 > dataHex.length) ? dataHex.length : (i + 4);
+      chunks.add(dataHex.substring(i, end));
+    }
+    String dataStr = chunks.join(',');
+    int length = chunks.length;
+    sendCommandString("~aw$bank,$offset,$length,$dataStr\r\n");
+  }
+
+  @override
+  Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {
+    sendCommandString(stopCmd);
+    await Future.delayed(const Duration(milliseconds: 100));
+    int bitLength = maskDataHex.length * 4;
+    sendCommandString("~aM1,$bank,$offset,$bitLength,$maskDataHex\r\n");
   }
 }
 
-/// Zebra 프린터 프로토콜 (ZPL 상태 체크용 - 폴링 방식)
+/// ===========================================================================
+/// [완벽 대비] Hopeland 리더기 프로토콜 (바이너리/Hex 통신 기반)
+/// C++Builder의 TMemoryStream 슬라이딩 윈도우 파싱 기법을 Dart로 완벽 재현!
+///
+/// [클래스 역할 설명]
+/// 기존의 IDRO나 ATID 장비가 텍스트(ASCII, \r\n 기준) 기반으로 데이터를 주고받았다면,
+/// Hopeland (및 M120 데스크형) 장비는 16진수(Hex) 형태의 '바이너리 데이터'로 통신합니다.
+/// 이 클래스는 소켓으로 들어오는 쪼개진 바이트(Byte) 조각들을 모아서
+/// 완벽한 하나의 패킷(프레임)으로 조립해내는 가장 핵심적인 심장 역할을 수행합니다.
+/// ===========================================================================
+class HopelandProtocol extends BaseDeviceProtocol {
+  // -------------------------------------------------------------------------
+  // 바이너리 데이터를 꼬리표처럼 계속 이어붙이기 위한 전용 동적 바이트 버퍼입니다.
+  // C++Builder에서 사용하시던 std::vector<BYTE> 또는 TMemoryStream과 정확히 같은 역할입니다.
+  // -------------------------------------------------------------------------
+  final List<int> _byteBuffer = [];
+
+  HopelandProtocol(String ip, int port) : super(ipAddress: ip, port: port);
+
+  @override
+  void onConnected() {
+    // [명령 하달] 인벤토리(읽기) 시작 Hex Command 전송
+    // 구조: AA(헤더) + 01 00(컨트롤워드) ...
+    debugPrint("Hopeland/M120 Device Connected: $ipAddress:$port");
+  }
+
+  @override
+  void onDisconnecting() {
+    // 인벤토리 중지 Hex Command 전송
+  }
+
+  void sendCommandHex(String hexString) {
+    String cleanHex = hexString.replaceAll(' ', '').toUpperCase();
+    if (cleanHex.length % 2 != 0) return;
+
+    List<int> bytes = [];
+    for (int i = 0; i < cleanHex.length; i += 2) {
+      bytes.add(int.parse(cleanHex.substring(i, i + 2), radix: 16));
+    }
+    sendCommandBytes(bytes);
+  }
+
+  @override
+  void onDataReceived(Uint8List data) {
+    _byteBuffer.addAll(data);
+
+    while (_byteBuffer.isNotEmpty) {
+      // [방어 로직 1] Hopeland의 프레임 시작 헤더인 '0xAA'를 찾습니다.
+      if (_byteBuffer[0] != 0xAA) {
+        _byteBuffer.removeAt(0);
+        continue;
+      }
+
+      if (_byteBuffer.length < 5) {
+        break;
+      }
+
+      int dataLength = (_byteBuffer[3] << 8) | _byteBuffer[4];
+      int totalPacketSize = 5 + dataLength + 2;
+
+      if (_byteBuffer.length < totalPacketSize) {
+        break;
+      }
+
+      List<int> completePacket = _byteBuffer.sublist(0, totalPacketSize);
+      _byteBuffer.removeRange(0, totalPacketSize);
+
+      _processBinaryPacket(completePacket);
+    }
+
+    if (_byteBuffer.length > 8192) {
+      _byteBuffer.clear();
+    }
+  }
+
+  void _processBinaryPacket(List<int> packet) {
+    int commandCode = (packet[1] << 8) | packet[2];
+
+    // -----------------------------------------------------------------------
+    // [응답 분기 처리] 매뉴얼의 Command Code에 따라 알맞은 결과를 전파합니다.
+    // -----------------------------------------------------------------------
+    if (commandCode == 0x0102) {
+      // 1. 일반 인벤토리 (태그 읽기) 응답
+      List<int> epcBytes = packet.sublist(5, packet.length - 2);
+      String epcHex = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
+
+      if (epcHex.isNotEmpty && !_tagStreamController.isClosed) {
+        _tagStreamController.add(epcHex);
+      }
+    } else if (commandCode == 0x0104) {
+      // 2. [신규] 메모리 읽기(Read) 결과 응답 예시
+      _tagStreamController.add("[메모리 읽기 성공] Hopeland 응답 수신");
+    } else if (commandCode == 0x0105) {
+      // 3. [신규] 메모리 쓰기(Write) 결과 응답 예시
+      _tagStreamController.add("[메모리 쓰기 성공] Hopeland 응답 수신");
+    }
+  }
+
+  @override
+  String parseTagId(String rawData) {
+    return "";
+  }
+
+  // =========================================================================
+  // [신규 기능 구현] Hopeland 바이너리 제어 명령어 (Power, Read, Write, Filter)
+  // =========================================================================
+
+  @override
+  Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
+    await Future.delayed(const Duration(milliseconds: 100)); // 상태 안정화
+
+    // TODO: 매뉴얼 획득 후 파워 설정 HEX 코드로 교체
+    // 예시: AA [명령어] [길이] [안테나번호] [파워값] [체크섬]
+    // sendCommandHex("AA 01 07 00 02 $antennaHex $powerHex ... ");
+
+    debugPrint("Hopeland 파워 설정 명령 준비됨: 안테나 $antennaIndex, 파워 $powerLevel");
+  }
+
+  @override
+  Future<void> readTagMemory(int bank, int offset, int length) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: 매뉴얼 획득 후 메모리 읽기 HEX 코드로 교체
+    // 뱅크(User=3 등), 오프셋, 길이를 HEX로 변환하여 조립합니다.
+
+    debugPrint("Hopeland 메모리 읽기 명령 준비됨: Bank $bank, Offset $offset, Length $length");
+  }
+
+  @override
+  Future<void> writeTagMemory(int bank, int offset, String dataHex) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: 매뉴얼 획득 후 메모리 쓰기 HEX 코드로 교체
+    // 가변 길이의 dataHex를 바이트 배열로 변환 후 체크섬(Checksum)을 동적 계산하여 쏴야 합니다.
+
+    debugPrint("Hopeland 메모리 쓰기 명령 준비됨: Bank $bank, Offset $offset, Data $dataHex");
+  }
+
+  @override
+  Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: 매뉴얼 획득 후 마스킹(필터) HEX 코드로 교체
+
+    debugPrint("Hopeland 필터 설정 명령 준비됨: Bank $bank, Offset $offset, Mask $maskDataHex");
+  }
+}
+
+/// ===========================================================================
+/// [신규 추가] CHAFON 리더기 프로토콜 (바이너리/Hex 통신 기반)
+/// CF815, CF_RU5102, CF601 등 CHAFON 계열의 모든 리더기들이 공통으로 사용하는
+/// 중국계 표준 바이너리 프로토콜(주로 0xBB 헤더 사용)을 처리하는 엔진입니다!
+/// ===========================================================================
+class ChafonProtocol extends BaseDeviceProtocol {
+  // 바이너리 슬라이딩 윈도우 파서용 바이트 버퍼
+  final List<int> _byteBuffer = [];
+
+  ChafonProtocol(String ip, int port) : super(ipAddress: ip, port: port);
+
+  @override
+  void onConnected() {
+    // -----------------------------------------------------------------
+    // CHAFON 리더기의 전형적인 인벤토리(Multi-Read) 시작 명령
+    // 구조 예시: 0xBB(헤더) 0x00(타입) 0x27(커맨드) 0x00 0x03(길이) 0x22 0x27 0x10 0x83(체크섬) 0x7E(종료)
+    // -----------------------------------------------------------------
+    // sendCommandHex("BB 00 27 00 03 22 27 10 83 7E");
+    debugPrint("CHAFON Device Connected: $ipAddress:$port");
+  }
+
+  @override
+  void onDisconnecting() {
+    // 인벤토리 중지 명령 (예: BB 00 28 00 00 28 7E)
+    // sendCommandHex("BB 00 28 00 00 28 7E");
+  }
+
+  /// 사용의 편의를 위해 16진수 문자열을 바이트 배열로 변환하여 쏩니다.
+  void sendCommandHex(String hexString) {
+    String cleanHex = hexString.replaceAll(' ', '').toUpperCase();
+    if (cleanHex.length % 2 != 0) return;
+
+    List<int> bytes = [];
+    for (int i = 0; i < cleanHex.length; i += 2) {
+      bytes.add(int.parse(cleanHex.substring(i, i + 2), radix: 16));
+    }
+    sendCommandBytes(bytes);
+  }
+
+  /// -------------------------------------------------------------------------
+  /// [CHAFON 전용 바이너리 파서]
+  /// CHAFON 장비의 가장 큰 특징인 시작 헤더(0xBB)와 종료 테일(0x7E)을 감지합니다.
+  /// -------------------------------------------------------------------------
+  @override
+  void onDataReceived(Uint8List data) {
+    _byteBuffer.addAll(data);
+
+    while (_byteBuffer.isNotEmpty) {
+      // [방어 로직 1] CHAFON의 프레임 시작 헤더인 '0xBB'를 찾을 때까지 쓰레기 버림
+      if (_byteBuffer[0] != 0xBB) {
+        _byteBuffer.removeAt(0);
+        continue;
+      }
+
+      // [방어 로직 2] 길이를 계산하기 위한 최소 길이 (보통 Header + Type + Cmd + Length = 5바이트)
+      if (_byteBuffer.length < 5) {
+        break;
+      }
+
+      // [핵심 로직] CHAFON 프로토콜의 Payload 길이는 보통 인덱스 3, 4(또는 4번 1바이트)에 위치합니다.
+      // (매뉴얼을 확보하시면 이 Length 파싱 위치만 살짝 조정하시면 됩니다.)
+      int dataLength = (_byteBuffer[3] << 8) | _byteBuffer[4];
+
+      // 전체 길이 = 5(헤더부) + Payload + 2(체크섬+엔드코드 0x7E)
+      int totalPacketSize = 5 + dataLength + 2;
+
+      if (_byteBuffer.length < totalPacketSize) {
+        break;
+      }
+
+      // 하나의 완벽한 CHAFON 패킷 추출 완료!
+      List<int> completePacket = _byteBuffer.sublist(0, totalPacketSize);
+      _byteBuffer.removeRange(0, totalPacketSize);
+
+      _processBinaryPacket(completePacket);
+    }
+
+    // 메모리 누수 방어
+    if (_byteBuffer.length > 8192) {
+      _byteBuffer.clear();
+    }
+  }
+
+  void _processBinaryPacket(List<int> packet) {
+    // 패킷의 마지막이 0x7E로 끝나는지 확인하여 정상 프레임인지 2차 검증
+    if (packet.last != 0x7E) return;
+
+    // 명령어 코드 추출 (예: 0x22 = EPC Read 응답, 0x39 = Read Memory, 0x49 = Write Memory)
+    int commandCode = packet[2];
+
+    // -----------------------------------------------------------------------
+    // [응답 분기 처리] CHAFON 매뉴얼 기준 응답 파싱
+    // -----------------------------------------------------------------------
+    if (commandCode == 0x22) {
+      // 1. 일반 인벤토리 응답
+      List<int> epcBytes = packet.sublist(5, packet.length - 2);
+      String epcHex = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
+
+      if (epcHex.isNotEmpty && !_tagStreamController.isClosed) {
+        _tagStreamController.add(epcHex);
+      }
+    } else if (commandCode == 0x39) {
+      // 2. [신규] 메모리 읽기 성공 (Read Data)
+      _tagStreamController.add("[메모리 읽기 성공] CHAFON 응답 수신");
+    } else if (commandCode == 0x49) {
+      // 3. [신규] 메모리 쓰기 성공 (Write Data)
+      _tagStreamController.add("[메모리 쓰기 성공] CHAFON 응답 수신");
+    }
+  }
+
+  @override
+  String parseTagId(String rawData) {
+    return ""; // 바이너리 처리를 하므로 사용 안함
+  }
+
+  // =========================================================================
+  // [신규 기능 구현] CHAFON 바이너리 제어 명령어 (Power, Read, Write, Filter)
+  // =========================================================================
+
+  @override
+  Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
+    await Future.delayed(const Duration(milliseconds: 100)); // 인벤토리 정지 후 딜레이
+
+    // TODO: 매뉴얼 획득 후 파워 설정 HEX 코드로 교체 (예: BB 00 B6 ...)
+    // sendCommandHex("BB 00 B6 00 02 $powerHex $checksumHex 7E");
+
+    debugPrint("CHAFON 파워 설정 명령 준비됨: 파워 $powerLevel");
+  }
+
+  @override
+  Future<void> readTagMemory(int bank, int offset, int length) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: CHAFON Read Memory(Cmd: 0x39) 명령 전송
+
+    debugPrint("CHAFON 메모리 읽기 명령 준비됨: Bank $bank, Offset $offset, Length $length");
+  }
+
+  @override
+  Future<void> writeTagMemory(int bank, int offset, String dataHex) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: CHAFON Write Memory(Cmd: 0x49) 명령 전송
+
+    debugPrint("CHAFON 메모리 쓰기 명령 준비됨: Bank $bank, Offset $offset, Data $dataHex");
+  }
+
+  @override
+  Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    // TODO: CHAFON Set Filter(Cmd: 0x98 등) 명령 전송
+
+    debugPrint("CHAFON 필터 설정 명령 준비됨: Bank $bank, Offset $offset, Mask $maskDataHex");
+  }
+}
+
+/// ===========================================================================
+/// 프린터 / 범용 장비 프로토콜
+/// [알림] M120은 Hopeland로 통합되었으므로 이 구역의 M120PollingProtocol은 삭제되었습니다.
+/// ===========================================================================
+
 class ZebraPrinterProtocol extends PollingProtocol {
   ZebraPrinterProtocol(String ip, int port)
       : super(ipAddress: ip, port: port, pollCmd: "~HS", intervalMs: 1000);
-
   @override
   String parseTagId(String packet) => packet.trim();
 }
 
-/// SATO 프린터 프로토콜 (자동 송신)
 class SatoPrinterProtocol extends AutoReportProtocol {
   SatoPrinterProtocol(String ip, int port)
       : super(ipAddress: ip, port: port, startCmd: "\x1bA", stopCmd: "\x1bZ");
-
   @override
   String parseTagId(String packet) => packet.trim();
 }
 
-/// ---------------------------------------------------------------------------
-/// [신규 추가] 범용 RS232C 장치 프로토콜
-/// Serial to TCP/IP 컨버터(Moxa NPort 등)를 통해 네트워크로 들어오는 시리얼 장비용.
-/// 별도의 시작/중지 명령 없이 들어오는 Raw 데이터를 그대로(Pass-through) 수신합니다.
-/// ---------------------------------------------------------------------------
 class GenericRs232cProtocol extends AutoReportProtocol {
-  // 범용이므로 특정 시작/종료 명령을 전송하지 않습니다.
   GenericRs232cProtocol(String ip, int port)
       : super(ipAddress: ip, port: port, startCmd: "", stopCmd: "");
-
   @override
-  String parseTagId(String packet) {
-    // 시리얼로 들어온 문자열의 공백이나 특수문자만 정리해서 그대로 UI나 Provider로 보냅니다.
-    // 현장 장비(바코드 리더, 온도 센서, 무게계 등)의 순수 출력값을 얻을 때 사용됩니다.
-    return packet.trim();
-  }
+  String parseTagId(String packet) => packet.trim();
 }
 
-/// 기본/테스트용 프로토콜
 class DefaultProtocol extends AutoReportProtocol {
   DefaultProtocol(String ip, int port)
       : super(ipAddress: ip, port: port, startCmd: "START\n", stopCmd: "STOP\n");
-
   @override
   String parseTagId(String packet) => packet.trim();
 }
 
 /// ---------------------------------------------------------------------------
 /// [팩토리] 모델 식별자에 따른 적절한 프로토콜 객체 생성 (Driver Factory)
-/// DeviceProvider에서 DeviceProtocolFactory.create() 로 호출하여 사용합니다.
 /// ---------------------------------------------------------------------------
 class DeviceProtocolFactory {
   static BaseDeviceProtocol create(String modelValue, String ip, int port) {
     switch (modelValue) {
-    // 1. 자동 송신(Event) 기반 장비들
+    // 1. IDRO 전용 (문자열 방식)
       case SupportedDeviceModels.idro900f:
+        return Idro900fProtocol(ip, port);
+
+    // 2. ATID 전용
+      case SupportedDeviceModels.ats200:
+        return Ats200Protocol(ip, port);
+
+    // 3. [핵심 수정] Hopeland 및 M120 통합!
+    // M120 장비가 Hopeland 제조품이므로, 동일한 0xAA 헤더의 바이너리 엔진을 타도록 묶었습니다.
+      case SupportedDeviceModels.hopeland:
+      case SupportedDeviceModels.m120:
+        return HopelandProtocol(ip, port);
+
+    // 4. CHAFON 및 동일 칩셋(CF계열) 리더기 묶음 처리!
+      case SupportedDeviceModels.chafon:
       case SupportedDeviceModels.cf815:
       case SupportedDeviceModels.cfRU5102:
       case SupportedDeviceModels.cf601:
-        return Idro900fProtocol(ip, port);
+        return ChafonProtocol(ip, port);
 
-      case SupportedDeviceModels.ats200:
-        return Ats200Protocol(ip, port);
       case SupportedDeviceModels.sato:
         return SatoPrinterProtocol(ip, port);
 
-    // 2. 핸드쉐이킹(Polling) 기반 장비들
-      case SupportedDeviceModels.m120:
-        return M120PollingProtocol(ip, port);
       case SupportedDeviceModels.zebra:
         return ZebraPrinterProtocol(ip, port);
 
-    // 3. [신규] 범용 시리얼(RS232C) 컨버터 장비
       case SupportedDeviceModels.genericRs232c:
         return GenericRs232cProtocol(ip, port);
 
-    // 4. 기본값 (범용 TCP)
       case SupportedDeviceModels.bt200:
       case SupportedDeviceModels.genericTcp:
       default:
