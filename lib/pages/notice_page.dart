@@ -6,8 +6,9 @@ import '../theme/app_theme.dart';
 
 /// ---------------------------------------------------------------------------
 /// [공지사항 통합 관리 페이지]
-/// 리스트 조회, 상세 보기, 신규 등록, 수정 기능을 이 파일 하나에서 모두 처리합니다.
-/// 화면 이동(Navigator.push) 대신 세련된 다이얼로그(팝업) 방식을 사용하여
+/// 리스트 조회, 상세 보기, 신규 등록, 수정 기능은 물론,
+/// 다중 선택(일괄 삭제), 전체 초기화, 건별 즉시 삭제 기능이 추가되었습니다.
+/// 화면 이동(Navigator.push) 없이 세련된 다이얼로그(팝업) 방식을 사용하여
 /// 키오스크 및 데스크톱 환경에 최적화된 미니멀리즘 UX를 제공합니다.
 /// ---------------------------------------------------------------------------
 class NoticePage extends StatefulWidget {
@@ -27,6 +28,12 @@ class NoticePage extends StatefulWidget {
 class _NoticePageState extends State<NoticePage> {
   // 화면에 보여줄 공지사항 데이터를 담을 리스트입니다.
   List<NoticeModel> noticeList = [];
+
+  // ---------------------------------------------------------------------------
+  // [상태 변수 선언부 - 다중 선택 및 기능 관련]
+  // ---------------------------------------------------------------------------
+  final Set<String> _selectedNoticeIds = {}; // 선택된 공지사항의 ID를 보관하는 집합(Set)
+  bool _isSelectionMode = false;             // 다중 선택 모드 활성화 여부
 
   @override
   void initState() {
@@ -55,6 +62,15 @@ class _NoticePageState extends State<NoticePage> {
         isImportant: false,
         viewCount: 89,
       ),
+      NoticeModel(
+        id: 'notice-003',
+        title: '방문객 출입 통제 절차 강화 안내',
+        content: '최근 보안 지침이 강화됨에 따라 방문객 출입 통제 절차를 안내해 드립니다.',
+        author: '보안팀',
+        createdAt: DateTime.now().subtract(const Duration(days: 5)),
+        isImportant: false,
+        viewCount: 45,
+      ),
     ];
     _sortNotices(); // 데이터를 중요도 및 최신순으로 정렬합니다.
   }
@@ -62,15 +78,18 @@ class _NoticePageState extends State<NoticePage> {
   /// 중요 공지가 위로 오고, 그다음 최신순으로 정렬하는 로직입니다.
   void _sortNotices() {
     noticeList.sort((NoticeModel a, NoticeModel b) {
-      if (a.isImportant && !b.isImportant) return -1;
-      if (!a.isImportant && b.isImportant) return 1;
+      if (a.isImportant && !b.isImportant) {
+        return -1;
+      }
+      if (!a.isImportant && b.isImportant) {
+        return 1;
+      }
       return b.createdAt.compareTo(a.createdAt); // 내림차순 정렬
     });
   }
 
   /// ---------------------------------------------------------------------------
   /// [1] 공지사항 상세 보기 다이얼로그 호출 함수
-  /// 리스트에서 항목을 클릭했을 때 화면 중앙에 뜨는 팝업창입니다.
   /// ---------------------------------------------------------------------------
   void _showDetailDialog(NoticeModel notice) {
     showDialog(
@@ -79,15 +98,13 @@ class _NoticePageState extends State<NoticePage> {
         return _NoticeDetailDialog(
           notice: notice,
           isMobile: widget.isMobile,
-          // 팝업 안에서 '수정' 버튼을 눌렀을 때 실행될 콜백 함수
           onEdit: () {
             Navigator.pop(dialogContext); // 상세 창을 닫고
             _showEditDialog(notice: notice); // 편집 창을 엽니다.
           },
-          // 팝업 안에서 '삭제' 버튼을 눌렀을 때 실행될 콜백 함수
           onDelete: () {
             Navigator.pop(dialogContext); // 상세 창을 닫고
-            _deleteNotice(notice.id); // 삭제 로직을 실행합니다.
+            _deleteNotice(notice.id); // 개별 삭제 로직을 실행합니다.
           },
         );
       },
@@ -96,12 +113,11 @@ class _NoticePageState extends State<NoticePage> {
 
   /// ---------------------------------------------------------------------------
   /// [2] 공지사항 등록 및 수정 다이얼로그 호출 함수
-  /// 새 공지 등록 버튼이나 상세 보기의 수정 버튼을 눌렀을 때 뜹니다.
   /// ---------------------------------------------------------------------------
   void _showEditDialog({NoticeModel? notice}) {
     showDialog<NoticeModel>(
       context: context,
-      barrierDismissible: false, // 작성 중 실수로 바깥을 눌러 꺼지는 것을 방지합니다.
+      barrierDismissible: false,
       builder: (BuildContext dialogContext) {
         return _NoticeEditDialog(
           notice: notice,
@@ -109,59 +125,148 @@ class _NoticePageState extends State<NoticePage> {
         );
       },
     ).then((NoticeModel? result) {
-      // 다이얼로그가 닫히고 넘어온 결과값이 있다면 화면을 갱신합니다.
       if (result != null) {
         setState(() {
           if (notice == null) {
-            // 새로 등록한 경우 (리스트에 추가)
             noticeList.add(result);
           } else {
-            // 기존 내용을 수정한 경우 (해당 ID를 찾아 교체)
             int index = noticeList.indexWhere((element) => element.id == result.id);
             if (index != -1) {
               noticeList[index] = result;
             }
           }
-          _sortNotices(); // 변경 후 재정렬
+          _sortNotices();
         });
       }
     });
   }
 
   /// ---------------------------------------------------------------------------
-  /// [3] 공지사항 삭제 처리 함수 (확인 창 포함)
+  /// [3] 건별 공지사항 삭제 처리 함수 (확인 창 포함)
   /// ---------------------------------------------------------------------------
   void _deleteNotice(String noticeId) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     showDialog(
       context: context,
       builder: (BuildContext confirmContext) {
-        // [수정점] Theme.of(context).brightness 값을 bool 타입인 isDarkMode로 변환합니다.
-        final bool isDarkMode = Theme.of(confirmContext).brightness == Brightness.dark;
-
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
           title: AppTheme.dialogTitle("공지사항 삭제", Icons.warning_amber_rounded, color: AppTheme.danger),
           content: Text("이 공지사항을 정말로 삭제하시겠습니까?", style: AppTheme.itemValueStyle(confirmContext)),
           actions: [
             TextButton(
-              // [수정점] AppTheme.labelColor에 bool 값(isDarkMode)을 정상적으로 넘겨줍니다.
               child: Text("취소", style: TextStyle(color: AppTheme.labelColor(isDarkMode))),
               onPressed: () => Navigator.pop(confirmContext),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
               onPressed: () {
-                // 삭제 확인 시 리스트에서 제거하고 화면을 갱신합니다.
                 setState(() {
                   noticeList.removeWhere((element) => element.id == noticeId);
+                  _selectedNoticeIds.remove(noticeId); // 선택 목록에서도 제거
                 });
-                Navigator.pop(confirmContext); // 다이얼로그 닫기
+                Navigator.pop(confirmContext);
               },
               child: const Text("삭제", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );
       },
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [4] 다중 선택 일괄 삭제 처리 함수
+  /// ---------------------------------------------------------------------------
+  void _confirmBulkDelete(ThemeData theme) {
+    final bool isDarkMode = theme.brightness == Brightness.dark;
+
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("선택 항목 일괄 삭제", Icons.warning, color: AppTheme.danger),
+              content: Text(
+                  "선택하신 ${_selectedNoticeIds.length}건의 공지사항을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.",
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard)
+              ),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: AppTheme.labelColor(isDarkMode),
+                    onPressed: () => Navigator.pop(ctx)
+                ),
+                AppTheme.actionButton(
+                    label: "일괄 삭제",
+                    color: AppTheme.danger,
+                    onPressed: () {
+                      setState(() {
+                        noticeList.removeWhere((element) => _selectedNoticeIds.contains(element.id));
+                        _selectedNoticeIds.clear();
+                        _isSelectionMode = false;
+                      });
+                      Navigator.pop(ctx);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text("선택한 공지사항이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                              elevation: 0
+                          )
+                      );
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [5] 전체 데이터 초기화 처리 함수
+  /// ---------------------------------------------------------------------------
+  void _showResetConfirmationDialog(ThemeData theme) {
+    final bool isDarkMode = theme.brightness == Brightness.dark;
+
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("전체 데이터 초기화", Icons.delete_sweep, color: AppTheme.danger),
+              content: const Text(
+                  "모든 공지사항 정보를 영구 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.",
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard)
+              ),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: AppTheme.labelColor(isDarkMode),
+                    onPressed: () => Navigator.pop(ctx)
+                ),
+                AppTheme.actionButton(
+                    label: "초기화 실행",
+                    color: AppTheme.danger,
+                    onPressed: () {
+                      setState(() {
+                        noticeList.clear();
+                        _selectedNoticeIds.clear();
+                        _isSelectionMode = false;
+                      });
+                      Navigator.pop(ctx);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('모든 공지사항이 초기화 되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                              elevation: 0
+                          )
+                      );
+                    }
+                )
+              ]
+          );
+        }
     );
   }
 
@@ -188,21 +293,93 @@ class _NoticePageState extends State<NoticePage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
-        actions: [
-          // 우측 상단 '새 공지 등록' 버튼 (클릭 시 팝업 띄움)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: AppTheme.actionButton(
-              label: '새 공지 등록',
-              icon: Icons.add_circle_outline,
-              color: theme.colorScheme.primary,
-              onPressed: () => _showEditDialog(), // 파라미터 없이 호출하면 '등록 모드'
-            ),
+      ),
+      body: Column(
+        children: [
+          // 1. 헤더 영역 (기능 아이콘 모음 및 신규 등록 버튼)
+          _buildHeader(theme),
+
+          // 2. 본문 영역 (선택 툴바 + 리스트뷰)
+          Expanded(
+            child: _buildListView(theme, isDarkMode),
           ),
         ],
       ),
-      body: noticeList.isEmpty
-          ? Center(
+    );
+  }
+
+  /// [UI 조각] 리스트 상단의 아이콘 및 버튼 헤더 영역입니다.
+  Widget _buildHeader(ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Row(
+        crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                // 다중 선택 켜기/끄기 토글 버튼
+                _buildActionIcon(
+                  _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
+                  _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
+                      () {
+                    setState(() {
+                      _isSelectionMode = !_isSelectionMode;
+                      if (!_isSelectionMode) {
+                        _selectedNoticeIds.clear(); // 모드를 끄면 선택 해제
+                      }
+                    });
+                  },
+                  theme,
+                  color: _isSelectionMode ? AppTheme.primary : null,
+                ),
+                // 전체 데이터 초기화 버튼
+                _buildActionIcon(
+                    Icons.delete_sweep_outlined,
+                    "초기화 (전체 삭제)",
+                        () => _showResetConfirmationDialog(theme),
+                    theme,
+                    color: AppTheme.danger
+                ),
+              ],
+            ),
+          ),
+          if (widget.isMobile) const SizedBox(width: 8),
+
+          // 신규 등록 버튼
+          AppTheme.actionButton(
+              label: widget.isMobile ? "등록" : "새 공지 등록",
+              icon: Icons.campaign,
+              onPressed: () => _showEditDialog(),
+              color: theme.colorScheme.primary
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [UI 조각] 상단 헤더에 사용되는 툴팁 적용 아이콘 위젯입니다.
+  Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color}) {
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 52, height: 52,
+          alignment: Alignment.center,
+          child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: 24),
+        ),
+      ),
+    );
+  }
+
+  /// [UI 조각] 선택 툴바와 공지사항 리스트를 포함하는 본문 영역입니다.
+  Widget _buildListView(ThemeData theme, bool isDarkMode) {
+    if (noticeList.isEmpty) {
+      return Center(
         child: Text(
           '등록된 공지사항이 없습니다.',
           style: TextStyle(
@@ -212,80 +389,247 @@ class _NoticePageState extends State<NoticePage> {
             color: AppTheme.labelColor(isDarkMode),
           ),
         ),
-      )
-          : ListView.builder(
-        padding: EdgeInsets.all(widget.isMobile ? 12.0 : 24.0),
-        itemCount: noticeList.length,
-        itemBuilder: (BuildContext context, int index) {
-          final NoticeModel notice = noticeList[index];
-          return _buildNoticeItem(context, notice, theme, isDarkMode);
-        },
-      ),
-    );
-  }
+      );
+    }
 
-  /// 목록에 들어갈 각각의 항목(Card)을 만들어주는 함수입니다.
-  Widget _buildNoticeItem(BuildContext context, NoticeModel notice, ThemeData theme, bool isDarkMode) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0),
-      child: Card(
-        clipBehavior: Clip.hardEdge,
-        child: InkWell(
-          // 항목 터치 시 상세 보기 팝업을 띄웁니다.
-          onTap: () => _showDetailDialog(notice),
-          child: Padding(
-            padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  notice.isImportant ? Icons.campaign : Icons.article_outlined,
-                  color: notice.isImportant ? AppTheme.danger : AppTheme.labelColor(isDarkMode),
-                  size: widget.isMobile ? 28 : 36,
-                ),
-                SizedBox(width: widget.isMobile ? 12 : 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        notice.title,
-                        style: TextStyle(
-                          fontFamily: AppTheme.fontPretendard,
-                          fontSize: widget.isMobile ? 18 : 22,
-                          fontWeight: notice.isImportant ? AppTheme.weightMenu : AppTheme.weightOthers,
-                          letterSpacing: -0.4,
-                          color: notice.isImportant ? AppTheme.danger : AppTheme.dataColor(isDarkMode),
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Icon(Icons.calendar_today, size: 14, color: AppTheme.labelColor(isDarkMode)),
-                          const SizedBox(width: 6),
-                          Text(notice.getFormattedDate(), style: AppTheme.itemLabelStyle(context)),
-                          const SizedBox(width: 16),
+    final bool isAllSelected = noticeList.isNotEmpty && noticeList.every((NoticeModel p) => _selectedNoticeIds.contains(p.id));
 
-                          Icon(Icons.person, size: 14, color: AppTheme.labelColor(isDarkMode)),
-                          const SizedBox(width: 6),
-                          Text(notice.author, style: AppTheme.itemLabelStyle(context)),
-
-                          const Spacer(),
-
-                          Icon(Icons.visibility, size: 14, color: AppTheme.labelColor(isDarkMode)),
-                          const SizedBox(width: 6),
-                          Text('${notice.viewCount}', style: AppTheme.itemLabelStyle(context)),
-                        ],
-                      ),
-                    ],
+    return Column(
+      children: [
+        // 다중 선택 모드가 켜졌을 때 나타나는 상단 툴바
+        AnimatedSize(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: _isSelectionMode
+              ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            alignment: Alignment.centerLeft,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  // 선택된 개수 뱃지
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+                    child: Text(
+                        '${_selectedNoticeIds.length}건 선택됨',
+                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+
+                  // 일괄 삭제 버튼
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.delete_sweep, size: 18),
+                    label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: _selectedNoticeIds.isEmpty ? null : () => _confirmBulkDelete(theme),
+                  ),
+                  const SizedBox(width: 16),
+
+                  Container(width: 1, height: 24, color: theme.dividerTheme.color),
+                  const SizedBox(width: 16),
+
+                  // 전체 선택 / 선택 해제 버튼
+                  OutlinedButton.icon(
+                    icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
+                    label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: isAllSelected ? Colors.grey : AppTheme.primary,
+                      side: BorderSide(color: isAllSelected ? Colors.grey.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.5)),
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        if (isAllSelected) {
+                          _selectedNoticeIds.clear();
+                        } else {
+                          for (final NoticeModel e in noticeList) {
+                            _selectedNoticeIds.add(e.id);
+                          }
+                        }
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          )
+              : const SizedBox.shrink(), // 다중 선택 모드가 아닐 때는 숨김
+        ),
+
+        // 공지사항 항목 리스트
+        Expanded(
+          // [대표님 요청사항] 리스트뷰의 부모 컨테이너에 하단 여백 20px 추가
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 20.0), // 하단 여백 설정
+            child: ListView.builder(
+              padding: EdgeInsets.all(widget.isMobile ? 12.0 : 24.0),
+              itemCount: noticeList.length,
+              itemBuilder: (BuildContext context, int index) {
+                final NoticeModel notice = noticeList[index];
+                return _buildNoticeItem(context, notice, theme, isDarkMode);
+              },
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// [UI 조각] 목록에 들어갈 각각의 항목(Card)을 만들어주는 함수입니다.
+  Widget _buildNoticeItem(BuildContext context, NoticeModel notice, ThemeData theme, bool isDarkMode) {
+    final bool isSelected = _selectedNoticeIds.contains(notice.id);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        children: [
+          // 다중 선택 모드일 때 나타나는 체크박스 애니메이션 영역
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeInOut,
+            alignment: Alignment.centerLeft,
+            child: _isSelectionMode
+                ? Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    if (isSelected) {
+                      _selectedNoticeIds.remove(notice.id);
+                    } else {
+                      _selectedNoticeIds.add(notice.id);
+                    }
+                  });
+                },
+                borderRadius: BorderRadius.circular(20),
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isSelected ? AppTheme.primary : Colors.transparent,
+                      border: Border.all(
+                        color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                        width: 2,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Icon(
+                        Icons.check,
+                        size: 16,
+                        color: isSelected ? Colors.white : Colors.transparent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
+                : const SizedBox.shrink(),
+          ),
+
+          // 실제 공지사항 카드 영역
+          Expanded(
+            child: Card(
+              clipBehavior: Clip.hardEdge,
+              // 선택되었을 때 테두리 색상을 하이라이트 합니다.
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                side: BorderSide(
+                  color: isSelected ? AppTheme.primary : (theme.dividerTheme.color ?? Colors.grey).withValues(alpha: 0.5),
+                  width: isSelected ? 2.5 : 1.0,
+                ),
+              ),
+              child: InkWell(
+                onTap: () {
+                  if (_isSelectionMode) {
+                    // 다중 선택 모드일 때는 탭하면 선택 상태를 토글합니다.
+                    setState(() {
+                      if (isSelected) {
+                        _selectedNoticeIds.remove(notice.id);
+                      } else {
+                        _selectedNoticeIds.add(notice.id);
+                      }
+                    });
+                  } else {
+                    // 일반 모드일 때는 상세 화면 다이얼로그를 띄웁니다.
+                    _showDetailDialog(notice);
+                  }
+                },
+                child: Padding(
+                  padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 아이콘
+                      Icon(
+                        notice.isImportant ? Icons.campaign : Icons.article_outlined,
+                        color: notice.isImportant ? AppTheme.danger : AppTheme.labelColor(isDarkMode),
+                        size: widget.isMobile ? 28 : 36,
+                      ),
+                      SizedBox(width: widget.isMobile ? 12 : 20),
+
+                      // 정보 텍스트 영역
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              notice.title,
+                              style: TextStyle(
+                                fontFamily: AppTheme.fontPretendard,
+                                fontSize: widget.isMobile ? 18 : 22,
+                                fontWeight: notice.isImportant ? AppTheme.weightMenu : AppTheme.weightOthers,
+                                letterSpacing: -0.4,
+                                color: notice.isImportant ? AppTheme.danger : AppTheme.dataColor(isDarkMode),
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Icon(Icons.calendar_today, size: 14, color: AppTheme.labelColor(isDarkMode)),
+                                const SizedBox(width: 6),
+                                Text(notice.getFormattedDate(), style: AppTheme.itemLabelStyle(context)),
+                                const SizedBox(width: 16),
+
+                                Icon(Icons.person, size: 14, color: AppTheme.labelColor(isDarkMode)),
+                                const SizedBox(width: 6),
+                                Text(notice.author, style: AppTheme.itemLabelStyle(context)),
+
+                                const Spacer(),
+
+                                Icon(Icons.visibility, size: 14, color: AppTheme.labelColor(isDarkMode)),
+                                const SizedBox(width: 6),
+                                Text('${notice.viewCount}', style: AppTheme.itemLabelStyle(context)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      // 건별 즉시 삭제 아이콘 버튼 (선택 모드가 아닐 때만 표시)
+                      if (!_isSelectionMode) ...[
+                        const SizedBox(width: 12),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          color: AppTheme.danger.withValues(alpha: 0.7),
+                          tooltip: "이 공지사항 삭제",
+                          onPressed: () => _deleteNotice(notice.id),
+                        ),
+                      ]
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -320,13 +664,12 @@ class _NoticeDetailDialog extends StatelessWidget {
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
       backgroundColor: theme.scaffoldBackgroundColor,
-      // PC/태블릿에서는 다이얼로그의 최대 너비를 제한하여 가독성을 높입니다.
       insetPadding: EdgeInsets.all(isMobile ? 16.0 : 40.0),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: 800, maxHeight: MediaQuery.of(context).size.height * 0.85),
         child: Column(
           children: [
-            // 다이얼로그 상단 헤더 (제목 및 닫기, 수정, 삭제 버튼)
+            // 다이얼로그 상단 헤더
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
               child: Row(
@@ -354,14 +697,14 @@ class _NoticeDetailDialog extends StatelessWidget {
                   ),
                   IconButton(
                     icon: Icon(Icons.close, color: AppTheme.labelColor(isDarkMode)),
-                    onPressed: () => Navigator.pop(context), // 창 닫기
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
             ),
             Divider(color: theme.dividerTheme.color, height: 1),
 
-            // 다이얼로그 본문 내용 (스크롤 가능)
+            // 다이얼로그 본문 내용
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(32.0),
@@ -426,7 +769,7 @@ class _NoticeDetailDialog extends StatelessWidget {
 /// [내부 위젯: 공지사항 등록/수정 폼 다이얼로그]
 /// ---------------------------------------------------------------------------
 class _NoticeEditDialog extends StatefulWidget {
-  final NoticeModel? notice; // 데이터가 있으면 '수정', 없으면 '등록'
+  final NoticeModel? notice;
   final bool isMobile;
 
   const _NoticeEditDialog({
@@ -449,7 +792,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
   @override
   void initState() {
     super.initState();
-    // 수정 모드일 경우 기존 데이터로 컨트롤러 초기화
     _titleController = TextEditingController(text: widget.notice?.title ?? '');
     _authorController = TextEditingController(text: widget.notice?.author ?? '');
     _contentController = TextEditingController(text: widget.notice?.content ?? '');
@@ -464,7 +806,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
     super.dispose();
   }
 
-  /// 폼을 검증하고 데이터를 반환하며 창을 닫습니다.
   void _saveNotice() {
     if (_formKey.currentState!.validate()) {
       final newNotice = NoticeModel(
@@ -476,7 +817,7 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
         isImportant: _isImportant,
         viewCount: widget.notice?.viewCount ?? 0,
       );
-      Navigator.pop(context, newNotice); // 부모 위젯으로 결과 전송
+      Navigator.pop(context, newNotice);
     }
   }
 
@@ -494,7 +835,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
         constraints: BoxConstraints(maxWidth: 800, maxHeight: MediaQuery.of(context).size.height * 0.9),
         child: Column(
           children: [
-            // 다이얼로그 상단 헤더
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
               child: Row(
@@ -512,14 +852,13 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                   ),
                   IconButton(
                     icon: Icon(Icons.close, color: AppTheme.labelColor(isDarkMode)),
-                    onPressed: () => Navigator.pop(context), // 취소하고 닫기
+                    onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
             ),
             Divider(color: theme.dividerTheme.color, height: 1),
 
-            // 다이얼로그 입력 폼 영역 (스크롤 가능)
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(32.0),
@@ -547,15 +886,13 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                       TextFormField(
                         controller: _contentController,
                         style: AppTheme.itemValueStyle(context),
-                        maxLines: 12, // 넓은 본문 영역
+                        maxLines: 12,
                         decoration: AppTheme.inputDecoration(label: '공지사항 본문 내용', context: context).copyWith(alignLabelWithHint: true),
                         validator: (value) => (value == null || value.trim().isEmpty) ? '본문 내용을 입력해주세요.' : null,
                       ),
                       const SizedBox(height: 24),
 
                       Container(
-                        // [수정점] context 매개변수를 위치(Positional) 매개변수로 처리합니다.
-                        // [수정점] 존재하지 않는 cardTheme.side 대신 dividerTheme.color를 사용합니다.
                         decoration: AppTheme.listItemDecoration(
                             context,
                             isSelected: _isImportant,
@@ -567,7 +904,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, color: _isImportant ? AppTheme.danger : AppTheme.dataColor(isDarkMode)),
                           ),
                           value: _isImportant,
-                          // [수정점] 사용 중단된(Deprecated) activeColor 대신, 최신 권장 사항인 Thumb과 Track 색상으로 나눠 지정합니다.
                           activeThumbColor: AppTheme.danger,
                           activeTrackColor: AppTheme.danger.withValues(alpha: 0.4),
                           onChanged: (bool value) => setState(() => _isImportant = value),
@@ -579,7 +915,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
               ),
             ),
 
-            // 하단 버튼 영역
             Padding(
               padding: const EdgeInsets.all(24.0),
               child: SizedBox(
