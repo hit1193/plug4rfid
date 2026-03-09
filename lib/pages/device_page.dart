@@ -61,14 +61,22 @@ class _DevicePageState extends State<DevicePage> {
   }
 
   IconData _getDeviceIcon(String model) {
-    if (model.contains('PRINTER')) return FontAwesomeIcons.print;
-    if (model.contains('SCANNER') || model.contains('RS232')) return FontAwesomeIcons.barcode;
+    if (model.contains('PRINTER')) {
+      return FontAwesomeIcons.print;
+    }
+    if (model.contains('SCANNER') || model.contains('RS232')) {
+      return FontAwesomeIcons.barcode;
+    }
     return FontAwesomeIcons.rss;
   }
 
   Color _getStatusColor(String status) {
-    if (status.toLowerCase() == 'online') return AppTheme.success;
-    if (status.toLowerCase() == 'offline') return AppTheme.danger;
+    if (status.toLowerCase() == 'online') {
+      return AppTheme.success;
+    }
+    if (status.toLowerCase() == 'offline') {
+      return AppTheme.danger;
+    }
     return Colors.grey;
   }
 
@@ -102,11 +110,19 @@ class _DevicePageState extends State<DevicePage> {
           d.ipAddress.contains(q) ||
           d.model.toLowerCase().contains(q);
 
-      if (!matchesSearch) return false;
+      if (!matchesSearch) {
+        return false;
+      }
 
-      if (_activeMetricFilter == "전체") return true;
-      if (_activeMetricFilter == "온라인(연결됨)" && d.status.toLowerCase() == 'online') return true;
-      if (_activeMetricFilter == "오프라인(끊김)" && d.status.toLowerCase() != 'online') return true;
+      if (_activeMetricFilter == "전체") {
+        return true;
+      }
+      if (_activeMetricFilter == "온라인(연결됨)" && d.status.toLowerCase() == 'online') {
+        return true;
+      }
+      if (_activeMetricFilter == "오프라인(끊김)" && d.status.toLowerCase() != 'online') {
+        return true;
+      }
 
       return false;
     }).toList();
@@ -324,7 +340,7 @@ class _DevicePageState extends State<DevicePage> {
               children: [
                 const Icon(Icons.router_outlined, size: 80, color: Colors.black12),
                 const SizedBox(height: 16),
-                Text("등록된 장치가 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18))
+                const Text("등록된 장치가 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18))
               ]
           )
       );
@@ -539,9 +555,6 @@ class _DevicePageState extends State<DevicePage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              // [버그 픽스] 장치 온라인 상태와 무관하게 로그 터미널 창 버튼을 항상 활성화합니다.
-              // 오프라인이거나 연결 시도 중일 때도 이 터미널을 열어서
-              // "[오류] 연결 실패" 나 "TimeOut" 등의 원인을 즉각 파악할 수 있어야 합니다!
               _buildCircleAction(Icons.terminal, Colors.teal, "실시간 로그 보기", () {
                 _showTerminalDialog(context, item.id, provider, item);
               }),
@@ -640,7 +653,6 @@ class _DevicePageState extends State<DevicePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            // [버그 픽스] 모바일에서도 동일하게 상태 무관 로그보기 버튼 노출
             _buildCircleAction(Icons.terminal, Colors.teal, "로그 보기", () {
               _showTerminalDialog(context, item.id, provider, item);
             }),
@@ -768,7 +780,6 @@ class _DevicePageState extends State<DevicePage> {
                 borderRadius: BorderRadius.circular(20),
               ),
               content: SizedBox(
-                // 7컬럼이 찌그러지지 않도록 가로 폭을 충분히 넓혀 줍니다. (기존 600 -> 1200)
                 width: 1200,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -795,7 +806,6 @@ class _DevicePageState extends State<DevicePage> {
                     ),
                     const SizedBox(height: 8),
 
-                    // 메인 터미널 테이블 영역
                     Container(
                       height: 350,
                       decoration: BoxDecoration(
@@ -806,7 +816,6 @@ class _DevicePageState extends State<DevicePage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // [컬럼 타이틀 헤더]
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             decoration: const BoxDecoration(
@@ -821,13 +830,12 @@ class _DevicePageState extends State<DevicePage> {
                                   Expanded(flex: 3, child: Text("EPC", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
                                   Expanded(flex: 2, child: Text("TID", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
                                   SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 16), // 여백
+                                  SizedBox(width: 16),
                                   Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
                                 ]
                             ),
                           ),
 
-                          // [데이터 리스트 바디]
                           Expanded(
                             child: Consumer<DeviceProvider>(
                               builder: (ctx, dynamicProvider, child) {
@@ -1129,6 +1137,7 @@ class _DevicePageState extends State<DevicePage> {
 
   /// ---------------------------------------------------------------------------
   /// [기능] 장치 등록/수정 다이얼로그 (편집창)
+  /// 개발자님이 요청하신 출입 방향 판별 모드(dir_mode) 및 세부 옵션(dir_option) 설정 추가 완료
   /// ---------------------------------------------------------------------------
   Future<void> _showForm(BuildContext context, DeviceProvider provider, DeviceModel? d) async {
     final theme = Theme.of(context);
@@ -1142,7 +1151,12 @@ class _DevicePageState extends State<DevicePage> {
     bool activeV = d?.isActive ?? true;
     bool autoConnectV = d?.isAutoConnect ?? false;
 
-    String usageRoleV = d?.settings['usage_role'] ?? '상시감지(출입/물류)';
+    String usageRoleV = d?.settings['usage_role']?.toString() ?? '상시감지(출입/물류)';
+
+    // [핵심 복구 포인트] 이전에 설계했던 방향 판별 관련 변수들을 선언합니다.
+    String dirModeV = d?.settings['dir_mode']?.toString() ?? 'none';
+    String dirOptionV = d?.settings['dir_option']?.toString() ?? '3';
+    final dirOptionC = TextEditingController(text: dirOptionV);
 
     showDialog(
       context: context,
@@ -1155,7 +1169,7 @@ class _DevicePageState extends State<DevicePage> {
             return AlertDialog(
               title: AppTheme.dialogTitle(d == null ? '신규 장치 등록' : '장치 설정 수정', d == null ? Icons.router : Icons.edit),
               content: SizedBox(
-                width: isWide ? 700 : null,
+                width: isWide ? 800 : null, // 폼의 요소가 늘어났으므로 살짝 넓혀줍니다.
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1167,27 +1181,39 @@ class _DevicePageState extends State<DevicePage> {
                           children: [
                             _buildImagePickerBox(context, d, null, (file, bytes) {}, theme),
                             const SizedBox(width: 30),
-                            Expanded(child: _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, usageRoleV, (m, a, ac, uR) {
-                              setDialogState(() {
-                                if (m != null) modelV = m;
-                                if (a != null) activeV = a;
-                                if (ac != null) autoConnectV = ac;
-                                if (uR != null) usageRoleV = uR;
-                              });
-                            }, theme)),
+                            Expanded(child: _buildFormFields(
+                                context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                                modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
+                                    (m, a, ac, uR, dM, dO) {
+                                  setDialogState(() {
+                                    if (m != null) modelV = m;
+                                    if (a != null) activeV = a;
+                                    if (ac != null) autoConnectV = ac;
+                                    if (uR != null) usageRoleV = uR;
+                                    if (dM != null) dirModeV = dM;
+                                    if (dO != null) dirOptionV = dO;
+                                  });
+                                }, theme)
+                            ),
                           ],
                         )
                       else ...[
                         _buildImagePickerBox(context, d, null, (file, bytes) { }, theme),
                         const SizedBox(height: 20),
-                        _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, usageRoleV, (m, a, ac, uR) {
-                          setDialogState(() {
-                            if (m != null) modelV = m;
-                            if (a != null) activeV = a;
-                            if (ac != null) autoConnectV = ac;
-                            if (uR != null) usageRoleV = uR;
-                          });
-                        }, theme),
+                        _buildFormFields(
+                            context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                            modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
+                                (m, a, ac, uR, dM, dO) {
+                              setDialogState(() {
+                                if (m != null) modelV = m;
+                                if (a != null) activeV = a;
+                                if (ac != null) autoConnectV = ac;
+                                if (uR != null) usageRoleV = uR;
+                                if (dM != null) dirModeV = dM;
+                                if (dO != null) dirOptionV = dO;
+                              });
+                            }, theme
+                        ),
                       ],
                       if (provider.isSaving) ...[
                         const SizedBox(height: 20),
@@ -1218,6 +1244,7 @@ class _DevicePageState extends State<DevicePage> {
                       provider.disconnectDevice(d.id);
                     }
 
+                    // 입력된 값을 종합하여 저장용 Map 생성
                     final data = {
                       'name': nameC.text.trim(),
                       'model': modelV,
@@ -1229,6 +1256,10 @@ class _DevicePageState extends State<DevicePage> {
                       'settings': {
                         ...(d?.settings ?? {}),
                         'usage_role': usageRoleV,
+                        // [추가] 저장할 때 상태 판별 모드와 옵션값도 포함시킵니다!
+                        'dir_mode': dirModeV,
+                        // 리더기 고정 모드일 때는 드롭다운 값(IN/OUT)을, 그 외(교차 모드 초(Seconds) 설정 등)일 때는 텍스트 필드 값을 저장합니다.
+                        'dir_option': dirModeV == 'reader_fixed' ? dirOptionV : dirOptionC.text.trim(),
                       }
                     };
 
@@ -1268,7 +1299,14 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  Widget _buildFormFields(BuildContext context, DeviceProvider provider, DeviceModel? d, TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, String uRV, Function(String?, bool?, bool?, String?) onC, ThemeData theme) {
+  /// 폼 영역을 그리는 내부 헬퍼 함수 (파라미터를 확장하여 방향 설정 컨트롤을 포함)
+  Widget _buildFormFields(
+      BuildContext context, DeviceProvider provider, DeviceModel? d,
+      TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, TextEditingController dirOptionC,
+      String mV, bool aV, bool acV, String uRV, String dirModeV, String dirOptionV,
+      Function(String?, bool?, bool?, String?, String?, String?) onC,
+      ThemeData theme
+      ) {
     return Column(
       children: [
         _buildDialogTextField("장치 관리 명칭 (필수)", n, theme, icon: Icons.label_outline),
@@ -1287,7 +1325,7 @@ class _DevicePageState extends State<DevicePage> {
           initialValue: mV,
           decoration: AppTheme.inputDecoration(label: "제조사/물리적 모델 프로토콜", context: context),
           items: SupportedDeviceModels.labels.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
-          onChanged: (v) => onC(v, null, null, null),
+          onChanged: (v) => onC(v, null, null, null, null, null),
         ),
         const SizedBox(height: 16),
 
@@ -1295,9 +1333,65 @@ class _DevicePageState extends State<DevicePage> {
           initialValue: uRV,
           decoration: AppTheme.inputDecoration(label: "장비 운용 용도 (데이터 라우팅 기준)", context: context),
           items: ['상시감지(출입/물류)', '수동스캔(재고조사)', '수동스캔(단일등록)'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
-          onChanged: (v) => onC(null, null, null, v),
+          onChanged: (v) => onC(null, null, null, v, null, null),
         ),
         const SizedBox(height: 24),
+
+        // ---------------------------------------------------------------------
+        // [방향 판별 로직 UI 컨트롤 추가 영역]
+        // ---------------------------------------------------------------------
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.cyan.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.cyan.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.directions_walk, color: Colors.cyan, size: 20),
+                  SizedBox(width: 8),
+                  Text("현장 출입/방향 판별 기준 설정", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, color: Colors.cyan, fontSize: 14)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: dirModeV,
+                decoration: AppTheme.inputDecoration(label: "출입/방향 판별 모드", context: context),
+                items: const [
+                  DropdownMenuItem(value: 'none', child: Text('단순 교차 (일정 시간 후 재인식 시 상태 반전)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  DropdownMenuItem(value: 'ant_fixed', child: Text('안테나 고정 (홀수 번호=IN, 짝수 번호=OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  DropdownMenuItem(value: 'reader_fixed', child: Text('리더기 고정 (설정한 단일 방향으로 무조건 판별)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  DropdownMenuItem(value: 'ant_seq', child: Text('안테나 시퀀스 (1번 ➔ 2번 순차 통과 시 IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  DropdownMenuItem(value: 'reader_seq', child: Text('리더기 시퀀스 (리더기간 이동 이력 추적)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                ],
+                onChanged: (v) => onC(null, null, null, null, v, null),
+              ),
+
+              // 모드에 따른 조건부 하위 옵션 표시
+              if (dirModeV == 'none') ...[
+                const SizedBox(height: 16),
+                _buildDialogTextField("재인식 방지 및 상태 반전 시간(초)", dirOptionC, theme, isNumber: true, icon: Icons.timer_outlined),
+              ] else if (dirModeV == 'reader_fixed') ...[
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: ['IN', 'OUT'].contains(dirOptionV) ? dirOptionV : 'IN',
+                  decoration: AppTheme.inputDecoration(label: "무조건 고정할 판별 방향", context: context),
+                  items: const [
+                    DropdownMenuItem(value: 'IN', child: Text('입고 / 입장 (IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                    DropdownMenuItem(value: 'OUT', child: Text('출고 / 퇴장 (OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  ],
+                  onChanged: (v) => onC(null, null, null, null, null, v),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // ---------------------------------------------------------------------
 
         if (d != null) ...[
           SizedBox(
@@ -1339,7 +1433,7 @@ class _DevicePageState extends State<DevicePage> {
                   value: acV,
                   activeThumbColor: Colors.blueAccent,
                   activeTrackColor: Colors.blueAccent.withValues(alpha: 0.5),
-                  onChanged: (v) => onC(null, null, v, null)
+                  onChanged: (v) => onC(null, null, v, null, null, null)
               ),
             ],
           ),
@@ -1360,7 +1454,7 @@ class _DevicePageState extends State<DevicePage> {
                   value: aV,
                   activeThumbColor: AppTheme.success,
                   activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
-                  onChanged: (v) => onC(null, v, null, null)
+                  onChanged: (v) => onC(null, v, null, null, null, null)
               ),
             ],
           ),
@@ -1417,7 +1511,9 @@ class _DevicePageState extends State<DevicePage> {
   /// [기능] 다중 선택: 일괄 통신 해제
   /// ---------------------------------------------------------------------------
   void _handleBulkDisconnect(DeviceProvider provider, ThemeData theme) {
-    if (_selectedItemIds.isEmpty) return;
+    if (_selectedItemIds.isEmpty) {
+      return;
+    }
 
     for (String id in _selectedItemIds) {
       provider.disconnectDevice(id);
@@ -1437,7 +1533,9 @@ class _DevicePageState extends State<DevicePage> {
   /// [기능] 다중 선택: 일괄 장치 삭제
   /// ---------------------------------------------------------------------------
   void _confirmBulkDelete(DeviceProvider provider, ThemeData theme) {
-    if (_selectedItemIds.isEmpty) return;
+    if (_selectedItemIds.isEmpty) {
+      return;
+    }
 
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -1465,7 +1563,9 @@ class _DevicePageState extends State<DevicePage> {
                         await provider.deleteDevice(id);
                       }
 
-                      if (!mounted) return;
+                      if (!mounted) {
+                        return;
+                      }
 
                       setState(() {
                         _selectedItemIds.clear();
@@ -1504,7 +1604,9 @@ class _DevicePageState extends State<DevicePage> {
         }
     );
 
-    if (!mounted || confirm != true) return;
+    if (!mounted || confirm != true) {
+      return;
+    }
 
     setState(() { _isFullScreenLoading = true; });
 
