@@ -45,7 +45,7 @@ class _DevicePageState extends State<DevicePage> {
 
   // 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
-  static const double _colActionWidth = 300.0;
+  static const double _colActionWidth = 350.0;
 
   @override
   void initState() {
@@ -501,8 +501,6 @@ class _DevicePageState extends State<DevicePage> {
   /// ---------------------------------------------------------------------------
   Widget _buildDesktopListItem(DeviceModel item, DeviceProvider provider, Color statusColor, ThemeData theme) {
     bool isOnline = item.status.toLowerCase() == 'online';
-
-    // [신규] 화면에 표시될 장비의 용도(Role) 텍스트를 추출합니다.
     String usageText = item.settings['usage_role'] ?? '상시감지(출입/물류)';
 
     return Row(
@@ -530,7 +528,6 @@ class _DevicePageState extends State<DevicePage> {
                   _buildKeyValue("모델 (제조사)", item.model, context),
                   _buildKeyValue("IP 주소", item.ipAddress, context),
                   _buildKeyValue("포트 (Port)", item.port.toString(), context),
-                  // [신규] 장비 리스트 화면에서도 어떤 용도인지 직관적으로 보여줍니다.
                   _buildKeyValue("운용 용도", usageText, context),
                 ],
               ),
@@ -542,12 +539,21 @@ class _DevicePageState extends State<DevicePage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              // [버그 픽스] 장치 온라인 상태와 무관하게 로그 터미널 창 버튼을 항상 활성화합니다.
+              // 오프라인이거나 연결 시도 중일 때도 이 터미널을 열어서
+              // "[오류] 연결 실패" 나 "TimeOut" 등의 원인을 즉각 파악할 수 있어야 합니다!
+              _buildCircleAction(Icons.terminal, Colors.teal, "실시간 로그 보기", () {
+                _showTerminalDialog(context, item.id, provider, item);
+              }),
+              const SizedBox(width: 12),
+
               if (isOnline) ...[
                 _buildCircleAction(Icons.tune, Colors.blueAccent, "출력(파워) 제어", () {
                   _showPowerControlDialog(context, provider, item);
                 }),
                 const SizedBox(width: 12),
               ],
+
               SizedBox(
                 width: 100,
                 child: isOnline
@@ -625,7 +631,6 @@ class _DevicePageState extends State<DevicePage> {
           children: [
             _buildKeyValue("IP 주소", item.ipAddress, context),
             _buildKeyValue("포트 (Port)", item.port.toString(), context),
-            // [신규] 모바일 환경에서도 용도를 보여줍니다.
             _buildKeyValue("운용 용도", usageText, context),
           ],
         ),
@@ -635,10 +640,16 @@ class _DevicePageState extends State<DevicePage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            if (isOnline)
+            // [버그 픽스] 모바일에서도 동일하게 상태 무관 로그보기 버튼 노출
+            _buildCircleAction(Icons.terminal, Colors.teal, "로그 보기", () {
+              _showTerminalDialog(context, item.id, provider, item);
+            }),
+
+            if (isOnline) ...[
               _buildCircleAction(Icons.tune, Colors.blueAccent, "출력 제어", () {
                 _showPowerControlDialog(context, provider, item);
               }),
+            ],
 
             Expanded(
               child: isOnline
@@ -668,6 +679,277 @@ class _DevicePageState extends State<DevicePage> {
           ],
         ),
       ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [개선 UI] 실시간 통신 로그 전용 모달(Modal) 팝업 창
+  /// Map 상황판에서 구축한 최신식 7컬럼 터미널 UI를 이 페이지에도 완벽히 똑같이 이식했습니다.
+  /// ---------------------------------------------------------------------------
+  void _showTerminalDialog(BuildContext context, String deviceId, DeviceProvider provider, DeviceModel d) {
+    final theme = Theme.of(context);
+
+    // [로컬 변수 이름 규칙 준수 및 정밀 파싱 로직 적용]
+    Map<String, String> parseLog(String rawLog) {
+      String time = "-";
+      String type = "MSG";
+      String ant = "-";
+      String epc = "-";
+      String tid = "-";
+      String rssi = "-";
+      String rawString = rawLog;
+
+      try {
+        final timeRegex = RegExp(r'^\[(\d{2}:\d{2}:\d{2})\]\s*');
+        final timeMatch = timeRegex.firstMatch(rawLog);
+
+        if (timeMatch != null) {
+          time = timeMatch.group(1) ?? "-";
+          rawString = rawLog.substring(timeMatch.end);
+        }
+
+        if (rawString.startsWith('🎯 [태그 인식]')) {
+          type = 'TAG';
+          String dataPart = rawString.replaceFirst('🎯 [태그 인식]', '').trim();
+          List<String> parts = dataPart.split('|');
+
+          for (var part in parts) {
+            part = part.trim();
+            if (part.startsWith('EPC:')) {
+              epc = part.substring(4).trim();
+            } else if (part.startsWith('Ant:')) {
+              ant = part.substring(4).trim();
+            } else if (part.startsWith('RSSI:')) {
+              rssi = part.substring(5).trim();
+            } else if (part.startsWith('TID:')) {
+              tid = part.substring(4).trim();
+            }
+          }
+          rawString = "";
+
+        } else if (rawString.startsWith('<<< [SYS]')) {
+          type = 'SYS';
+          rawString = rawString.replaceFirst('<<< [SYS]', '').trim();
+
+        } else if (rawString.startsWith('★★★ [방향 판별 완료]')) {
+          type = 'DIR';
+          rawString = rawString.replaceFirst('★★★ [방향 판별 완료]', '').trim();
+
+        } else if (rawString.startsWith('<== [IDRO900F Raw]') || rawString.startsWith('<== [수신 RX]')) {
+          type = 'RAW';
+          rawString = rawString.replaceAll(RegExp(r'^<== \[[^\]]+\]\s*'), '').trim();
+
+        } else if (rawString.startsWith('🔍') || rawString.startsWith('ℹ️')) {
+          type = 'INFO';
+        }
+      } catch (e) {
+        // 방어 코드 유지
+      }
+
+      return {
+        "time": time,
+        "type": type,
+        "ant": ant,
+        "epc": epc,
+        "tid": tid,
+        "rssi": rssi,
+        "raw": rawString.isEmpty && type != 'TAG' ? rawLog : rawString,
+      };
+    }
+
+    showDialog(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          return ChangeNotifierProvider<DeviceProvider>.value(
+            value: provider,
+            child: AlertDialog(
+              title: AppTheme.dialogTitle('${d.name} 실시간 패킷 터미널', Icons.terminal, color: Colors.teal),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              content: SizedBox(
+                // 7컬럼이 찌그러지지 않도록 가로 폭을 충분히 넓혀 줍니다. (기존 600 -> 1200)
+                width: 1200,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          "실시간 수신 데이터 파싱 결과 (최대 100건)",
+                          style: TextStyle(
+                              fontFamily: AppTheme.fontPretendard,
+                              fontWeight: AppTheme.weightMenu,
+                              color: Colors.blueGrey,
+                              fontSize: 14
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => provider.clearLogs(deviceId),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text("터미널 창 비우기"),
+                          style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    // 메인 터미널 테이블 영역
+                    Container(
+                      height: 350,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E1E1E), // 찐 다크모드
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.black87, width: 2),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // [컬럼 타이틀 헤더]
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF2D2D2D),
+                              borderRadius: BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14)),
+                            ),
+                            child: const Row(
+                                children: [
+                                  SizedBox(width: 70, child: Text("TIME", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 45, child: Text("TYPE", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  Expanded(flex: 3, child: Text("EPC", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  Expanded(flex: 2, child: Text("TID", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 16), // 여백
+                                  Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                ]
+                            ),
+                          ),
+
+                          // [데이터 리스트 바디]
+                          Expanded(
+                            child: Consumer<DeviceProvider>(
+                              builder: (ctx, dynamicProvider, child) {
+                                final List<String> logs = dynamicProvider.getLogs(deviceId).reversed.toList();
+
+                                if (logs.isEmpty) {
+                                  return const Center(
+                                    child: Text(
+                                        "수신 대기 중... (패킷 없음)",
+                                        style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 14,
+                                            fontFamily: AppTheme.fontPretendard
+                                        )
+                                    ),
+                                  );
+                                }
+
+                                return ListView.separated(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  itemCount: logs.length,
+                                  separatorBuilder: (BuildContext context, int idx) {
+                                    return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
+                                  },
+                                  itemBuilder: (ctx, idx) {
+                                    final Map<String, String> parsed = parseLog(logs[idx]);
+
+                                    Color typeColor = Colors.grey;
+                                    if (parsed['type'] == 'TAG') {
+                                      typeColor = Colors.cyanAccent;
+                                    } else if (parsed['type'] == 'RAW') {
+                                      typeColor = Colors.amberAccent;
+                                    } else if (parsed['type'] == 'SYS') {
+                                      typeColor = Colors.pinkAccent;
+                                    } else if (parsed['type'] == 'DIR') {
+                                      typeColor = Colors.greenAccent;
+                                    } else if (parsed['type'] == 'INFO') {
+                                      typeColor = Colors.blueAccent;
+                                    }
+
+                                    Color rssiColor = Colors.greenAccent;
+                                    try {
+                                      double rVal = double.parse(parsed['rssi']!);
+                                      if (rVal < -80) {
+                                        rssiColor = Colors.redAccent;
+                                      } else if (rVal < -70) {
+                                        rssiColor = Colors.orangeAccent;
+                                      }
+                                    } catch (_) {}
+
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                      child: Row(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Courier New'))),
+
+                                          SizedBox(
+                                              width: 45,
+                                              child: Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                                decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                                child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                              )
+                                          ),
+
+                                          SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+
+                                          Expanded(
+                                              flex: 3,
+                                              child: Padding(
+                                                padding: const EdgeInsets.only(right: 8.0),
+                                                child: Text(parsed['epc']!, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
+                                              )
+                                          ),
+
+                                          Expanded(
+                                              flex: 2,
+                                              child: Text(parsed['tid']!, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.3))
+                                          ),
+
+                                          SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
+
+                                          const SizedBox(width: 16),
+
+                                          Expanded(
+                                              flex: 5,
+                                              child: Text(
+                                                  parsed['raw']!,
+                                                  style: TextStyle(
+                                                      color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'DIR' ? Colors.greenAccent : Colors.white70),
+                                                      fontSize: 12,
+                                                      fontFamily: 'Courier New',
+                                                      height: 1.3
+                                                  )
+                                              )
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                AppTheme.actionButton(
+                  label: "닫기",
+                  color: Colors.transparent,
+                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  onPressed: () => Navigator.pop(dialogContext),
+                ),
+              ],
+            ),
+          );
+        }
     );
   }
 
@@ -742,7 +1024,7 @@ class _DevicePageState extends State<DevicePage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [신규 UI] 안테나 출력(Power) 제어 다이얼로그
+  /// [UI] 안테나 출력(Power) 제어 다이얼로그
   /// ---------------------------------------------------------------------------
   void _showPowerControlDialog(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
@@ -860,7 +1142,6 @@ class _DevicePageState extends State<DevicePage> {
     bool activeV = d?.isActive ?? true;
     bool autoConnectV = d?.isAutoConnect ?? false;
 
-    // [신규] 장비의 논리적 라우팅 용도를 설정하는 변수 추가 (기본값 설정)
     String usageRoleV = d?.settings['usage_role'] ?? '상시감지(출입/물류)';
 
     showDialog(
@@ -886,13 +1167,12 @@ class _DevicePageState extends State<DevicePage> {
                           children: [
                             _buildImagePickerBox(context, d, null, (file, bytes) {}, theme),
                             const SizedBox(width: 30),
-                            // 콜백 함수에 usageRole(uR) 값을 받을 수 있도록 파라미터를 추가했습니다.
                             Expanded(child: _buildFormFields(context, provider, d, nameC, ipC, portC, clientIdC, modelV, activeV, autoConnectV, usageRoleV, (m, a, ac, uR) {
                               setDialogState(() {
                                 if (m != null) modelV = m;
                                 if (a != null) activeV = a;
                                 if (ac != null) autoConnectV = ac;
-                                if (uR != null) usageRoleV = uR; // 용도 업데이트
+                                if (uR != null) usageRoleV = uR;
                               });
                             }, theme)),
                           ],
@@ -938,7 +1218,6 @@ class _DevicePageState extends State<DevicePage> {
                       provider.disconnectDevice(d.id);
                     }
 
-                    // [신규] 저장할 때 settings 객체 내부에 usage_role을 삽입합니다.
                     final data = {
                       'name': nameC.text.trim(),
                       'model': modelV,
@@ -949,7 +1228,7 @@ class _DevicePageState extends State<DevicePage> {
                       'is_auto_connect': autoConnectV,
                       'settings': {
                         ...(d?.settings ?? {}),
-                        'usage_role': usageRoleV, // 핵심 라우팅 기준 저장!
+                        'usage_role': usageRoleV,
                       }
                     };
 
@@ -989,7 +1268,6 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  // [수정됨] uRV(Usage Role Value) 파라미터와 4개의 인자를 받는 콜백(onC)을 추가했습니다.
   Widget _buildFormFields(BuildContext context, DeviceProvider provider, DeviceModel? d, TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, String mV, bool aV, bool acV, String uRV, Function(String?, bool?, bool?, String?) onC, ThemeData theme) {
     return Column(
       children: [
@@ -1013,7 +1291,6 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 16),
 
-        // [신규 추가] 장비의 논리적인 '운용 용도(Role)'를 선택하는 드롭다운!
         DropdownButtonFormField<String>(
           initialValue: uRV,
           decoration: AppTheme.inputDecoration(label: "장비 운용 용도 (데이터 라우팅 기준)", context: context),
@@ -1026,21 +1303,14 @@ class _DevicePageState extends State<DevicePage> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              // [수정됨] 버튼이 커진 만큼 아이콘 크기도 20 -> 24로 키워 밸런스를 맞춥니다.
               icon: const Icon(Icons.tune, size: 24),
-
-              // [수정됨] 폰트 크기(16)와 굵기(w900)를 높여 입력 필드와 시각적인 무게감을 맞춥니다.
               label: const Text("안테나 출력(RF Power) 실시간 제어", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w900)),
-
               style: ElevatedButton.styleFrom(
                   backgroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.1),
                   foregroundColor: d.status.toLowerCase() == 'online' ? Colors.blueAccent : Colors.grey,
                   elevation: 0,
-
-                  // [핵심 수정됨] TextField의 기본 높이와 완벽하게 일치하도록 최소 높이를 60px로 강제 고정합니다.
                   minimumSize: const Size(double.infinity, 60),
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   side: BorderSide(color: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3))
               ),

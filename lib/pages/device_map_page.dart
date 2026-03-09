@@ -568,17 +568,92 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [오류 완벽 해결] 장치 상세 정보 및 실시간 로그 팝업창
-  /// 플러터의 권장사항에 맞게 AlertDialog의 title, content, actions 영역을 명확히 분리하고
-  /// 복잡하게 얽혀있던 괄호 짝을 바로잡았습니다.
+  /// [완벽 개선 UI] 장치 상세 정보 및 실시간 로그 팝업창
+  /// 새롭게 설계된 DeviceProvider의 규격(JSON 가공 완료 후 로깅)에 완벽 대응하여,
+  /// 복잡한 정규식 없이 Provider가 던져준 마커를 기준으로 깔끔하게 분리하여 보여줍니다.
   /// ---------------------------------------------------------------------------
   void _showDeviceDetails(BuildContext context, DeviceModel d, DeviceProvider provider, ThemeData theme) {
     final bool isOnline = d.status.toLowerCase() == 'online';
     final Color statusColor = isOnline ? AppTheme.success : AppTheme.danger;
 
+    // [로컬 변수 이름 규칙 준수]
+    // 로컬 함수나 변수는 언더스코어(_)로 시작하지 않도록 수정하였습니다. (Dart 권장 사항)
+    Map<String, String> parseLog(String rawLog) {
+      String time = "-";
+      String type = "MSG";
+      String ant = "-";
+      String epc = "-";
+      String tid = "-";
+      String rssi = "-";
+      String rawString = rawLog;
+
+      try {
+        // 1. 시간 파싱 (Provider가 붙여준 "[HH:mm:ss] " 형식 캐치)
+        final timeRegex = RegExp(r'^\[(\d{2}:\d{2}:\d{2})\]\s*');
+        final timeMatch = timeRegex.firstMatch(rawLog);
+
+        if (timeMatch != null) {
+          time = timeMatch.group(1) ?? "-";
+          rawString = rawLog.substring(timeMatch.end); // 시간 부분을 떼어낸 순수 메시지
+        }
+
+        // 2. 메시지 타입별 파싱 (Provider의 마커 규칙 적용)
+        if (rawString.startsWith('🎯 [태그 인식]')) {
+          type = 'TAG';
+          // 예: "🎯 [태그 인식] EPC:E2001234 | Ant:1 | RSSI:-50"
+          String dataPart = rawString.replaceFirst('🎯 [태그 인식]', '').trim();
+          List<String> parts = dataPart.split('|');
+
+          for (var part in parts) {
+            part = part.trim();
+            // [블록 스타일 준수] 모든 if-else 구문을 블록({ })으로 감싸 가독성을 높였습니다.
+            if (part.startsWith('EPC:')) {
+              epc = part.substring(4).trim();
+            } else if (part.startsWith('Ant:')) {
+              ant = part.substring(4).trim();
+            } else if (part.startsWith('RSSI:')) {
+              rssi = part.substring(5).trim();
+            } else if (part.startsWith('TID:')) {
+              tid = part.substring(4).trim();
+            }
+          }
+          // 태그 데이터는 표(Table)로 완벽하게 쪼개졌으므로 RAW 칸은 비워둡니다.
+          rawString = "";
+
+        } else if (rawString.startsWith('<<< [SYS]')) {
+          type = 'SYS';
+          rawString = rawString.replaceFirst('<<< [SYS]', '').trim();
+
+        } else if (rawString.startsWith('★★★ [방향 판별 완료]')) {
+          type = 'DIR'; // Direction (방향 판별)
+          rawString = rawString.replaceFirst('★★★ [방향 판별 완료]', '').trim();
+
+        } else if (rawString.startsWith('<== [IDRO900F Raw]') || rawString.startsWith('<== [수신 RX]')) {
+          type = 'RAW';
+          // "<== [수신 RX]" 같은 접두어만 제거하고 실제 통신 Hex 바이트를 표출합니다.
+          rawString = rawString.replaceAll(RegExp(r'^<== \[[^\]]+\]\s*'), '').trim();
+
+        } else if (rawString.startsWith('🔍') || rawString.startsWith('ℹ️')) {
+          type = 'INFO';
+        }
+      } catch (e) {
+        // 파싱에 실패하더라도 기존 원문을 살려 데이터 유실을 방지합니다 (안정성 원칙)
+      }
+
+      return {
+        "time": time,
+        "type": type,
+        "ant": ant,
+        "epc": epc,
+        "tid": tid,
+        "rssi": rssi,
+        // 가공되어 빈값이 되었다면 냅두고, 파싱 안된 일반 로그라면 원본 텍스트를 출력합니다.
+        "raw": rawString.isEmpty && type != 'TAG' ? rawLog : rawString,
+      };
+    }
+
     showDialog(
       context: context,
-      // 가독성을 위해 화살표 함수 대신 블록 스타일을 적용했습니다.
       builder: (BuildContext dialogContext) {
         // 새로 열리는 팝업창(Route) 내부에서도 전역 Provider 상태를 바라볼 수 있도록 연결합니다.
         return ChangeNotifierProvider<DeviceProvider>.value(
@@ -588,7 +663,6 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16.0),
             ),
-            // 1. 팝업창의 제목 영역 (심플하게 텍스트만 배치)
             title: const Text(
               "장치 상세 정보 및 제어",
               style: TextStyle(
@@ -597,13 +671,13 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
                 fontSize: 18.0,
               ),
             ),
-            // 2. 팝업창의 본문 영역 (스크롤이 필요없는 고정 크기의 컬럼 형태로 구성)
             content: SizedBox(
-              width: double.maxFinite,
+              // 여러 컬럼과 원본(RAW) 데이터를 모두 표시하기 위해 팝업 너비를 충분히 크게 잡아줍니다.
+              width: 1200,
               child: Column(
                 mainAxisSize: MainAxisSize.min, // 내부 컨텐츠 크기만큼만 세로 공간을 차지하도록 설정
                 children: [
-                  // --- [섹션 A: 물리적 장치 정보] ---
+                  // --- [섹션 A: 물리적 장치 정보 요약] ---
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -625,13 +699,13 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
                   ),
                   const SizedBox(height: 20),
 
-                  // --- [섹션 B: 실시간 터미널 로그 타이틀] ---
+                  // --- [섹션 B: 실시간 터미널 로그 헤더] ---
                   Row(
                     children: [
                       const Icon(Icons.terminal, size: 18, color: Colors.blueGrey),
                       const SizedBox(width: 8),
                       const Text(
-                        "실시간 수신 패킷 (최근 10건)",
+                        "실시간 수신 패킷 (파싱 및 원본)",
                         style: TextStyle(
                           fontFamily: AppTheme.fontPretendard,
                           fontSize: 14,
@@ -640,67 +714,167 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
                         ),
                       ),
                       const Spacer(),
-                      // 로그 비우기 버튼
-                      TextButton(
+                      TextButton.icon(
                         onPressed: () {
                           provider.clearLogs(d.id);
                         },
-                        child: const Text(
+                        icon: const Icon(Icons.delete_outline, size: 16),
+                        label: const Text(
                           "로그 비우기",
                           style: TextStyle(
                             fontFamily: AppTheme.fontPretendard,
+                            fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
                         ),
+                        style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
                       )
                     ],
                   ),
                   const SizedBox(height: 6),
 
-                  // --- [섹션 C: 실시간 터미널 출력 창] ---
+                  // --- [섹션 C: 실시간 터미널 테이블 영역] ---
                   Container(
-                    height: 180,
-                    width: double.maxFinite,
-                    padding: const EdgeInsets.all(12),
+                    height: 250, // 데이터를 볼 수 있는 높이 확보
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E1E1E), // 터미널 느낌의 검은색 배경
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.black),
                     ),
-                    // Consumer 위젯을 사용하여 수신 로그에 변화가 생길 때만 이 부분만 다시 그립니다.
-                    child: Consumer<DeviceProvider>(
-                      builder: (BuildContext ctx, DeviceProvider dynamicProvider, Widget? child) {
-                        // 최신 로그가 맨 위로 오도록 뒤집은 후 10개만 가져옵니다.
-                        final List<String> logs = dynamicProvider.getLogs(d.id).reversed.take(10).toList();
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // [컬럼 타이틀]
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF2D2D2D),
+                            borderRadius: BorderRadius.only(topLeft: Radius.circular(8), topRight: Radius.circular(8)),
+                          ),
+                          child: const Row(
+                              children: [
+                                SizedBox(width: 70, child: Text("TIME", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                SizedBox(width: 45, child: Text("TYPE", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                Expanded(flex: 3, child: Text("EPC", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                Expanded(flex: 2, child: Text("TID", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                                SizedBox(width: 16), // 여백
+                                Expanded(flex: 5, child: Text("RAW DATA (원본)", style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.bold))),
+                              ]
+                          ),
+                        ),
 
-                        if (logs.isEmpty) {
-                          return const Center(
-                            child: Text(
-                              "수신된 패킷이 없습니다.",
-                              style: TextStyle(color: Colors.white38, fontSize: 12),
-                            ),
-                          );
-                        }
+                        // [데이터 리스트]
+                        Expanded(
+                          child: Consumer<DeviceProvider>(
+                            builder: (BuildContext ctx, DeviceProvider dynamicProvider, Widget? child) {
+                              // 최신 로그가 맨 위로 오도록 뒤집습니다.
+                              final List<String> logs = dynamicProvider.getLogs(d.id).reversed.toList();
 
-                        // 안정적인 순정 위젯 ListView를 사용하여 로그를 나열합니다.
-                        return ListView.separated(
-                          itemCount: logs.length,
-                          separatorBuilder: (BuildContext context, int idx) {
-                            return const SizedBox(height: 4);
-                          },
-                          itemBuilder: (BuildContext context, int idx) {
-                            return Text(
-                              logs[idx],
-                              style: const TextStyle(
-                                color: Color(0xFF00FF00), // 터미널 형광 녹색 폰트
-                                fontSize: 12,
-                                fontFamily: 'monospace',
-                                letterSpacing: 0.5,
-                              ),
-                            );
-                          },
-                        );
-                      },
+                              if (logs.isEmpty) {
+                                return const Center(
+                                  child: Text(
+                                    "수신된 패킷이 없습니다.",
+                                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                                  ),
+                                );
+                              }
+
+                              return ListView.separated(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                itemCount: logs.length,
+                                separatorBuilder: (BuildContext context, int idx) {
+                                  return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
+                                },
+                                itemBuilder: (BuildContext context, int idx) {
+                                  // 새로운 구조에 맞춰진 간결하고 정확한 데이터 파싱
+                                  final Map<String, String> parsed = parseLog(logs[idx]);
+
+                                  // 타입에 따른 뱃지 색상을 직관적으로 구분합니다.
+                                  // [블록 스타일 준수]
+                                  Color typeColor = Colors.grey;
+                                  if (parsed['type'] == 'TAG') {
+                                    typeColor = Colors.cyanAccent;
+                                  } else if (parsed['type'] == 'RAW') {
+                                    typeColor = Colors.amberAccent;
+                                  } else if (parsed['type'] == 'SYS') {
+                                    typeColor = Colors.pinkAccent;
+                                  } else if (parsed['type'] == 'DIR') {
+                                    typeColor = Colors.greenAccent; // 방향 판별 완료
+                                  } else if (parsed['type'] == 'INFO') {
+                                    typeColor = Colors.blueAccent;
+                                  }
+
+                                  // RSSI 수치에 따른 신호 강도 색상
+                                  Color rssiColor = Colors.greenAccent;
+                                  try {
+                                    double rVal = double.parse(parsed['rssi']!);
+                                    if (rVal < -80) {
+                                      rssiColor = Colors.redAccent;
+                                    } else if (rVal < -70) {
+                                      rssiColor = Colors.orangeAccent;
+                                    }
+                                  } catch (_) {}
+
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Courier New'))),
+
+                                        SizedBox(
+                                            width: 45,
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                              decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                              child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                            )
+                                        ),
+
+                                        SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+
+                                        Expanded(
+                                            flex: 3,
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(right: 8.0),
+                                              child: Text(parsed['epc']!, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
+                                            )
+                                        ),
+
+                                        Expanded(
+                                            flex: 2,
+                                            child: Text(parsed['tid']!, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.3))
+                                        ),
+
+                                        SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
+
+                                        const SizedBox(width: 16),
+
+                                        // 통신 원본 데이터 및 시스템 메시지 출력
+                                        Expanded(
+                                            flex: 5,
+                                            child: Text(
+                                                parsed['raw']!,
+                                                style: TextStyle(
+                                                  // 타입에 따라 텍스트 색상을 약간 다르게 주어 가독성을 높입니다.
+                                                    color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'DIR' ? Colors.greenAccent : Colors.white70),
+                                                    fontSize: 11,
+                                                    fontFamily: 'Courier New',
+                                                    height: 1.3
+                                                )
+                                            )
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
