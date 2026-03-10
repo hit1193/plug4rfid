@@ -332,7 +332,6 @@ class _ProductPageState extends State<ProductPage> {
                   },
                 ),
               ),
-              // [수정됨] 화면 최하단이 바닥에 딱 달라붙어 답답해 보이지 않도록 20px의 여백을 줍니다.
               const SizedBox(height: 20),
             ],
           ),
@@ -349,11 +348,9 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 상단 통계 대시보드 위젯
-  /// UserPage와 동일하게 모바일 화면일 경우 4개의 타일을 가로 1줄이 아닌 2x2 그리드로 자동 분할합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
     if (widget.isMobile) {
-      // 모바일 환경: 2줄 분할 배치로 찌그러짐 방지
       return Container(
         padding: const EdgeInsets.all(16),
         color: theme.scaffoldBackgroundColor,
@@ -379,7 +376,6 @@ class _ProductPageState extends State<ProductPage> {
       );
     }
 
-    // 데스크탑 환경: 가로 1줄로 넓게 배치
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       color: theme.scaffoldBackgroundColor,
@@ -439,7 +435,6 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [데스크탑 전용] 분할 화면 뷰 (Split Layout)
-  /// 좌측에 그룹 목록, 우측에 상세 목록을 띄웁니다.
   /// ---------------------------------------------------------------------------
   Widget _buildSplitLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Row(
@@ -484,7 +479,7 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 헤더 및 기능 버튼 영역
-  /// 모바일 화면일 때 레이아웃 붕괴 방지 및 신규 등록 버튼의 디자인을 UserPage와 통일했습니다.
+  /// '신규 등록' 버튼을 원형으로 변경하고 분리하지 않고 Wrap 내부 우측 끝에 결합했습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
@@ -492,13 +487,12 @@ class _ProductPageState extends State<ProductPage> {
       child: Column(
         children: [
           Row(
-            // 모바일 화면일 경우 위로 정렬하여 버튼이 잘리지 않도록 보호합니다.
             crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 12, // 원형 버튼들의 여유로운 배치를 위해 간격 확보
+                  runSpacing: 12,
                   children: [
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
                       provider.fetchData();
@@ -529,18 +523,13 @@ class _ProductPageState extends State<ProductPage> {
                     _buildActionIconButton(Icons.delete_sweep_outlined, "리셋", () {
                       _showResetDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
+
+                    // [변경] 아이콘 모양을 'post_add_rounded'로 교체하여 다른 페이지와 차별화하고 등록 의미를 강조합니다.
+                    _buildActionIconButton(Icons.post_add_rounded, "신규 등록", () {
+                      _showForm(provider, null, theme);
+                    }, theme, color: theme.colorScheme.primary),
                   ],
                 ),
-              ),
-              if (widget.isMobile) const SizedBox(width: 8),
-              // UserPage와 동일한 시각적 일관성을 주기 위해 AppTheme.actionButton으로 교체
-              AppTheme.actionButton(
-                  label: widget.isMobile ? "등록" : "신규 등록",
-                  icon: Icons.add_box,
-                  onPressed: () {
-                    _showForm(provider, null, theme);
-                  },
-                  color: theme.colorScheme.primary
               ),
             ],
           ),
@@ -556,17 +545,56 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [개선 포인트] 상단 기능 아이콘을 미니멀리즘 원형 배경으로 감싸도록 수정했습니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
+    final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
+
+    return Tooltip(
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(26), // 터치 영역을 완벽한 원형으로 설정
+        child: Container(
+          width: 52,
+          height: 52,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle, // 디자인 철학(미니멀리즘)에 맞춘 원형 컨테이너 적용
+            color: iconColor.withValues(alpha: 0.08), // 은은한 배경색
+            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5), // 깔끔한 테두리
+          ),
+          child: Icon(icon, color: iconColor, size: isLarge ? 28 : 22), // 원형 안에 쏙 들어가도록 사이즈 소폭 조절
+        ),
+      ),
+    );
+  }
+
   Widget _buildFilterBar(ThemeData theme) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
       child: SizedBox(
         width: double.infinity,
         child: SegmentedButton<String>(
-          style: SegmentedButton.styleFrom(selectedBackgroundColor: AppTheme.primary, selectedForegroundColor: Colors.white),
+          // [수정] DevicePage와 동일하게 선택된 항목 좌측의 체크(✓) 아이콘을 숨겨 깔끔함을 극대화합니다.
+          showSelectedIcon: false,
+          style: SegmentedButton.styleFrom(
+            selectedBackgroundColor: AppTheme.primary,
+            selectedForegroundColor: Colors.white,
+            // 내부 패딩을 늘려 버튼 볼륨을 키우고, 폰트를 크고 또렷하게(w800) 설정합니다.
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            textStyle: const TextStyle(
+              fontFamily: AppTheme.fontPretendard,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
           segments: const [
-            ButtonSegment(value: 'item', label: Text('품명별', style: TextStyle(fontFamily: AppTheme.fontPretendard))),
-            ButtonSegment(value: 'location', label: Text('위치별', style: TextStyle(fontFamily: AppTheme.fontPretendard))),
-            ButtonSegment(value: 'category', label: Text('분류별', style: TextStyle(fontFamily: AppTheme.fontPretendard))),
+            // styleFrom에서 일괄 적용하므로 개별 TextStyle은 제거하여 코드를 미니멀하게 유지합니다.
+            ButtonSegment(value: 'item', label: Text('품명별')),
+            ButtonSegment(value: 'location', label: Text('위치별')),
+            ButtonSegment(value: 'category', label: Text('분류별')),
           ],
           selected: {_groupByMode},
           onSelectionChanged: (Set<String> v) {
@@ -583,7 +611,6 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// 우측 (상세 보기 뷰) 렌더링 영역
-  /// 모바일과 데스크탑의 세부 아이템 렌더링 로직을 여기서 분기(Branch)합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     final bool isAllSelected = items.isNotEmpty && items.every((ProductModel p) => _selectedItemIds.contains(p.id));
@@ -752,7 +779,6 @@ class _ProductPageState extends State<ProductPage> {
                       child: Container(
                           padding: const EdgeInsets.all(20),
                           decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-                          // [핵심 반응형 분기] 모바일 화면 너비일 때는 세로로, 데스크탑일 때는 가로로 아이템을 렌더링합니다.
                           child: widget.isMobile
                               ? _buildMobileListItem(p, provider, items, statusColor, theme)
                               : _buildDesktopListItem(p, provider, items, statusColor, theme)
@@ -769,8 +795,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃 (기존 유지)
-  /// 가로로 넓은 공간을 활용하여 정보와 액션 버튼을 1줄(Row)에 배치합니다.
+  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃
   /// ---------------------------------------------------------------------------
   Widget _buildDesktopListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
     return Row(
@@ -849,8 +874,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃 (신규)
-  /// 좁은 화면에서 액션 버튼이 잘리지 않도록 세로(Column) 구조로 정보와 버튼을 위아래로 분리합니다.
+  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃
   /// ---------------------------------------------------------------------------
   Widget _buildMobileListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
     return Column(
@@ -906,14 +930,14 @@ class _ProductPageState extends State<ProductPage> {
           ],
         ),
         const SizedBox(height: 12),
-        // 중단: 상세 컬럼 데이터 (모바일에 맞게 공간 축소)
+        // 중단: 상세 컬럼 데이터
         Wrap(
           spacing: 16, runSpacing: 8,
           children: provider.selectedColumns
               .where((String col) => col != '품명')
               .map((String col) {
             return SizedBox(
-              width: 120, // 모바일에 맞춰 가로 폭 축소
+              width: 120,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1279,8 +1303,6 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [신규 등록 및 편집 다이얼로그]
-  /// UserPage와 동일하게 데이터베이스 전수 조사를 통해 모든 추가 필드(메타데이터)를
-  /// 신규 작성 시점에서도 완벽하게 불러오도록 로직을 일치시켰습니다.
   /// ---------------------------------------------------------------------------
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
@@ -1298,10 +1320,6 @@ class _ProductPageState extends State<ProductPage> {
     XFile? file;
     Uint8List? preview;
 
-    // -----------------------------------------------------------------------
-    // [메타데이터 전수조사 로직 동기화]
-    // 100개만 스캔하던 기존 방식을 버리고 전체를 안전하게 훑어서 모든 키를 찾아냅니다.
-    // -----------------------------------------------------------------------
     final Map<String, TextEditingController> metaC = {};
     final Set<String> allMetaKeys = {};
 
@@ -1448,10 +1466,6 @@ class _ProductPageState extends State<ProductPage> {
                                       }).toList()
                                   ),
 
-                                  // -----------------------------------------------------------
-                                  // [신규 기능 위치 이동] 등록(Create) 상태일 때만 최하단에 노출
-                                  // 사용자가 모든 속성을 입력한 후 최종적으로 수량을 결정하게 합니다.
-                                  // -----------------------------------------------------------
                                   if (p == null) ...[
                                     const SizedBox(height: 40),
                                     _buildSectionHeader(Icons.library_add_check_rounded, "다중 자산 일괄 생성 (Bulk Create)", AppTheme.primary),
@@ -1662,15 +1676,12 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [모바일 전용 레이아웃] 모바일에서는 그룹 리스트와 디테일 리스트를 분리 호출합니다.
-  /// _selectedGroupKey가 있으면 상세 화면을, 없으면 그룹 리스트를 띄워줍니다.
   /// ---------------------------------------------------------------------------
   Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
-    // 1. 그룹 중 하나를 선택한 상태 (상세 목록 모드)
     if (_selectedGroupKey != null) {
       return Column(
         children: [
           _buildHeader(provider, theme),
-          // 모바일 화면용 동적 "뒤로가기" 버튼
           Container(
             alignment: Alignment.centerLeft,
             padding: const EdgeInsets.only(left: 8, top: 4, bottom: 8),
@@ -1691,7 +1702,6 @@ class _ProductPageState extends State<ProductPage> {
       );
     }
 
-    // 2. 초기 상태 (전체 그룹 목록 모드)
     return Column(
       children: [
         _buildHeader(provider, theme),
@@ -1737,22 +1747,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
-    return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-                width: 52,
-                height: 52,
-                alignment: Alignment.center,
-                child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24)
-            )
-        )
-    );
-  }
-
   Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
     return Tooltip(
         message: tip,
@@ -1768,10 +1762,6 @@ class _ProductPageState extends State<ProductPage> {
         )
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // [사라졌던 다이얼로그 호출 함수들 완벽 복원]
-  // ---------------------------------------------------------------------------
 
   void _showInfoDialog(String title, String msg, ThemeData theme) {
     showDialog(
@@ -2259,7 +2249,6 @@ class _ProductPageState extends State<ProductPage> {
 
   // ---------------------------------------------------------------------------
   // [엑셀 데이터 파싱 보조 함수]
-  // 엑셀 셀에서 안전하게 문자열을 추출합니다.
   // ---------------------------------------------------------------------------
   String _extractString(excel_pkg.Data? cell) {
     if (cell == null || cell.value == null) {
@@ -2270,8 +2259,6 @@ class _ProductPageState extends State<ProductPage> {
 
   // ---------------------------------------------------------------------------
   // [엑셀 내보내기 (Export)]
-  // 현재 조회된 물품 리스트를 엑셀 파일로 저장합니다.
-  // 추가 항목(Metadata)까지 동적으로 스캔하여 포함시킵니다.
   // ---------------------------------------------------------------------------
   Future<void> _exportToExcel(List<ProductModel> list) async {
     try {
@@ -2338,7 +2325,6 @@ class _ProductPageState extends State<ProductPage> {
 
   // ---------------------------------------------------------------------------
   // [데이터 그룹화 (Grouping)]
-  // 사용자가 선택한 기준(품명, 위치, 분류)에 따라 리스트를 묶어줍니다.
   // ---------------------------------------------------------------------------
   Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
     final Map<String, List<ProductModel>> grouped = {};
@@ -2359,13 +2345,11 @@ class _ProductPageState extends State<ProductPage> {
 
 /// ---------------------------------------------------------------------------
 /// [수동 입출고 다이얼로그]
-/// 담당 작업자 검색을 위해 UserProvider를 전달받아 키오스크 스타일로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class _ManualInoutDialog extends StatefulWidget {
   final String type;
   final ProductModel product;
   final Map<String, IconData> statusIcons;
-
   final List<UserModel> userList;
 
   const _ManualInoutDialog({

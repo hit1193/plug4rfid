@@ -7,12 +7,15 @@ import '../theme/app_theme.dart';
 /// ---------------------------------------------------------------------------
 /// [공지사항 통합 관리 페이지]
 /// 리스트 조회, 상세 보기, 신규 등록, 수정 기능은 물론,
-/// 다중 선택(일괄 삭제), 전체 초기화, 건별 즉시 삭제 기능이 추가되었습니다.
-/// 화면 이동(Navigator.push) 없이 세련된 다이얼로그(팝업) 방식을 사용하여
-/// 키오스크 및 데스크톱 환경에 최적화된 미니멀리즘 UX를 제공합니다.
+/// 다중 선택(일괄 삭제), 전체 초기화, 건별 즉시 삭제 기능이 포함되어 있습니다.
+///
+/// [디자인 개편 사항]
+/// - 출입 기록 페이지와 동일하게 상단 타이틀부 수직 중앙 정렬
+/// - 조작 버튼(다중선택, 초기화, 등록)을 미니멀한 필터 박스로 그룹화
+/// - 모바일/데스크톱 완벽 대응 및 키오스크 스타일의 넓고 깔끔한 여백 확보
 /// ---------------------------------------------------------------------------
 class NoticePage extends StatefulWidget {
-  final bool isMobile;     // 모바일 환경인지 여부 (반응형 다이얼로그 크기 조절용)
+  final bool isMobile;     // 모바일 환경인지 여부 (반응형 레이아웃용)
   final String baseUrl;    // DB 연결용 URL
 
   const NoticePage({
@@ -271,7 +274,8 @@ class _NoticePageState extends State<NoticePage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [메인 화면 (리스트) UI 구성]
+  /// [메인 화면 UI 구성]
+  /// 기존 AppBar를 제거하고 커스텀 상단 패널로 교체하여 일관성을 확보했습니다.
   /// ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
@@ -279,25 +283,13 @@ class _NoticePageState extends State<NoticePage> {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          '공지사항',
-          style: TextStyle(
-            fontFamily: AppTheme.fontPretendard,
-            fontWeight: AppTheme.weightMenu,
-            letterSpacing: -0.8,
-            color: AppTheme.dataColor(isDarkMode),
-          ),
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-      ),
+      backgroundColor: Colors.transparent, // 상위 탭/라우터의 배경색을 따르도록 투명처리
+      // AppBar 제거! _buildTopControlPanel이 헤더 역할을 대신합니다.
       body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. 헤더 영역 (기능 아이콘 모음 및 신규 등록 버튼)
-          _buildHeader(theme),
+          // 1. 새롭게 개편된 상단 제어 패널 (타이틀 + 액션 박스)
+          _buildTopControlPanel(theme, isDarkMode),
 
           // 2. 본문 영역 (선택 툴바 + 리스트뷰)
           Expanded(
@@ -308,71 +300,190 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 리스트 상단의 아이콘 및 버튼 헤더 영역입니다.
-  Widget _buildHeader(ThemeData theme) {
+  /// ---------------------------------------------------------------------------
+  /// [UI 개편] 상단 대시보드 제어 패널 (타이틀 및 컨트롤 박스)
+  /// 출입 기록 페이지와 동일한 룩앤필(Look & Feel)을 제공합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Row(
-        crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                // 다중 선택 켜기/끄기 토글 버튼
-                _buildActionIcon(
-                  _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
-                  _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
-                      () {
-                    setState(() {
-                      _isSelectionMode = !_isSelectionMode;
-                      if (!_isSelectionMode) {
-                        _selectedNoticeIds.clear(); // 모드를 끄면 선택 해제
-                      }
-                    });
-                  },
-                  theme,
-                  color: _isSelectionMode ? AppTheme.primary : null,
+          // 1. 헤더 (타이틀) 영역 - 수직 중앙 정렬 적용
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                // 전체 데이터 초기화 버튼
-                _buildActionIcon(
-                    Icons.delete_sweep_outlined,
-                    "초기화 (전체 삭제)",
-                        () => _showResetConfirmationDialog(theme),
-                    theme,
-                    color: AppTheme.danger
+                child: const Icon(Icons.campaign_rounded, color: AppTheme.primary, size: 28),
+              ),
+              const SizedBox(width: 16),
+              // 부연 설명 텍스트 없이 타이틀만 깔끔하게 배치
+              Text(
+                "공지사항 관리",
+                style: TextStyle(
+                  fontFamily: AppTheme.fontPretendard,
+                  fontSize: widget.isMobile ? 20 : 24,
+                  fontWeight: AppTheme.weightMenu,
+                  color: AppTheme.dataColor(isDark),
+                  letterSpacing: -0.5,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-          if (widget.isMobile) const SizedBox(width: 8),
+          const SizedBox(height: 20),
 
-          // 신규 등록 버튼
-          AppTheme.actionButton(
-              label: widget.isMobile ? "등록" : "새 공지 등록",
-              icon: Icons.campaign,
-              onPressed: () => _showEditDialog(),
-              color: theme.colorScheme.primary
+          // 2. 조작 및 컨트롤 박스 (미니멀리즘 카드 스타일)
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+              border: Border.all(
+                color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05),
+              ),
+            ),
+            // 모바일과 PC 환경에 맞춰 버튼 배치를 다르게 합니다.
+            child: widget.isMobile ? _buildMobileActionLayout(theme, isDark) : _buildDesktopActionLayout(theme, isDark),
           ),
         ],
       ),
     );
   }
 
-  /// [UI 조각] 상단 헤더에 사용되는 툴팁 적용 아이콘 위젯입니다.
-  Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color}) {
-    return Tooltip(
-      message: tip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          width: 52, height: 52,
-          alignment: Alignment.center,
-          child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: 24),
+  /// [UI 조각] 데스크톱/태블릿용 가로형 액션 레이아웃
+  Widget _buildDesktopActionLayout(ThemeData theme, bool isDark) {
+    return Row(
+      children: [
+        // 다중 선택 버튼 (토글)
+        OutlinedButton.icon(
+          icon: Icon(_isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded, size: 18),
+          label: Text(
+            _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
+            style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 15),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _isSelectionMode ? AppTheme.primary : AppTheme.dataColor(isDark),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            side: BorderSide(color: (_isSelectionMode ? AppTheme.primary : AppTheme.silver).withValues(alpha: 0.5)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            backgroundColor: _isSelectionMode ? AppTheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+          ),
+          onPressed: () {
+            setState(() {
+              _isSelectionMode = !_isSelectionMode;
+              if (!_isSelectionMode) {
+                _selectedNoticeIds.clear(); // 모드를 끄면 선택 해제
+              }
+            });
+          },
         ),
-      ),
+        const SizedBox(width: 12),
+
+        // 데이터 초기화 버튼
+        OutlinedButton.icon(
+          icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+          label: const Text(
+            "전체 초기화",
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 15),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.danger,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            side: BorderSide(color: AppTheme.danger.withValues(alpha: 0.5)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onPressed: () => _showResetConfirmationDialog(theme),
+        ),
+
+        const Spacer(), // 남는 공간을 모두 차지하여 신규 등록 버튼을 우측 끝으로 밀어냅니다.
+
+        // 신규 등록 버튼 (강조)
+        ElevatedButton.icon(
+          icon: const Icon(Icons.add_box_rounded, size: 20),
+          label: const Text("새 공지 등록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightMenu)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onPressed: () => _showEditDialog(),
+        ),
+      ],
+    );
+  }
+
+  /// [UI 조각] 모바일용 세로형 액션 레이아웃
+  Widget _buildMobileActionLayout(ThemeData theme, bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch, // 버튼들이 가로로 꽉 차도록 확장
+      children: [
+        // 모바일에서는 가장 중요한 '신규 등록' 버튼을 맨 위에 배치합니다.
+        ElevatedButton.icon(
+          icon: const Icon(Icons.add_box_rounded, size: 20),
+          label: const Text("새 공지 등록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightMenu)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onPressed: () => _showEditDialog(),
+        ),
+        const SizedBox(height: 12),
+
+        // 하위 조작 버튼들은 한 줄에 나란히 배치 (공간 부족 시 줄바꿈)
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            OutlinedButton.icon(
+              icon: Icon(_isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded, size: 18),
+              label: Text(
+                _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
+                style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 14),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _isSelectionMode ? AppTheme.primary : AppTheme.dataColor(isDark),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                side: BorderSide(color: (_isSelectionMode ? AppTheme.primary : AppTheme.silver).withValues(alpha: 0.5)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                backgroundColor: _isSelectionMode ? AppTheme.primary.withValues(alpha: 0.1) : Colors.transparent,
+              ),
+              onPressed: () {
+                setState(() {
+                  _isSelectionMode = !_isSelectionMode;
+                  if (!_isSelectionMode) {
+                    _selectedNoticeIds.clear();
+                  }
+                });
+              },
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              label: const Text(
+                "전체 초기화",
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 14),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.danger,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                side: BorderSide(color: AppTheme.danger.withValues(alpha: 0.5)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => _showResetConfirmationDialog(theme),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -380,14 +491,21 @@ class _NoticePageState extends State<NoticePage> {
   Widget _buildListView(ThemeData theme, bool isDarkMode) {
     if (noticeList.isEmpty) {
       return Center(
-        child: Text(
-          '등록된 공지사항이 없습니다.',
-          style: TextStyle(
-            fontFamily: AppTheme.fontPretendard,
-            fontWeight: AppTheme.weightOthers,
-            fontSize: 18,
-            color: AppTheme.labelColor(isDarkMode),
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inbox_outlined, size: 80, color: AppTheme.labelColor(isDarkMode).withValues(alpha: 0.3)),
+            const SizedBox(height: 24),
+            Text(
+              '등록된 공지사항이 없습니다.',
+              style: TextStyle(
+                fontFamily: AppTheme.fontPretendard,
+                fontWeight: AppTheme.weightMenu,
+                fontSize: 20,
+                color: AppTheme.labelColor(isDarkMode),
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -465,7 +583,7 @@ class _NoticePageState extends State<NoticePage> {
           child: Container(
             margin: const EdgeInsets.only(bottom: 20.0), // 하단 여백 설정
             child: ListView.builder(
-              padding: EdgeInsets.all(widget.isMobile ? 12.0 : 24.0),
+              padding: EdgeInsets.symmetric(horizontal: widget.isMobile ? 16.0 : 24.0, vertical: 8.0),
               itemCount: noticeList.length,
               itemBuilder: (BuildContext context, int index) {
                 final NoticeModel notice = noticeList[index];

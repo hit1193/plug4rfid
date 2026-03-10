@@ -469,7 +469,7 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 헤더 및 검색, 기능 버튼 영역
-  /// 모바일 화면일 때 상단 여백이나 버튼 배치가 깨지지 않도록 구조를 최적화했습니다.
+  /// 상단의 기능 아이콘과 신규 등록 버튼을 모두 원형 디자인으로 통일했습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
@@ -477,13 +477,12 @@ class _UserPageState extends State<UserPage> {
       child: Column(
         children: [
           Row(
-            // 모바일 화면일 경우 버튼이 위로 올라가거나 잘리지 않도록 정렬 방식을 조정합니다.
             crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 12, // 넓은 원형 배치를 위해 간격을 12로 확보
+                  runSpacing: 12,
                   children: [
                     _buildActionIcon(Icons.refresh, "새로고침", () {
                       provider.fetchData();
@@ -514,18 +513,19 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
+
+                    // [변경] 외부(Wrap 바깥)에 있던 신규 등록 버튼을 Wrap 내부 우측 끝으로 이동시켜 동일하게 정렬합니다.
+                    _buildActionIcon(
+                      Icons.person_add_alt_1,
+                      "신규 인원 등록",
+                          () {
+                        _showForm(provider, null, theme);
+                      },
+                      theme,
+                      color: theme.colorScheme.primary,
+                    ),
                   ],
                 ),
-              ),
-              // 모바일에서는 버튼과 기능 영역 사이의 여백을 약간 더 줍니다.
-              if (widget.isMobile) const SizedBox(width: 8),
-              AppTheme.actionButton(
-                  label: widget.isMobile ? "등록" : "신규 등록", // 모바일에서는 라벨을 간결하게 줄입니다.
-                  icon: Icons.person_add_alt_1,
-                  onPressed: () {
-                    _showForm(provider, null, theme);
-                  },
-                  color: theme.colorScheme.primary
               ),
             ],
           ),
@@ -545,16 +545,27 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [개선 포인트] 상단 기능 아이콘을 미니멀리즘 원형 배경으로 감싸도록 수정했습니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
+    final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
+
     return Tooltip(
       message: tip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(26), // 터치 영역을 완벽한 원형으로 설정
         child: Container(
-          width: 52, height: 52,
+          width: 52,
+          height: 52,
           alignment: Alignment.center,
-          child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: isLarge ? 34 : 24),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle, // 미니멀리즘 기반 원형 디자인 적용
+            color: iconColor.withValues(alpha: 0.08), // 은은한 배경색
+            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5), // 깔끔한 테두리
+          ),
+          child: Icon(icon, color: iconColor, size: isLarge ? 28 : 22),
         ),
       ),
     );

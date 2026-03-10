@@ -12,10 +12,10 @@ import '../core/pocketbase_client.dart';
 /// [출입 기록(History) 관리자 화면]
 /// PocketBase의 'detections' 컬렉션에 저장된 이력을 조건에 맞게 불러와 렌더링합니다.
 ///
-/// [최종 업데이트 및 레이아웃 수정]
-/// 1. Linter 규격 준수: 모든 조건문 블록화 및 문자열 보간법 적용.
-/// 2. 용어 동기화: 인원(입장/퇴장)과 물품(입고/출고)의 용어를 실무에 맞게 분리.
-/// 3. UI 개선: 리스트뷰 하단 20px 여백 추가 및 미니멀 외곽선 디자인 적용.
+/// [상단 디자인 전면 개편]
+/// - 반응형(isMobile)을 적극 활용하여 모바일에서는 세로 배치, PC에서는 가로 배치 적용
+/// - 조작부(날짜, 검색 등)를 부드러운 배경의 필터 박스로 그룹화하여 깔끔함 강조
+/// - 키오스크 스타일의 넓은 여백과 직관적인 세그먼티드 버튼 적용
 /// ---------------------------------------------------------------------------
 class DetectionHistoryPage extends StatefulWidget {
   final bool isMobile;
@@ -70,10 +70,11 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
       _endDate = DateTime.now();
       _startDate = _endDate.subtract(Duration(days: days));
     });
+    // 날짜가 변경되면 즉시 데이터를 다시 불러옵니다.
     _fetchHistoryData();
   }
 
-  /// 달력 범위 선택기 호출
+  /// 달력 범위 선택기(Date Range Picker) 호출
   Future<void> _selectDateRange(BuildContext context) async {
     final DateTimeRange? picked = await showDateRangePicker(
       context: context,
@@ -81,6 +82,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
       builder: (context, child) {
+        // 달력 다이얼로그의 색상을 앱 테마에 맞게 조정합니다.
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: ColorScheme.light(
@@ -94,13 +96,40 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
       },
     );
 
+    // 사용자가 날짜 범위를 선택하고 '확인'을 누른 경우
     if (picked != null) {
       setState(() {
         _startDate = picked.start;
         _endDate = picked.end;
       });
+      // 새로운 기간으로 데이터를 다시 조회합니다.
       _fetchHistoryData();
     }
+  }
+
+  /// 현재 선택된 기간이 빠른 선택(0일, 7일, 30일)에 해당하는지 판단하여 값을 반환합니다.
+  int? _getQuickDateSelection() {
+    final DateTime now = DateTime.now();
+
+    // 종료일이 오늘인지 먼저 확인합니다.
+    if (_endDate.year == now.year && _endDate.month == now.month && _endDate.day == now.day) {
+      // 0일 (오늘) 확인
+      if (_startDate.year == now.year && _startDate.month == now.month && _startDate.day == now.day) {
+        return 0;
+      }
+      // 7일 (1주일) 확인
+      final DateTime d7 = now.subtract(const Duration(days: 7));
+      if (_startDate.year == d7.year && _startDate.month == d7.month && _startDate.day == d7.day) {
+        return 7;
+      }
+      // 30일 (1개월) 확인
+      final DateTime d30 = now.subtract(const Duration(days: 30));
+      if (_startDate.year == d30.year && _startDate.month == d30.month && _startDate.day == d30.day) {
+        return 30;
+      }
+    }
+    // 사용자가 달력으로 임의의 기간을 선택한 경우 null을 반환하여 선택을 해제합니다.
+    return null;
   }
 
   /// ---------------------------------------------------------------------------
@@ -122,7 +151,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
 
       final String queryFilter = 'created >= "$startStr" && created <= "$endStr"';
 
-      // 2. 서버 호출 (최신 생성일순 100건)
+      // 2. 서버 호출 (최신 생성일순 100건 조회)
       final records = await pb.collection('detections').getList(
         page: 1,
         perPage: 100,
@@ -130,14 +159,14 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
         filter: queryFilter,
       );
 
-      // 3. 역직렬화
+      // 3. 받아온 JSON 데이터를 Dart 객체(모델)로 역직렬화
       final List<DetectionModel> loadedData = records.items.map((record) {
         return DetectionModel.fromJson(record.toJson());
       }).toList();
 
       setState(() {
         _historyLogs = loadedData;
-        _filterLogs(_searchController.text);
+        _filterLogs(_searchController.text); // 기존 검색어가 있다면 유지한 채로 필터링
       });
 
       debugPrint("✅ 이력 데이터 불러오기 성공: ${_historyLogs.length}건");
@@ -154,7 +183,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
     }
   }
 
-  /// 검색어 필터링 기능
+  /// 검색어(이름, 장소 등) 필터링 기능
   void _filterLogs(String query) {
     if (query.isEmpty) {
       setState(() {
@@ -165,6 +194,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
 
     final String lowerQuery = query.toLowerCase();
     setState(() {
+      // 본문(이름/물품명 등) 또는 스팟(장소)에 검색어가 포함된 항목만 걸러냅니다.
       _filteredLogs = _historyLogs.where((log) {
         return log.content.toLowerCase().contains(lowerQuery) ||
             log.spot.toLowerCase().contains(lowerQuery);
@@ -173,7 +203,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [UI 렌더링] 이미지 헬퍼
+  /// [UI 렌더링] 이미지 표시용 헬퍼 위젯
   /// ---------------------------------------------------------------------------
   Widget _buildImage(String? url, {required double size, bool isCircle = false}) {
     return Container(
@@ -191,6 +221,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
         url,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) {
+          // 이미지 로드 실패 시 기본 아이콘 표시
           return Icon(
             isCircle ? Icons.person : Icons.inventory_2,
             color: AppTheme.silver,
@@ -214,10 +245,13 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 새롭게 개선된 상단 제어 패널 (타이틀 + 검색/필터부)
         _buildTopControlPanel(theme, isDark),
+
+        // 메인 리스트 뷰 영역
         Expanded(
           child: _isLoading
-              ? Center(child: CircularProgressIndicator(color: AppTheme.primary))
+              ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
               : _filteredLogs.isEmpty
               ? _buildEmptyState(isDark)
               : _buildHistoryList(isDark, theme),
@@ -226,18 +260,22 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
     );
   }
 
-  /// 상단 대시보드 제어 패널
+  /// ---------------------------------------------------------------------------
+  /// [UI 개선] 상단 대시보드 제어 패널
+  /// 기존의 조잡했던 배치를 버리고, 타이틀과 필터 영역을 시각적으로 분리했습니다.
+  /// ---------------------------------------------------------------------------
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
-      padding: const EdgeInsets.all(24.0),
-      decoration: BoxDecoration(
-        color: theme.scaffoldBackgroundColor,
-        border: Border(bottom: BorderSide(color: theme.dividerTheme.color ?? Colors.grey.shade200)),
+      padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
+      decoration: const BoxDecoration(
+        color: Colors.transparent, // 전체 배경은 투명하게 (테마를 따름)
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 1. 헤더 (타이틀) 영역
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center, // 아이콘과 타이틀의 수직 중앙 정렬
             children: [
               Container(
                 padding: const EdgeInsets.all(12),
@@ -245,127 +283,209 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
                   color: AppTheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.history_rounded, color: AppTheme.primary, size: 28),
+                child: const Icon(Icons.history_rounded, color: AppTheme.primary, size: 28),
               ),
               const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "출입 및 감지 기록",
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontPretendard,
-                      fontSize: 24,
-                      fontWeight: AppTheme.weightMenu,
-                      color: AppTheme.dataColor(isDark),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "지정된 기간 내 서버에 보관된 트랜잭션 기록입니다.",
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontPretendard,
-                      fontSize: 14,
-                      color: AppTheme.labelColor(isDark),
-                    ),
-                  ),
-                ],
+              // 불필요한 설명 문구와 Column 위젯을 제거하고 타이틀만 직관적으로 배치합니다.
+              Text(
+                "출입 및 감지 기록",
+                style: TextStyle(
+                  fontFamily: AppTheme.fontPretendard,
+                  fontSize: widget.isMobile ? 20 : 24,
+                  fontWeight: AppTheme.weightMenu,
+                  color: AppTheme.dataColor(isDark),
+                  letterSpacing: -0.5,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              InkWell(
-                onTap: () {
-                  _selectDateRange(context);
-                },
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.5)),
-                    borderRadius: BorderRadius.circular(8),
-                    color: isDark ? Colors.white.withValues(alpha: 0.05) : AppTheme.primary.withValues(alpha: 0.05),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.calendar_month_rounded, size: 20, color: AppTheme.primary),
-                      const SizedBox(width: 12),
-                      Text(
-                        "${_startDate.year}.${_startDate.month.toString().padLeft(2, '0')}.${_startDate.day.toString().padLeft(2, '0')} ~ "
-                            "${_endDate.year}.${_endDate.month.toString().padLeft(2, '0')}.${_endDate.day.toString().padLeft(2, '0')}",
-                        style: TextStyle(
-                          fontFamily: AppTheme.fontPretendard,
-                          fontWeight: AppTheme.weightMenu,
-                          fontSize: 15,
-                          color: AppTheme.dataColor(isDark),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Icon(Icons.arrow_drop_down, color: AppTheme.primary),
-                    ],
-                  ),
-                ),
+          const SizedBox(height: 20),
+
+          // 2. 필터 및 검색 컨트롤 박스 (미니멀리즘 카드 스타일)
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03),
+              borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+              border: Border.all(
+                color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05),
               ),
-              const SizedBox(width: 16),
-              _buildQuickChip("오늘", 0, isDark),
-              const SizedBox(width: 8),
-              _buildQuickChip("1주일", 7, isDark),
-              const SizedBox(width: 8),
-              _buildQuickChip("1개월", 30, isDark),
-              const Spacer(),
-              SizedBox(
-                width: 300,
-                child: TextField(
-                  controller: _searchController,
-                  onChanged: _filterLogs,
-                  style: TextStyle(fontFamily: AppTheme.fontPretendard, color: AppTheme.dataColor(isDark)),
-                  decoration: AppTheme.inputDecoration(label: "작업자 또는 스팟 검색...", context: context, prefixIcon: Icons.search),
-                ),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton.icon(
-                onPressed: _fetchHistoryData,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
-                label: const Text("조회", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            ],
+            ),
+            // 화면 크기에 따라 모바일 레이아웃과 데스크톱 레이아웃을 다르게 렌더링합니다.
+            child: widget.isMobile ? _buildMobileFilterLayout(isDark) : _buildDesktopFilterLayout(isDark),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildQuickChip(String label, int daysAgo, bool isDark) {
-    final DateTime targetStart = DateTime.now().subtract(Duration(days: daysAgo));
-    final bool isSelected = _startDate.year == targetStart.year &&
-        _startDate.month == targetStart.month &&
-        _startDate.day == targetStart.day;
+  /// [UI 조각] 데스크톱/태블릿용 가로형 필터 레이아웃
+  Widget _buildDesktopFilterLayout(bool isDark) {
+    return Row(
+      children: [
+        // 달력 범위 선택 버튼
+        _buildDatePickerButton(isDark),
+        const SizedBox(width: 16),
 
-    return ActionChip(
-      label: Text(label),
-      labelStyle: TextStyle(
-        fontFamily: AppTheme.fontPretendard,
-        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-        color: isSelected ? Colors.white : AppTheme.dataColor(isDark),
+        // [수정됨] 개별 ActionChip 대신 하나의 깔끔한 세그먼티드 버튼으로 변경
+        _buildQuickDateSegmentedButton(isDark),
+
+        const Spacer(), // 남는 공간을 모두 차지하여 오른쪽으로 밀어냄
+
+        // 검색어 입력창
+        SizedBox(
+          width: 280,
+          child: TextField(
+            controller: _searchController,
+            onChanged: _filterLogs,
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, color: AppTheme.dataColor(isDark)),
+            decoration: AppTheme.inputDecoration(
+              label: "작업자 또는 스팟 검색...",
+              context: context,
+              prefixIcon: Icons.search,
+            ).copyWith(
+              // 검색창 높이를 약간 슬림하게 조정
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+
+        // 조회 버튼
+        _buildRefreshButton(),
+      ],
+    );
+  }
+
+  /// [UI 조각] 모바일용 세로형 필터 레이아웃
+  Widget _buildMobileFilterLayout(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 1줄: 달력 범위 선택 버튼 (가로 꽉 차게)
+        _buildDatePickerButton(isDark),
+        const SizedBox(height: 12),
+
+        // 2줄: [수정됨] 세그먼티드 버튼이 모바일에서는 가로로 꽉 차도록 배치
+        _buildQuickDateSegmentedButton(isDark),
+        const SizedBox(height: 16),
+
+        // 3줄: 검색어 입력창과 조회 버튼
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                onChanged: _filterLogs,
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, color: AppTheme.dataColor(isDark)),
+                decoration: AppTheme.inputDecoration(
+                  label: "검색어 입력...",
+                  context: context,
+                  prefixIcon: Icons.search,
+                ).copyWith(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _buildRefreshButton(isIconOnly: true), // 모바일에서는 공간 절약을 위해 아이콘만 표시
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// [UI 조각] 달력 선택을 위한 버튼 (깔끔한 Outlined 스타일)
+  Widget _buildDatePickerButton(bool isDark) {
+    final String startDateStr = "${_startDate.year}.${_startDate.month.toString().padLeft(2, '0')}.${_startDate.day.toString().padLeft(2, '0')}";
+    final String endDateStr = "${_endDate.year}.${_endDate.month.toString().padLeft(2, '0')}.${_endDate.day.toString().padLeft(2, '0')}";
+
+    return OutlinedButton.icon(
+      icon: const Icon(Icons.calendar_today_rounded, size: 18),
+      label: Text(
+        "$startDateStr  ~  $endDateStr",
+        style: TextStyle(
+          fontFamily: AppTheme.fontPretendard,
+          fontWeight: AppTheme.weightOthers,
+          fontSize: 15,
+          color: AppTheme.dataColor(isDark),
+        ),
       ),
-      backgroundColor: isSelected ? AppTheme.primary : (isDark ? Colors.white10 : Colors.grey.shade200),
-      side: BorderSide.none,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      onPressed: () {
-        _setQuickDateRange(daysAgo);
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppTheme.primary,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        backgroundColor: isDark ? Colors.white.withValues(alpha: 0.02) : Colors.white,
+      ),
+      onPressed: () => _selectDateRange(context),
+    );
+  }
+
+  /// [UI 조각] 빠른 기간 선택 세그먼티드 버튼
+  Widget _buildQuickDateSegmentedButton(bool isDark) {
+    final int? selectedValue = _getQuickDateSelection();
+
+    return SegmentedButton<int>(
+      showSelectedIcon: false,         // 좌측 체크 아이콘 숨김 처리 (미니멀리즘)
+      emptySelectionAllowed: true,     // 사용자가 달력을 통해 임의의 날짜 지정 시 선택 해제를 허용
+      style: SegmentedButton.styleFrom(
+        selectedBackgroundColor: AppTheme.primary,
+        selectedForegroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14), // 달력 버튼과 높이를 동일하게 맞춤
+        textStyle: const TextStyle(
+          fontFamily: AppTheme.fontPretendard,
+          fontSize: 14,
+          fontWeight: FontWeight.w800, // 또렷하고 두꺼운 폰트 적용
+        ),
+      ),
+      segments: const [
+        ButtonSegment(value: 0, label: Text("오늘")),
+        ButtonSegment(value: 7, label: Text("1주일")),
+        ButtonSegment(value: 30, label: Text("1개월")),
+      ],
+      selected: selectedValue != null ? {selectedValue} : <int>{},
+      onSelectionChanged: (Set<int> newSelection) {
+        if (newSelection.isNotEmpty) {
+          _setQuickDateRange(newSelection.first);
+        }
       },
     );
   }
 
+  /// [UI 조각] 조회(새로고침) 버튼
+  Widget _buildRefreshButton({bool isIconOnly = false}) {
+    return ElevatedButton(
+      onPressed: _isLoading ? null : _fetchHistoryData,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppTheme.primary,
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.symmetric(
+          horizontal: isIconOnly ? 16 : 24,
+          vertical: 14,
+        ),
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: _isLoading
+          ? const SizedBox(
+        width: 20, height: 20,
+        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+      )
+          : Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.refresh_rounded, size: 20),
+          if (!isIconOnly) ...[
+            const SizedBox(width: 8),
+            const Text("조회", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightMenu)),
+          ]
+        ],
+      ),
+    );
+  }
+
+  /// 데이터가 없을 때 보여줄 빈 상태(Empty State) 화면
   Widget _buildEmptyState(bool isDark) {
     return Center(
       child: Column(
@@ -388,13 +508,13 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [핵심 영역] 감지 이력 리스트뷰
+  /// [핵심 영역] 감지 이력 리스트뷰 (기존 디자인 유지 및 하단 여백 적용)
   /// ---------------------------------------------------------------------------
   Widget _buildHistoryList(bool isDark, ThemeData theme) {
     return Container(
       margin: const EdgeInsets.only(bottom: 20.0), // 대표님 지시사항: 리스트뷰 하단 여백 20px 적용
       child: ListView.builder(
-        padding: const EdgeInsets.all(24.0),
+        padding: EdgeInsets.symmetric(horizontal: widget.isMobile ? 16.0 : 24.0, vertical: 8.0),
         itemCount: _filteredLogs.length,
         itemBuilder: (BuildContext context, int index) {
           final DetectionModel log = _filteredLogs[index];
@@ -502,6 +622,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
 
           Widget cardChild;
           if (isMatched && log.items.isNotEmpty) {
+            // 자산(물품)이 매칭된 경우 확장 타일 사용
             cardChild = Theme(
               data: theme.copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
@@ -591,6 +712,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
               ),
             );
           } else {
+            // 일반 출입 이력인 경우
             cardChild = Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
               child: headerContent,

@@ -267,8 +267,8 @@ class _DevicePageState extends State<DevicePage> {
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
+                  spacing: 12,
+                  runSpacing: 12,
                   children: [
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
                       provider.fetchData();
@@ -290,17 +290,12 @@ class _DevicePageState extends State<DevicePage> {
                     _buildActionIconButton(Icons.delete_sweep_outlined, "전체 초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
+
+                    _buildActionIconButton(Icons.add_to_queue_rounded, "신규 장치 등록", () {
+                      _showForm(context, provider, null);
+                    }, theme, color: theme.colorScheme.primary),
                   ],
                 ),
-              ),
-              if (widget.isMobile) const SizedBox(width: 8),
-              AppTheme.actionButton(
-                  label: widget.isMobile ? "등록" : "신규 등록",
-                  icon: Icons.add_box,
-                  onPressed: () {
-                    _showForm(context, provider, null);
-                  },
-                  color: theme.colorScheme.primary
               ),
             ],
           ),
@@ -317,18 +312,25 @@ class _DevicePageState extends State<DevicePage> {
   }
 
   Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color}) {
+    final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
+
     return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(10),
-            child: Container(
-                width: 52,
-                height: 52,
-                alignment: Alignment.center,
-                child: Icon(icon, color: color ?? theme.iconTheme.color?.withValues(alpha: 0.6), size: 24)
-            )
-        )
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(26),
+        child: Container(
+          width: 52,
+          height: 52,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: iconColor.withValues(alpha: 0.08),
+            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5),
+          ),
+          child: Icon(icon, color: iconColor, size: 22),
+        ),
+      ),
     );
   }
 
@@ -696,7 +698,6 @@ class _DevicePageState extends State<DevicePage> {
 
   /// ---------------------------------------------------------------------------
   /// [개선 UI] 실시간 통신 로그 전용 모달(Modal) 팝업 창
-  /// Map 상황판에서 구축한 최신식 7컬럼 터미널 UI를 이 페이지에도 완벽히 똑같이 이식했습니다.
   /// ---------------------------------------------------------------------------
   void _showTerminalDialog(BuildContext context, String deviceId, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
@@ -1057,8 +1058,10 @@ class _DevicePageState extends State<DevicePage> {
                         SizedBox(
                           width: double.infinity,
                           child: SegmentedButton<int>(
+                            // [수정] 선택된 항목 좌측에 나타나는 기본 체크(✓) 아이콘을 숨겨서 깔끔하게 텍스트만 렌더링합니다.
+                            showSelectedIcon: false,
                             segments: const [
-                              ButtonSegment(value: 0, label: Text("전체 (All)")),
+                              ButtonSegment(value: 0, label: Text("전체")),
                               ButtonSegment(value: 1, label: Text("ANT 1")),
                               ButtonSegment(value: 2, label: Text("ANT 2")),
                               ButtonSegment(value: 3, label: Text("ANT 3")),
@@ -1071,7 +1074,8 @@ class _DevicePageState extends State<DevicePage> {
                             style: SegmentedButton.styleFrom(
                                 selectedBackgroundColor: Colors.blueAccent,
                                 selectedForegroundColor: Colors.white,
-                                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w600, fontSize: 16)
                             ),
                           ),
                         ),
@@ -1137,7 +1141,6 @@ class _DevicePageState extends State<DevicePage> {
 
   /// ---------------------------------------------------------------------------
   /// [기능] 장치 등록/수정 다이얼로그 (편집창)
-  /// 개발자님이 요청하신 출입 방향 판별 모드(dir_mode) 및 세부 옵션(dir_option) 설정 추가 완료
   /// ---------------------------------------------------------------------------
   Future<void> _showForm(BuildContext context, DeviceProvider provider, DeviceModel? d) async {
     final theme = Theme.of(context);
@@ -1152,8 +1155,6 @@ class _DevicePageState extends State<DevicePage> {
     bool autoConnectV = d?.isAutoConnect ?? false;
 
     String usageRoleV = d?.settings['usage_role']?.toString() ?? '상시감지(출입/물류)';
-
-    // [핵심 복구 포인트] 이전에 설계했던 방향 판별 관련 변수들을 선언합니다.
     String dirModeV = d?.settings['dir_mode']?.toString() ?? 'none';
     String dirOptionV = d?.settings['dir_option']?.toString() ?? '3';
     final dirOptionC = TextEditingController(text: dirOptionV);
@@ -1169,7 +1170,7 @@ class _DevicePageState extends State<DevicePage> {
             return AlertDialog(
               title: AppTheme.dialogTitle(d == null ? '신규 장치 등록' : '장치 설정 수정', d == null ? Icons.router : Icons.edit),
               content: SizedBox(
-                width: isWide ? 800 : null, // 폼의 요소가 늘어났으므로 살짝 넓혀줍니다.
+                width: isWide ? 800 : null,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -1185,13 +1186,26 @@ class _DevicePageState extends State<DevicePage> {
                                 context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
                                 modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
                                     (m, a, ac, uR, dM, dO) {
+                                  // [Linter 완벽 대응] 단일 라인 if문에도 모두 중괄호 블록을 적용했습니다.
                                   setDialogState(() {
-                                    if (m != null) modelV = m;
-                                    if (a != null) activeV = a;
-                                    if (ac != null) autoConnectV = ac;
-                                    if (uR != null) usageRoleV = uR;
-                                    if (dM != null) dirModeV = dM;
-                                    if (dO != null) dirOptionV = dO;
+                                    if (m != null) {
+                                      modelV = m;
+                                    }
+                                    if (a != null) {
+                                      activeV = a;
+                                    }
+                                    if (ac != null) {
+                                      autoConnectV = ac;
+                                    }
+                                    if (uR != null) {
+                                      usageRoleV = uR;
+                                    }
+                                    if (dM != null) {
+                                      dirModeV = dM;
+                                    }
+                                    if (dO != null) {
+                                      dirOptionV = dO;
+                                    }
                                   });
                                 }, theme)
                             ),
@@ -1205,12 +1219,24 @@ class _DevicePageState extends State<DevicePage> {
                             modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
                                 (m, a, ac, uR, dM, dO) {
                               setDialogState(() {
-                                if (m != null) modelV = m;
-                                if (a != null) activeV = a;
-                                if (ac != null) autoConnectV = ac;
-                                if (uR != null) usageRoleV = uR;
-                                if (dM != null) dirModeV = dM;
-                                if (dO != null) dirOptionV = dO;
+                                if (m != null) {
+                                  modelV = m;
+                                }
+                                if (a != null) {
+                                  activeV = a;
+                                }
+                                if (ac != null) {
+                                  autoConnectV = ac;
+                                }
+                                if (uR != null) {
+                                  usageRoleV = uR;
+                                }
+                                if (dM != null) {
+                                  dirModeV = dM;
+                                }
+                                if (dO != null) {
+                                  dirOptionV = dO;
+                                }
                               });
                             }, theme
                         ),
@@ -1244,7 +1270,6 @@ class _DevicePageState extends State<DevicePage> {
                       provider.disconnectDevice(d.id);
                     }
 
-                    // 입력된 값을 종합하여 저장용 Map 생성
                     final data = {
                       'name': nameC.text.trim(),
                       'model': modelV,
@@ -1256,9 +1281,7 @@ class _DevicePageState extends State<DevicePage> {
                       'settings': {
                         ...(d?.settings ?? {}),
                         'usage_role': usageRoleV,
-                        // [추가] 저장할 때 상태 판별 모드와 옵션값도 포함시킵니다!
                         'dir_mode': dirModeV,
-                        // 리더기 고정 모드일 때는 드롭다운 값(IN/OUT)을, 그 외(교차 모드 초(Seconds) 설정 등)일 때는 텍스트 필드 값을 저장합니다.
                         'dir_option': dirModeV == 'reader_fixed' ? dirOptionV : dirOptionC.text.trim(),
                       }
                     };
@@ -1299,7 +1322,7 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  /// 폼 영역을 그리는 내부 헬퍼 함수 (파라미터를 확장하여 방향 설정 컨트롤을 포함)
+  /// 폼 영역을 그리는 내부 헬퍼 함수
   Widget _buildFormFields(
       BuildContext context, DeviceProvider provider, DeviceModel? d,
       TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, TextEditingController dirOptionC,
@@ -1324,7 +1347,34 @@ class _DevicePageState extends State<DevicePage> {
         DropdownButtonFormField<String>(
           initialValue: mV,
           decoration: AppTheme.inputDecoration(label: "제조사/물리적 모델 프로토콜", context: context),
-          items: SupportedDeviceModels.labels.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
+          items: SupportedDeviceModels.labels.entries.map((e) {
+            IconData mIcon = Icons.router_rounded;
+            final String label = e.value;
+
+            // [Linter 완벽 대응] Linter 경고 방지를 위해 모두 중괄호 처리했습니다.
+            if (label.contains('고정')) {
+              mIcon = Icons.router_rounded;
+            } else if (label.contains('휴대') || label.contains('PDA')) {
+              mIcon = Icons.smartphone_rounded;
+            } else if (label.contains('데스크') || label.contains('USB')) {
+              mIcon = Icons.desktop_mac_rounded;
+            } else if (label.contains('프린터')) {
+              mIcon = Icons.print_rounded;
+            } else if (label.contains('스캐너') || label.contains('바코드')) {
+              mIcon = Icons.barcode_reader;
+            }
+
+            return DropdownMenuItem(
+                value: e.key,
+                child: Row(
+                    children: [
+                      Icon(mIcon, size: 18, color: theme.colorScheme.primary.withValues(alpha: 0.8)),
+                      const SizedBox(width: 8),
+                      Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    ]
+                )
+            );
+          }).toList(),
           onChanged: (v) => onC(v, null, null, null, null, null),
         ),
         const SizedBox(height: 16),
@@ -1332,14 +1382,34 @@ class _DevicePageState extends State<DevicePage> {
         DropdownButtonFormField<String>(
           initialValue: uRV,
           decoration: AppTheme.inputDecoration(label: "장비 운용 용도 (데이터 라우팅 기준)", context: context),
-          items: ['상시감지(출입/물류)', '수동스캔(재고조사)', '수동스캔(단일등록)'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)))).toList(),
+          items: ['상시감지(출입/물류)', '수동스캔(재고조사)', '수동스캔(단일등록)'].map((e) {
+            IconData uIcon = Icons.radar_rounded;
+            Color uColor = Colors.teal;
+
+            // [Linter 완벽 대응] if문 중괄호 처리 완료
+            if (e.contains('재고조사')) {
+              uIcon = Icons.inventory_rounded;
+              uColor = Colors.orange;
+            } else if (e.contains('단일등록')) {
+              uIcon = Icons.qr_code_scanner_rounded;
+              uColor = Colors.blue;
+            }
+
+            return DropdownMenuItem(
+                value: e,
+                child: Row(
+                    children: [
+                      Icon(uIcon, size: 18, color: uColor.withValues(alpha: 0.8)),
+                      const SizedBox(width: 8),
+                      Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    ]
+                )
+            );
+          }).toList(),
           onChanged: (v) => onC(null, null, null, v, null, null),
         ),
         const SizedBox(height: 24),
 
-        // ---------------------------------------------------------------------
-        // [방향 판별 로직 UI 컨트롤 추가 영역]
-        // ---------------------------------------------------------------------
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -1361,17 +1431,16 @@ class _DevicePageState extends State<DevicePage> {
               DropdownButtonFormField<String>(
                 initialValue: dirModeV,
                 decoration: AppTheme.inputDecoration(label: "출입/방향 판별 모드", context: context),
-                items: const [
-                  DropdownMenuItem(value: 'none', child: Text('단순 교차 (일정 시간 후 재인식 시 상태 반전)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
-                  DropdownMenuItem(value: 'ant_fixed', child: Text('안테나 고정 (홀수 번호=IN, 짝수 번호=OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
-                  DropdownMenuItem(value: 'reader_fixed', child: Text('리더기 고정 (설정한 단일 방향으로 무조건 판별)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
-                  DropdownMenuItem(value: 'ant_seq', child: Text('안테나 시퀀스 (1번 ➔ 2번 순차 통과 시 IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
-                  DropdownMenuItem(value: 'reader_seq', child: Text('리더기 시퀀스 (리더기간 이동 이력 추적)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                items: [
+                  DropdownMenuItem(value: 'none', child: Row(children: [const Icon(Icons.compare_arrows_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('단순 교차 (일정 시간 후 재인식 시 상태 반전)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                  DropdownMenuItem(value: 'ant_fixed', child: Row(children: [const Icon(Icons.settings_input_antenna_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('안테나 고정 (홀수 번호=IN, 짝수 번호=OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                  DropdownMenuItem(value: 'reader_fixed', child: Row(children: [const Icon(Icons.push_pin_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('리더기 고정 (설정한 단일 방향으로 무조건 판별)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                  DropdownMenuItem(value: 'ant_seq', child: Row(children: [const Icon(Icons.format_list_numbered_rtl_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('안테나 시퀀스 (1번 ➔ 2번 순차 통과 시 IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                  DropdownMenuItem(value: 'reader_seq', child: Row(children: [const Icon(Icons.route_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('리더기 시퀀스 (리더기간 이동 이력 추적)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
                 ],
                 onChanged: (v) => onC(null, null, null, null, v, null),
               ),
 
-              // 모드에 따른 조건부 하위 옵션 표시
               if (dirModeV == 'none') ...[
                 const SizedBox(height: 16),
                 _buildDialogTextField("재인식 방지 및 상태 반전 시간(초)", dirOptionC, theme, isNumber: true, icon: Icons.timer_outlined),
@@ -1380,9 +1449,9 @@ class _DevicePageState extends State<DevicePage> {
                 DropdownButtonFormField<String>(
                   initialValue: ['IN', 'OUT'].contains(dirOptionV) ? dirOptionV : 'IN',
                   decoration: AppTheme.inputDecoration(label: "무조건 고정할 판별 방향", context: context),
-                  items: const [
-                    DropdownMenuItem(value: 'IN', child: Text('입고 / 입장 (IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
-                    DropdownMenuItem(value: 'OUT', child: Text('출고 / 퇴장 (OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))),
+                  items: [
+                    DropdownMenuItem(value: 'IN', child: Row(children: [const Icon(Icons.login_rounded, size: 18, color: AppTheme.success), const SizedBox(width: 8), const Text('입고 / 입장 (IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                    DropdownMenuItem(value: 'OUT', child: Row(children: [const Icon(Icons.logout_rounded, size: 18, color: AppTheme.warning), const SizedBox(width: 8), const Text('출고 / 퇴장 (OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
                   ],
                   onChanged: (v) => onC(null, null, null, null, null, v),
                 ),
@@ -1391,7 +1460,6 @@ class _DevicePageState extends State<DevicePage> {
           ),
         ),
         const SizedBox(height: 24),
-        // ---------------------------------------------------------------------
 
         if (d != null) ...[
           SizedBox(
