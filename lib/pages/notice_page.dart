@@ -1,22 +1,38 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data'; // 파일(이미지) 데이터를 바이트 형태로 다루기 위해 필요합니다.
 
-// 앞서 만들어둔 데이터 모델과 중앙 테마를 불러옵니다.
+// 파일 선택기 및 HTTP 파일 업로드를 위한 패키지
+import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+
 import '../models/notice_model.dart';
 import '../theme/app_theme.dart';
+import '../core/pocketbase_client.dart';
+
+/// ---------------------------------------------------------------------------
+/// [데이터 전송용 DTO 클래스]
+/// 다이얼로그에서 입력한 텍스트 데이터(NoticeModel)와
+/// 선택한 이미지 파일(bytes, name)을 한 번에 묶어서 부모 창으로 전달하기 위한 캡슐입니다.
+/// ---------------------------------------------------------------------------
+class NoticeEditResult {
+  final NoticeModel model;
+  final Uint8List? imageBytes;
+  final String? imageName;
+
+  NoticeEditResult({
+    required this.model,
+    this.imageBytes,
+    this.imageName,
+  });
+}
 
 /// ---------------------------------------------------------------------------
 /// [공지사항 통합 관리 페이지]
-/// 리스트 조회, 상세 보기, 신규 등록, 수정 기능은 물론,
-/// 다중 선택(일괄 삭제), 전체 초기화, 건별 즉시 삭제 기능이 포함되어 있습니다.
-///
-/// [디자인 개편 사항]
-/// - 출입 기록 페이지와 동일하게 상단 타이틀부 수직 중앙 정렬
-/// - 조작 버튼(다중선택, 초기화, 등록)을 미니멀한 필터 박스로 그룹화
-/// - 모바일/데스크톱 완벽 대응 및 키오스크 스타일의 넓고 깔끔한 여백 확보
+/// 기존 관리 기능에 '키오스크(포스터) 모드'와 '이미지 업로드' 기능이 완벽하게 결합되었습니다.
 /// ---------------------------------------------------------------------------
 class NoticePage extends StatefulWidget {
-  final bool isMobile;     // 모바일 환경인지 여부 (반응형 레이아웃용)
-  final String baseUrl;    // DB 연결용 URL
+  final bool isMobile;
+  final String baseUrl;
 
   const NoticePage({
     super.key,
@@ -29,56 +45,44 @@ class NoticePage extends StatefulWidget {
 }
 
 class _NoticePageState extends State<NoticePage> {
-  // 화면에 보여줄 공지사항 데이터를 담을 리스트입니다.
   List<NoticeModel> noticeList = [];
 
-  // ---------------------------------------------------------------------------
-  // [상태 변수 선언부 - 다중 선택 및 기능 관련]
-  // ---------------------------------------------------------------------------
-  final Set<String> _selectedNoticeIds = {}; // 선택된 공지사항의 ID를 보관하는 집합(Set)
-  bool _isSelectionMode = false;             // 다중 선택 모드 활성화 여부
+  final Set<String> _selectedNoticeIds = {};
+  bool _isSelectionMode = false;
+  bool _isLoading = false;
+
+  // 키오스크(포스터) 모드 활성화 여부를 관리하는 상태 변수입니다.
+  bool _isKioskMode = false;
 
   @override
   void initState() {
     super.initState();
-    _loadMockData(); // 초기 가짜 데이터 로드 (추후 DB 연동 코드로 대체)
+    _fetchNotices();
   }
 
-  /// 테스트를 위해 임의의 데이터를 생성하고 정렬하는 함수입니다.
-  void _loadMockData() {
-    noticeList = [
-      NoticeModel(
-        id: 'notice-001',
-        title: '[필독] 2026년 3월 시스템 정기 점검 안내',
-        content: '안녕하세요. 시스템 관리자입니다.\n\n안정적인 서비스 제공을 위해 아래와 같이 시스템 정기 점검을 진행합니다.\n\n- 일시: 2026년 3월 15일 02:00 ~ 06:00 (4시간)\n- 대상: 물류창고 및 생산라인 전산 시스템 전체\n- 영향: 점검 시간 동안 RFID 태그 인식 및 데이터 동기화가 중단됩니다.\n\n현장 근무자분들께서는 업무에 참고하시기 바랍니다.',
-        author: 'IT지원팀',
-        createdAt: DateTime.now().subtract(const Duration(days: 1)),
-        isImportant: true, // 중요 공지사항
-        viewCount: 152,
-      ),
-      NoticeModel(
-        id: 'notice-002',
-        title: '신규 RFID 스캐너 장비 도입 및 사용법 교육',
-        content: '생산라인에 신규 도입된 고성능 RFID 스캐너 사용법 교육을 실시합니다.\n각 부서 파트장님들은 필수 참석 바랍니다.\n\n장소: 본관 3층 대회의실\n시간: 금주 목요일 오후 2시',
-        author: '생산관리본부',
-        createdAt: DateTime.now().subtract(const Duration(days: 3)),
-        isImportant: false,
-        viewCount: 89,
-      ),
-      NoticeModel(
-        id: 'notice-003',
-        title: '방문객 출입 통제 절차 강화 안내',
-        content: '최근 보안 지침이 강화됨에 따라 방문객 출입 통제 절차를 안내해 드립니다.',
-        author: '보안팀',
-        createdAt: DateTime.now().subtract(const Duration(days: 5)),
-        isImportant: false,
-        viewCount: 45,
-      ),
-    ];
-    _sortNotices(); // 데이터를 중요도 및 최신순으로 정렬합니다.
+  Future<void> _fetchNotices() async {
+    setState(() {
+      _isLoading = true;
+    });
+    try {
+      final records = await pb.collection('notices').getFullList(sort: '-created');
+      if (mounted) {
+        setState(() {
+          noticeList = records.map((r) => NoticeModel.fromRecord(r)).toList();
+          _sortNotices();
+        });
+      }
+    } catch (e) {
+      debugPrint("공지사항 로드 실패: $e");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
-  /// 중요 공지가 위로 오고, 그다음 최신순으로 정렬하는 로직입니다.
   void _sortNotices() {
     noticeList.sort((NoticeModel a, NoticeModel b) {
       if (a.isImportant && !b.isImportant) {
@@ -87,13 +91,10 @@ class _NoticePageState extends State<NoticePage> {
       if (!a.isImportant && b.isImportant) {
         return 1;
       }
-      return b.createdAt.compareTo(a.createdAt); // 내림차순 정렬
+      return b.created.compareTo(a.created);
     });
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [1] 공지사항 상세 보기 다이얼로그 호출 함수
-  /// ---------------------------------------------------------------------------
   void _showDetailDialog(NoticeModel notice) {
     showDialog(
       context: context,
@@ -101,13 +102,14 @@ class _NoticePageState extends State<NoticePage> {
         return _NoticeDetailDialog(
           notice: notice,
           isMobile: widget.isMobile,
+          baseUrl: widget.baseUrl,
           onEdit: () {
-            Navigator.pop(dialogContext); // 상세 창을 닫고
-            _showEditDialog(notice: notice); // 편집 창을 엽니다.
+            Navigator.pop(dialogContext);
+            _showEditDialog(notice: notice);
           },
           onDelete: () {
-            Navigator.pop(dialogContext); // 상세 창을 닫고
-            _deleteNotice(notice.id); // 개별 삭제 로직을 실행합니다.
+            Navigator.pop(dialogContext);
+            _deleteNotice(notice.id);
           },
         );
       },
@@ -115,38 +117,99 @@ class _NoticePageState extends State<NoticePage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [2] 공지사항 등록 및 수정 다이얼로그 호출 함수
+  /// [2] 공지사항 등록 및 수정 (이미지 파일 Multipart Upload 로직 포함)
   /// ---------------------------------------------------------------------------
   void _showEditDialog({NoticeModel? notice}) {
-    showDialog<NoticeModel>(
+    showDialog<NoticeEditResult>(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext dialogContext) {
         return _NoticeEditDialog(
           notice: notice,
           isMobile: widget.isMobile,
+          baseUrl: widget.baseUrl,
         );
       },
-    ).then((NoticeModel? result) {
+    ).then((NoticeEditResult? result) async {
+      // result에는 텍스트 데이터(model)와 선택된 이미지(imageBytes)가 모두 들어있습니다.
       if (result != null) {
+        if (!mounted) return;
         setState(() {
+          _isLoading = true;
+        });
+
+        try {
+          final Map<String, dynamic> bodyData = result.model.toJson();
+
+          // [핵심 로직] PocketBase 파일 업로드를 위한 Multipart 준비
+          List<http.MultipartFile> files = [];
+          if (result.imageBytes != null && result.imageName != null) {
+            // 파일을 HTTP 통신 규격에 맞게 바이트 단위로 포장합니다. (C++Builder의 Stream과 유사)
+            files.add(http.MultipartFile.fromBytes(
+              'attachments', // [중요] DB에 생성하신 파일 필드명 'attachments'와 정확히 일치해야 합니다!
+              result.imageBytes!,
+              filename: result.imageName,
+            ));
+          }
+
           if (notice == null) {
-            noticeList.add(result);
+            // [DB 생성 (Insert)] 새 공지사항 등록 및 이미지 업로드
+            await pb.collection('notices').create(body: bodyData, files: files);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('✅ 새 공지사항과 포스터가 성공적으로 등록되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                elevation: 0,
+              ));
+            }
           } else {
-            int index = noticeList.indexWhere((element) => element.id == result.id);
-            if (index != -1) {
-              noticeList[index] = result;
+            // [DB 수정 (Update)] 기존 공지사항 수정 및 이미지 덮어쓰기
+            await pb.collection('notices').update(notice.id, body: bodyData, files: files);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('✅ 공지사항이 성공적으로 수정되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                elevation: 0,
+              ));
             }
           }
-          _sortNotices();
-        });
+          await _fetchNotices();
+
+        } catch (e, stackTrace) {
+          debugPrint('\n=============================================================');
+          debugPrint('🚨 [공지사항 저장/수정 실패] 🚨');
+          debugPrint('오류 내용: $e');
+          debugPrint('발생 위치(Stack Trace):\n$stackTrace');
+          debugPrint('=============================================================\n');
+
+          String userFriendlyMessage = '알 수 없는 오류가 발생했습니다.';
+          final errorString = e.toString();
+
+          if (errorString.contains('validation_missing_rel_records') && errorString.contains('author')) {
+            userFriendlyMessage = 'DB 구조 오류: 포켓베이스 관리자 화면에서 "author" 필드를 Relation이 아닌 "Text" 타입으로 변경해 주세요!';
+          } else if (errorString.contains('attachments')) {
+            userFriendlyMessage = 'DB 구조 오류: 데이터베이스에 "attachments" 파일 필드가 정상적으로 존재하는지 확인해 주세요!';
+          } else {
+            userFriendlyMessage = '저장 실패: $errorString';
+          }
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('❌ $userFriendlyMessage', style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white, fontWeight: FontWeight.bold, height: 1.4)),
+              backgroundColor: Colors.redAccent,
+              duration: const Duration(seconds: 7),
+              behavior: SnackBarBehavior.floating,
+            ));
+          }
+        } finally {
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
+        }
       }
     });
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [3] 건별 공지사항 삭제 처리 함수 (확인 창 포함)
-  /// ---------------------------------------------------------------------------
   void _deleteNotice(String noticeId) {
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
@@ -164,12 +227,38 @@ class _NoticePageState extends State<NoticePage> {
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
-              onPressed: () {
-                setState(() {
-                  noticeList.removeWhere((element) => element.id == noticeId);
-                  _selectedNoticeIds.remove(noticeId); // 선택 목록에서도 제거
-                });
+              onPressed: () async {
                 Navigator.pop(confirmContext);
+
+                if (!mounted) return;
+                setState(() {
+                  _isLoading = true;
+                });
+
+                try {
+                  await pb.collection('notices').delete(noticeId);
+
+                  if (mounted) {
+                    setState(() {
+                      _selectedNoticeIds.remove(noticeId);
+                    });
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('공지사항이 안전하게 삭제되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                      elevation: 0,
+                    ));
+                  }
+                  await _fetchNotices();
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('삭제 실패: $e')));
+                  }
+                } finally {
+                  if (mounted) {
+                    setState(() {
+                      _isLoading = false;
+                    });
+                  }
+                }
               },
               child: const Text("삭제", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
@@ -179,9 +268,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [4] 다중 선택 일괄 삭제 처리 함수
-  /// ---------------------------------------------------------------------------
   void _confirmBulkDelete(ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
@@ -204,20 +290,41 @@ class _NoticePageState extends State<NoticePage> {
                 AppTheme.actionButton(
                     label: "일괄 삭제",
                     color: AppTheme.danger,
-                    onPressed: () {
-                      setState(() {
-                        noticeList.removeWhere((element) => _selectedNoticeIds.contains(element.id));
-                        _selectedNoticeIds.clear();
-                        _isSelectionMode = false;
-                      });
+                    onPressed: () async {
                       Navigator.pop(ctx);
 
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
+                      if (!mounted) return;
+                      setState(() {
+                        _isLoading = true;
+                      });
+
+                      try {
+                        for (String id in _selectedNoticeIds) {
+                          await pb.collection('notices').delete(id);
+                        }
+
+                        if (mounted) {
+                          setState(() {
+                            _selectedNoticeIds.clear();
+                            _isSelectionMode = false;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text("선택한 공지사항이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
                               elevation: 0
-                          )
-                      );
+                          ));
+                        }
+                        await _fetchNotices();
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('일괄 삭제 실패: $e')));
+                        }
+                      } finally {
+                        if (mounted) {
+                          setState(() {
+                            _isLoading = false;
+                          });
+                        }
+                      }
                     }
                 )
               ]
@@ -226,9 +333,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [5] 전체 데이터 초기화 처리 함수
-  /// ---------------------------------------------------------------------------
   void _showResetConfirmationDialog(ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
@@ -251,20 +355,41 @@ class _NoticePageState extends State<NoticePage> {
                 AppTheme.actionButton(
                     label: "초기화 실행",
                     color: AppTheme.danger,
-                    onPressed: () {
-                      setState(() {
-                        noticeList.clear();
-                        _selectedNoticeIds.clear();
-                        _isSelectionMode = false;
-                      });
+                    onPressed: () async {
                       Navigator.pop(ctx);
 
-                      ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
+                      if (!mounted) return;
+                      setState(() {
+                        _isLoading = true;
+                      });
+
+                      try {
+                        for (var notice in noticeList) {
+                          await pb.collection('notices').delete(notice.id);
+                        }
+
+                        if (mounted) {
+                          setState(() {
+                            _selectedNoticeIds.clear();
+                            _isSelectionMode = false;
+                          });
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                               content: Text('모든 공지사항이 초기화 되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
                               elevation: 0
-                          )
-                      );
+                          ));
+                        }
+                        await _fetchNotices();
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('초기화 실패: $e')));
+                        }
+                      } finally {
+                        if (mounted) {
+                          setState(() {
+                            _isLoading = false;
+                          });
+                        }
+                      }
                     }
                 )
               ]
@@ -275,42 +400,230 @@ class _NoticePageState extends State<NoticePage> {
 
   /// ---------------------------------------------------------------------------
   /// [메인 화면 UI 구성]
-  /// 기존 AppBar를 제거하고 커스텀 상단 패널로 교체하여 일관성을 확보했습니다.
+  /// 키오스크 모드(_isKioskMode) 활성화 시 전체 화면 포스터 UI로 전환됩니다.
   /// ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent, // 상위 탭/라우터의 배경색을 따르도록 투명처리
-      // AppBar 제거! _buildTopControlPanel이 헤더 역할을 대신합니다.
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 1. 새롭게 개편된 상단 제어 패널 (타이틀 + 액션 박스)
-          _buildTopControlPanel(theme, isDarkMode),
+    // 미니멀리즘 디자인 철학 반영: 키오스크 모드일 때는 군더더기 없이 단 한 장의 포스터만 띄웁니다.
+    if (_isKioskMode) {
+      return _buildKioskDisplayMode(theme);
+    }
 
-          // 2. 본문 영역 (선택 툴바 + 리스트뷰)
-          Expanded(
-            child: _buildListView(theme, isDarkMode),
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildTopControlPanel(theme, isDarkMode),
+              Expanded(
+                child: _buildListView(theme, isDarkMode),
+              ),
+            ],
           ),
+
+          if (_isLoading) _buildGlobalLoadingOverlay(theme),
         ],
       ),
     );
   }
 
   /// ---------------------------------------------------------------------------
-  /// [UI 개편] 상단 대시보드 제어 패널 (타이틀 및 컨트롤 박스)
-  /// 출입 기록 페이지와 동일한 룩앤필(Look & Feel)을 제공합니다.
+  /// [UI 조각] 키오스크 전용 디스플레이 모드 (포스터 배경 전체화면)
   /// ---------------------------------------------------------------------------
+  Widget _buildKioskDisplayMode(ThemeData theme) {
+    if (noticeList.isEmpty) {
+      return Scaffold(
+        backgroundColor: Colors.black87,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.info_outline, size: 80, color: Colors.white54),
+              const SizedBox(height: 24),
+              const Text(
+                '등록된 공지사항이 없습니다.',
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, color: Colors.white),
+              ),
+              const SizedBox(height: 40),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.close),
+                label: const Text("관리자 모드로 돌아가기"),
+                onPressed: () => setState(() => _isKioskMode = false),
+              )
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 통상적으로 대시보드에서는 정렬된 리스트의 가장 '첫 번째' (가장 중요하거나 최신인) 항목을 보여줍니다.
+    final NoticeModel latestNotice = noticeList.first;
+    final String imageUrl = latestNotice.getImageUrl(widget.baseUrl);
+
+    return Scaffold(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. 포스터(배경) 이미지 렌더링
+          if (imageUrl.isNotEmpty)
+            Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Container(color: Colors.blueGrey.shade900),
+            )
+          else
+            Container(color: Colors.blueGrey.shade900), // 이미지가 없을 때의 기본 배경색
+
+          // 2. 가독성을 위한 어두운 그라데이션 오버레이 (미니멀리즘 & 실용성)
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.8), // 상단은 살짝 어둡게 (제목 가독성)
+                  Colors.transparent,                  // 중간은 이미지가 잘 보이게
+                  Colors.black.withValues(alpha: 0.9), // 하단은 아주 어둡게 (본문 가독성)
+                ],
+              ),
+            ),
+          ),
+
+          // 3. 텍스트 컨텐츠 렌더링
+          Padding(
+            padding: EdgeInsets.all(widget.isMobile ? 32.0 : 80.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // 상단: 중요 태그 및 제목
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (latestNotice.isImportant)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: AppTheme.danger,
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: const Text(
+                          "❗ 중요 공지",
+                          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold, fontFamily: AppTheme.fontPretendard),
+                        ),
+                      ),
+                    Text(
+                      latestNotice.title,
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        fontSize: widget.isMobile ? 40 : 64,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: -1.5,
+                        shadows: const [Shadow(color: Colors.black54, offset: Offset(2, 2), blurRadius: 4)],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+
+                // 하단: 본문 내용 요약 및 작성 정보
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      latestNotice.content,
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        fontSize: widget.isMobile ? 20 : 32,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        height: 1.5,
+                        shadows: const [Shadow(color: Colors.black, offset: Offset(1, 1), blurRadius: 3)],
+                      ),
+                      maxLines: widget.isMobile ? 5 : 8,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 40),
+                    Row(
+                      children: [
+                        const Icon(Icons.person, color: Colors.white70, size: 28),
+                        const SizedBox(width: 8),
+                        Text(
+                          latestNotice.author,
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, color: Colors.white70),
+                        ),
+                        const SizedBox(width: 32),
+                        const Icon(Icons.calendar_month, color: Colors.white70, size: 28),
+                        const SizedBox(width: 8),
+                        Text(
+                          latestNotice.getFormattedDate(),
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // 4. 관리자 모드로 돌아가기 버튼 (구석에 작게 배치)
+          Positioned(
+            top: 24,
+            right: 24,
+            child: IconButton(
+              icon: const Icon(Icons.close_fullscreen_rounded, color: Colors.white, size: 36),
+              tooltip: "관리자 모드로 돌아가기",
+              onPressed: () => setState(() => _isKioskMode = false),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGlobalLoadingOverlay(ThemeData theme) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.1),
+      child: Center(
+        child: Card(
+          elevation: 10,
+          color: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                SizedBox(height: 25),
+                Text(
+                  "데이터베이스 통신 중...",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 1. 헤더 (타이틀) 영역 - 수직 중앙 정렬 적용
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -323,7 +636,6 @@ class _NoticePageState extends State<NoticePage> {
                 child: const Icon(Icons.campaign_rounded, color: AppTheme.primary, size: 28),
               ),
               const SizedBox(width: 16),
-              // 부연 설명 텍스트 없이 타이틀만 깔끔하게 배치
               Text(
                 "공지사항 관리",
                 style: TextStyle(
@@ -334,11 +646,23 @@ class _NoticePageState extends State<NoticePage> {
                   letterSpacing: -0.5,
                 ),
               ),
+              const Spacer(),
+
+              ElevatedButton.icon(
+                icon: const Icon(Icons.desktop_windows_outlined),
+                label: const Text("키오스크(현장 디스플레이) 보기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueGrey.shade800,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () => setState(() => _isKioskMode = true),
+              ),
             ],
           ),
           const SizedBox(height: 20),
 
-          // 2. 조작 및 컨트롤 박스 (미니멀리즘 카드 스타일)
           Container(
             padding: const EdgeInsets.all(16.0),
             decoration: BoxDecoration(
@@ -348,7 +672,6 @@ class _NoticePageState extends State<NoticePage> {
                 color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05),
               ),
             ),
-            // 모바일과 PC 환경에 맞춰 버튼 배치를 다르게 합니다.
             child: widget.isMobile ? _buildMobileActionLayout(theme, isDark) : _buildDesktopActionLayout(theme, isDark),
           ),
         ],
@@ -356,11 +679,9 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 데스크톱/태블릿용 가로형 액션 레이아웃
   Widget _buildDesktopActionLayout(ThemeData theme, bool isDark) {
     return Row(
       children: [
-        // 다중 선택 버튼 (토글)
         OutlinedButton.icon(
           icon: Icon(_isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded, size: 18),
           label: Text(
@@ -378,14 +699,13 @@ class _NoticePageState extends State<NoticePage> {
             setState(() {
               _isSelectionMode = !_isSelectionMode;
               if (!_isSelectionMode) {
-                _selectedNoticeIds.clear(); // 모드를 끄면 선택 해제
+                _selectedNoticeIds.clear();
               }
             });
           },
         ),
         const SizedBox(width: 12),
 
-        // 데이터 초기화 버튼
         OutlinedButton.icon(
           icon: const Icon(Icons.delete_sweep_outlined, size: 18),
           label: const Text(
@@ -401,9 +721,8 @@ class _NoticePageState extends State<NoticePage> {
           onPressed: () => _showResetConfirmationDialog(theme),
         ),
 
-        const Spacer(), // 남는 공간을 모두 차지하여 신규 등록 버튼을 우측 끝으로 밀어냅니다.
+        const Spacer(),
 
-        // 신규 등록 버튼 (강조)
         ElevatedButton.icon(
           icon: const Icon(Icons.add_box_rounded, size: 20),
           label: const Text("새 공지 등록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightMenu)),
@@ -420,12 +739,10 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 모바일용 세로형 액션 레이아웃
   Widget _buildMobileActionLayout(ThemeData theme, bool isDark) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch, // 버튼들이 가로로 꽉 차도록 확장
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 모바일에서는 가장 중요한 '신규 등록' 버튼을 맨 위에 배치합니다.
         ElevatedButton.icon(
           icon: const Icon(Icons.add_box_rounded, size: 20),
           label: const Text("새 공지 등록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightMenu)),
@@ -440,7 +757,6 @@ class _NoticePageState extends State<NoticePage> {
         ),
         const SizedBox(height: 12),
 
-        // 하위 조작 버튼들은 한 줄에 나란히 배치 (공간 부족 시 줄바꿈)
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -487,7 +803,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 선택 툴바와 공지사항 리스트를 포함하는 본문 영역입니다.
   Widget _buildListView(ThemeData theme, bool isDarkMode) {
     if (noticeList.isEmpty) {
       return Center(
@@ -514,7 +829,6 @@ class _NoticePageState extends State<NoticePage> {
 
     return Column(
       children: [
-        // 다중 선택 모드가 켜졌을 때 나타나는 상단 툴바
         AnimatedSize(
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
@@ -527,7 +841,6 @@ class _NoticePageState extends State<NoticePage> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  // 선택된 개수 뱃지
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
@@ -538,7 +851,6 @@ class _NoticePageState extends State<NoticePage> {
                   ),
                   const SizedBox(width: 12),
 
-                  // 일괄 삭제 버튼
                   ElevatedButton.icon(
                     icon: const Icon(Icons.delete_sweep, size: 18),
                     label: const Text("일괄 삭제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -550,7 +862,6 @@ class _NoticePageState extends State<NoticePage> {
                   Container(width: 1, height: 24, color: theme.dividerTheme.color),
                   const SizedBox(width: 16),
 
-                  // 전체 선택 / 선택 해제 버튼
                   OutlinedButton.icon(
                     icon: Icon(isAllSelected ? Icons.deselect : Icons.select_all, size: 18),
                     label: Text(isAllSelected ? "선택 해제" : "전체 선택", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -574,14 +885,12 @@ class _NoticePageState extends State<NoticePage> {
               ),
             ),
           )
-              : const SizedBox.shrink(), // 다중 선택 모드가 아닐 때는 숨김
+              : const SizedBox.shrink(),
         ),
 
-        // 공지사항 항목 리스트
         Expanded(
-          // [대표님 요청사항] 리스트뷰의 부모 컨테이너에 하단 여백 20px 추가
           child: Container(
-            margin: const EdgeInsets.only(bottom: 20.0), // 하단 여백 설정
+            margin: const EdgeInsets.only(bottom: 20.0),
             child: ListView.builder(
               padding: EdgeInsets.symmetric(horizontal: widget.isMobile ? 16.0 : 24.0, vertical: 8.0),
               itemCount: noticeList.length,
@@ -596,7 +905,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 목록에 들어갈 각각의 항목(Card)을 만들어주는 함수입니다.
   Widget _buildNoticeItem(BuildContext context, NoticeModel notice, ThemeData theme, bool isDarkMode) {
     final bool isSelected = _selectedNoticeIds.contains(notice.id);
 
@@ -604,7 +912,6 @@ class _NoticePageState extends State<NoticePage> {
       padding: const EdgeInsets.only(bottom: 12.0),
       child: Row(
         children: [
-          // 다중 선택 모드일 때 나타나는 체크박스 애니메이션 영역
           AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeInOut,
@@ -650,11 +957,9 @@ class _NoticePageState extends State<NoticePage> {
                 : const SizedBox.shrink(),
           ),
 
-          // 실제 공지사항 카드 영역
           Expanded(
             child: Card(
               clipBehavior: Clip.hardEdge,
-              // 선택되었을 때 테두리 색상을 하이라이트 합니다.
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppTheme.cardRadius),
                 side: BorderSide(
@@ -665,7 +970,6 @@ class _NoticePageState extends State<NoticePage> {
               child: InkWell(
                 onTap: () {
                   if (_isSelectionMode) {
-                    // 다중 선택 모드일 때는 탭하면 선택 상태를 토글합니다.
                     setState(() {
                       if (isSelected) {
                         _selectedNoticeIds.remove(notice.id);
@@ -674,7 +978,6 @@ class _NoticePageState extends State<NoticePage> {
                       }
                     });
                   } else {
-                    // 일반 모드일 때는 상세 화면 다이얼로그를 띄웁니다.
                     _showDetailDialog(notice);
                   }
                 },
@@ -683,15 +986,36 @@ class _NoticePageState extends State<NoticePage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 아이콘
-                      Icon(
-                        notice.isImportant ? Icons.campaign : Icons.article_outlined,
-                        color: notice.isImportant ? AppTheme.danger : AppTheme.labelColor(isDarkMode),
-                        size: widget.isMobile ? 28 : 36,
-                      ),
+                      // [수정] DB의 'attachments' 모델 변수에 맞게 UI 매핑 변경 (notice.attachment 사용)
+                      if (notice.attachment.isNotEmpty)
+                        Container(
+                          width: widget.isMobile ? 50 : 70,
+                          height: widget.isMobile ? 50 : 70,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.grey.shade200,
+                            image: DecorationImage(
+                              image: NetworkImage(notice.getImageUrl(widget.baseUrl)),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        )
+                      else
+                        Container(
+                          width: widget.isMobile ? 50 : 70,
+                          height: widget.isMobile ? 50 : 70,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: isDarkMode ? Colors.white10 : Colors.black12,
+                          ),
+                          child: Icon(
+                            notice.isImportant ? Icons.campaign : Icons.article_outlined,
+                            color: notice.isImportant ? AppTheme.danger : AppTheme.labelColor(isDarkMode),
+                            size: widget.isMobile ? 28 : 36,
+                          ),
+                        ),
                       SizedBox(width: widget.isMobile ? 12 : 20),
 
-                      // 정보 텍스트 영역
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -731,7 +1055,6 @@ class _NoticePageState extends State<NoticePage> {
                         ),
                       ),
 
-                      // 건별 즉시 삭제 아이콘 버튼 (선택 모드가 아닐 때만 표시)
                       if (!_isSelectionMode) ...[
                         const SizedBox(width: 12),
                         IconButton(
@@ -753,23 +1076,20 @@ class _NoticePageState extends State<NoticePage> {
   }
 }
 
-/// ===========================================================================
-/// 아래부터는 동일한 파일 내에서 다이얼로그(팝업)로 띄울 전용 내부 위젯들입니다.
-/// 화면(파일)을 이동하지 않고 현재 페이지 위에서 오버레이 형태로 렌더링됩니다.
-/// ===========================================================================
-
 /// ---------------------------------------------------------------------------
 /// [내부 위젯: 공지사항 상세 보기 다이얼로그]
 /// ---------------------------------------------------------------------------
 class _NoticeDetailDialog extends StatelessWidget {
   final NoticeModel notice;
   final bool isMobile;
+  final String baseUrl;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _NoticeDetailDialog({
     required this.notice,
     required this.isMobile,
+    required this.baseUrl,
     required this.onEdit,
     required this.onDelete,
   });
@@ -778,6 +1098,7 @@ class _NoticeDetailDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDarkMode = theme.brightness == Brightness.dark;
+    final String imageUrl = notice.getImageUrl(baseUrl);
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
@@ -787,7 +1108,6 @@ class _NoticeDetailDialog extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: 800, maxHeight: MediaQuery.of(context).size.height * 0.85),
         child: Column(
           children: [
-            // 다이얼로그 상단 헤더
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
               child: Row(
@@ -822,13 +1142,27 @@ class _NoticeDetailDialog extends StatelessWidget {
             ),
             Divider(color: theme.dividerTheme.color, height: 1),
 
-            // 다이얼로그 본문 내용
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(32.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 포스터 이미지가 있으면 상단에 크게 렌더링
+                    if (imageUrl.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        height: isMobile ? 200 : 350,
+                        margin: const EdgeInsets.only(bottom: 24),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                          image: DecorationImage(
+                            image: NetworkImage(imageUrl),
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+
                     Text(
                       notice.title,
                       style: TextStyle(
@@ -889,10 +1223,12 @@ class _NoticeDetailDialog extends StatelessWidget {
 class _NoticeEditDialog extends StatefulWidget {
   final NoticeModel? notice;
   final bool isMobile;
+  final String baseUrl;
 
   const _NoticeEditDialog({
     this.notice,
     required this.isMobile,
+    required this.baseUrl,
   });
 
   @override
@@ -906,6 +1242,10 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
   late TextEditingController _authorController;
   late TextEditingController _contentController;
   bool _isImportant = false;
+
+  // 사용자가 선택한 파일의 바이너리 데이터와 이름을 보관합니다.
+  Uint8List? _selectedImageBytes;
+  String? _selectedImageName;
 
   @override
   void initState() {
@@ -924,18 +1264,47 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
     super.dispose();
   }
 
+  /// 파일 픽커를 호출하여 이미지를 메모리로 읽어옵니다.
+  Future<void> _pickImage() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _selectedImageBytes = result.files.first.bytes;
+          _selectedImageName = result.files.first.name;
+        });
+      }
+    } catch (e) {
+      debugPrint("이미지 선택 오류: $e");
+    }
+  }
+
   void _saveNotice() {
     if (_formKey.currentState!.validate()) {
-      final newNotice = NoticeModel(
-        id: widget.notice?.id ?? 'notice-${DateTime.now().millisecondsSinceEpoch}',
-        title: _titleController.text,
-        content: _contentController.text,
-        author: _authorController.text,
-        createdAt: widget.notice?.createdAt ?? DateTime.now(),
+      final NoticeModel dataModel = NoticeModel(
+        id: widget.notice?.id ?? '',
+        title: _titleController.text.trim(),
+        content: _contentController.text.trim(),
+        author: _authorController.text.trim(),
         isImportant: _isImportant,
         viewCount: widget.notice?.viewCount ?? 0,
+        // [수정] DB의 'attachments' 필드를 사용하는 변수로 매핑합니다.
+        attachment: widget.notice?.attachment ?? '',
+        created: widget.notice?.created ?? DateTime.now(),
+        updated: widget.notice?.updated ?? DateTime.now(),
       );
-      Navigator.pop(context, newNotice);
+
+      final result = NoticeEditResult(
+        model: dataModel,
+        imageBytes: _selectedImageBytes,
+        imageName: _selectedImageName,
+      );
+
+      Navigator.pop(context, result);
     }
   }
 
@@ -985,6 +1354,51 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // [UI] 포스터 이미지 업로드 영역
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: isDarkMode ? Colors.white10 : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+                          border: Border.all(color: theme.dividerTheme.color ?? Colors.grey.shade300, style: BorderStyle.solid),
+                        ),
+                        child: Column(
+                          children: [
+                            if (_selectedImageBytes != null) ...[
+                              // 새로 선택한 이미지 미리보기
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.memory(_selectedImageBytes!, height: 150, fit: BoxFit.cover),
+                              ),
+                              const SizedBox(height: 16),
+                              // [수정] 모델의 attachment 변수명을 통해 이미지 존재 여부를 체크합니다.
+                            ] else if (widget.notice != null && widget.notice!.attachment.isNotEmpty) ...[
+                              // 기존에 등록되어 있던 이미지 미리보기
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.network(widget.notice!.getImageUrl(widget.baseUrl), height: 150, fit: BoxFit.cover),
+                              ),
+                              const SizedBox(height: 16),
+                            ] else ...[
+                              Icon(Icons.image_outlined, size: 48, color: AppTheme.labelColor(isDarkMode).withValues(alpha: 0.5)),
+                              const SizedBox(height: 8),
+                            ],
+
+                            OutlinedButton.icon(
+                              icon: const Icon(Icons.upload_file),
+                              label: Text(_selectedImageBytes == null ? "키오스크용 포스터 이미지 첨부" : "다른 이미지로 변경하기"),
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              onPressed: _pickImage,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
                       TextFormField(
                         controller: _titleController,
                         style: AppTheme.itemValueStyle(context),

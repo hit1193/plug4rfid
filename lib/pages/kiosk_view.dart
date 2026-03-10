@@ -80,8 +80,8 @@ class _KioskViewState extends State<KioskView> {
   ];
   int _currentImageIndex = 0;
 
-  final String _noticeText =
-      "[사내 공지] 2026년 상반기 정기 재물조사가 다음 주 월요일부터 시작됩니다. 각 부서 자산관리자는 RFID 태그 부착 상태를 점검해 주시기 바랍니다.   *** [안전 수칙] 물류 창고 진입 시 반드시 안전모를 착용해 주십시오.";
+  // [수정] 기존 하드코딩된 텍스트 대신, DB에서 불러올 때까지 표시할 기본 안내 문구로 변경하고 변수(String)로 만들었습니다.
+  String _noticeText = "최신 공지사항을 불러오는 중입니다...";
 
   final List<DetectionModel> _realtimeLogs = [];
 
@@ -106,6 +106,7 @@ class _KioskViewState extends State<KioskView> {
     });
 
     _fetchSummaryData();
+    _fetchNotice(); // [추가됨] 화면 초기화 시점에 가장 최신 공지사항을 가져옵니다.
     _initRealtimeSubscription();
   }
 
@@ -191,12 +192,48 @@ class _KioskViewState extends State<KioskView> {
     } catch (e) { debugPrint("집계 로드 실패: $e"); }
   }
 
+  // ---------------------------------------------------------------------------
+  // [신규 추가] DB에서 가장 최신 공지사항을 가져오는 로직
+  // ---------------------------------------------------------------------------
+  Future<void> _fetchNotice() async {
+    try {
+      // notices 컬렉션에서 등록일(created) 기준 가장 최신 데이터를 1건만 가져옵니다.
+      final records = await pb.collection('notices').getList(
+        page: 1,
+        perPage: 1,
+        sort: '-created',
+      );
+
+      if (records.items.isNotEmpty && mounted) {
+        final data = records.items.first.data;
+        // 가져온 데이터에서 제목과 내용을 조합하여 키오스크 전광판 양식으로 만듭니다.
+        final String title = data['title']?.toString() ?? '사내 공지';
+        final String content = data['content']?.toString() ?? '';
+
+        setState(() {
+          _noticeText = "[$title] $content";
+        });
+      } else if (mounted) {
+        // 등록된 공지사항이 비어있을 경우의 기본 메시지입니다.
+        setState(() {
+          _noticeText = "현재 등록된 특별한 공지사항이 없습니다. 현장 안전에 유의하여 작업해주시기 바랍니다.";
+        });
+      }
+    } catch (e) {
+      debugPrint("공지사항 로드 실패: $e");
+    }
+  }
+
   void _initRealtimeSubscription() {
     try {
       pb.realtime.unsubscribe('');
       pb.collection('users').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
       pb.collection('detections').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
       pb.collection('products').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
+
+      // [추가됨] 관리자가 공지사항을 수정하거나 추가하면 키오스크도 즉각 이를 감지하고 텍스트를 업데이트합니다.
+      pb.collection('notices').subscribe('*', (e) { if (mounted) { _fetchNotice(); } });
+
       debugPrint("✅ 실시간 SSE 구독 설정 완료");
     } catch (e) { debugPrint("❌ 실시간 구독 중 에러: $e"); }
   }
@@ -441,7 +478,7 @@ class _KioskViewState extends State<KioskView> {
                   ]
               )
           ),
-          // 하단 공지사항
+          // 하단 공지사항 (여기서 _noticeText 변수를 사용하여 출력합니다)
           Positioned(
               bottom: isSmall ? 10 : 30,
               left: isSmall ? 10 : 40,
