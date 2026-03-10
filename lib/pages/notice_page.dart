@@ -441,7 +441,7 @@ class _NoticePageState extends State<NoticePage> {
 
   /// ---------------------------------------------------------------------------
   /// [메인 화면 UI 구성]
-  /// 키오스크 모드 활성화 시 전체 화면 포스터 UI로 전환됩니다.
+  /// 키오스크 모드(_isKioskMode) 활성화 시 전체 화면 포스터 UI로 전환됩니다.
   /// ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
@@ -473,7 +473,9 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
   /// [UI 조각] 키오스크 전용 디스플레이 모드 (포스터 배경 전체화면)
+  /// ---------------------------------------------------------------------------
   Widget _buildKioskDisplayMode(ThemeData theme) {
     if (noticeList.isEmpty) {
       return Scaffold(
@@ -500,7 +502,7 @@ class _NoticePageState extends State<NoticePage> {
       );
     }
 
-    // 최신 항목 1개를 전체 화면으로 보여줍니다.
+    // 통상적으로 대시보드에서는 정렬된 리스트의 가장 '첫 번째' (가장 중요하거나 최신인) 항목을 보여줍니다.
     final NoticeModel latestNotice = noticeList.first;
     final String imageUrl = latestNotice.getImageUrl(widget.baseUrl);
 
@@ -508,7 +510,7 @@ class _NoticePageState extends State<NoticePage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 1. 포스터(배경) 이미지
+          // 1. 포스터(배경) 이미지 렌더링
           if (imageUrl.isNotEmpty)
             Image.network(
               imageUrl,
@@ -516,30 +518,31 @@ class _NoticePageState extends State<NoticePage> {
               errorBuilder: (context, error, stackTrace) => Container(color: Colors.blueGrey.shade900),
             )
           else
-            Container(color: Colors.blueGrey.shade900),
+            Container(color: Colors.blueGrey.shade900), // 이미지가 없을 때의 기본 배경색
 
-          // 2. 가독성을 위한 어두운 그라데이션 오버레이
+          // 2. 가독성을 위한 어두운 그라데이션 오버레이 (미니멀리즘 & 실용성)
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withValues(alpha: 0.8),
-                  Colors.transparent,
-                  Colors.black.withValues(alpha: 0.9),
+                  Colors.black.withValues(alpha: 0.8), // 상단은 살짝 어둡게 (제목 가독성)
+                  Colors.transparent,                  // 중간은 이미지가 잘 보이게
+                  Colors.black.withValues(alpha: 0.9), // 하단은 아주 어둡게 (본문 가독성)
                 ],
               ),
             ),
           ),
 
-          // 3. 텍스트 컨텐츠
+          // 3. 텍스트 컨텐츠 렌더링
           Padding(
             padding: EdgeInsets.all(widget.isMobile ? 32.0 : 80.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                // 상단: 중요 태그 및 제목
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -572,6 +575,7 @@ class _NoticePageState extends State<NoticePage> {
                   ],
                 ),
 
+                // 하단: 본문 내용 요약 및 작성 정보
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -612,7 +616,7 @@ class _NoticePageState extends State<NoticePage> {
             ),
           ),
 
-          // 4. 관리자 모드로 돌아가기 버튼
+          // 4. 관리자 모드로 돌아가기 버튼 (구석에 작게 배치)
           Positioned(
             top: 24,
             right: 24,
@@ -627,7 +631,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 화면 전체 로딩 오버레이
   Widget _buildGlobalLoadingOverlay(ThemeData theme) {
     return Container(
       color: Colors.black.withValues(alpha: 0.1),
@@ -656,7 +659,6 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// [UI 조각] 상단 컨트롤 패널
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
@@ -762,7 +764,7 @@ class _NoticePageState extends State<NoticePage> {
 
         const SizedBox(width: 12),
 
-        // [공용 모듈 연동] ERP 버튼
+        // [공통 모듈 호출 버튼] ERP 연동 버튼
         OutlinedButton.icon(
           icon: const Icon(Icons.sync_alt_rounded, size: 18),
           label: const Text(
@@ -775,6 +777,7 @@ class _NoticePageState extends State<NoticePage> {
             side: BorderSide(color: Colors.teal.withValues(alpha: 0.5)),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
+          // 버튼을 누르면 위에서 정의한 공유 모듈 래퍼 함수가 실행됩니다.
           onPressed: () => _triggerErpSync(theme),
         ),
 
@@ -855,6 +858,7 @@ class _NoticePageState extends State<NoticePage> {
               onPressed: () => _showResetConfirmationDialog(theme),
             ),
 
+            // [공통 모듈 호출 버튼] 모바일용 ERP 연동 버튼
             OutlinedButton.icon(
               icon: const Icon(Icons.sync_alt_rounded, size: 18),
               label: const Text(
@@ -1058,7 +1062,7 @@ class _NoticePageState extends State<NoticePage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 이미지 썸네일 표시 (포스터가 있는 경우)
+                      // [수정] DB의 'attachments' 모델 변수에 맞게 UI 매핑 변경 (notice.attachment 사용)
                       if (notice.attachment.isNotEmpty)
                         Container(
                           width: widget.isMobile ? 50 : 70,
@@ -1220,6 +1224,7 @@ class _NoticeDetailDialog extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // 포스터 이미지가 있으면 상단에 크게 렌더링
                     if (imageUrl.isNotEmpty)
                       Container(
                         width: double.infinity,
@@ -1314,6 +1319,7 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
   late TextEditingController _contentController;
   bool _isImportant = false;
 
+  // 사용자가 선택한 파일의 바이너리 데이터와 이름을 보관합니다.
   Uint8List? _selectedImageBytes;
   String? _selectedImageName;
 
@@ -1334,6 +1340,7 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
     super.dispose();
   }
 
+  /// 파일 픽커를 호출하여 이미지를 메모리로 읽어옵니다.
   Future<void> _pickImage() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -1361,6 +1368,7 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
         author: _authorController.text.trim(),
         isImportant: _isImportant,
         viewCount: widget.notice?.viewCount ?? 0,
+        // [수정] DB의 'attachments' 필드를 사용하는 변수로 매핑합니다.
         attachment: widget.notice?.attachment ?? '',
         created: widget.notice?.created ?? DateTime.now(),
         updated: widget.notice?.updated ?? DateTime.now(),
@@ -1405,6 +1413,21 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                       ),
                     ),
                   ),
+                  // [변경] 하단에 있던 커다란 저장 버튼을 상단 타이틀 옆으로 이동시키고 크기를 줄였습니다.
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.save_rounded, size: 18),
+                    label: const Text("저장", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      minimumSize: Size.zero, // 기본 버튼 여백을 없애서 콤팩트하게 만듭니다.
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                    ),
+                    onPressed: _saveNotice,
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(
                     icon: Icon(Icons.close, color: AppTheme.labelColor(isDarkMode)),
                     onPressed: () => Navigator.pop(context),
@@ -1422,6 +1445,7 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // [UI] 포스터 이미지 업로드 영역
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(20),
@@ -1433,12 +1457,15 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                         child: Column(
                           children: [
                             if (_selectedImageBytes != null) ...[
+                              // 새로 선택한 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.memory(_selectedImageBytes!, height: 150, fit: BoxFit.cover),
                               ),
                               const SizedBox(height: 16),
+                              // [수정] 모델의 attachment 변수명을 통해 이미지 존재 여부를 체크합니다.
                             ] else if (widget.notice != null && widget.notice!.attachment.isNotEmpty) ...[
+                              // 기존에 등록되어 있던 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.network(widget.notice!.getImageUrl(widget.baseUrl), height: 150, fit: BoxFit.cover),
@@ -1507,20 +1534,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                       ),
                     ],
                   ),
-                ),
-              ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: SizedBox(
-                width: double.infinity,
-                height: widget.isMobile ? 56 : 64,
-                child: AppTheme.actionButton(
-                  label: '저장하기',
-                  color: theme.colorScheme.primary,
-                  icon: Icons.save_rounded,
-                  onPressed: _saveNotice,
                 ),
               ),
             ),

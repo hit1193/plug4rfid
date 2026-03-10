@@ -14,6 +14,7 @@ import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
 import '../core/pocketbase_client.dart';
+import '../core/erp_sync_helper.dart'; // [신규 추가] 공용 ERP 연동 헬퍼
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -269,6 +270,52 @@ class _UserPageState extends State<UserPage> {
     }
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [ERP 연동] 외부 시스템에서 인원 명부를 가져와 DB에 적용합니다.
+  /// ---------------------------------------------------------------------------
+  void _triggerErpSync(ThemeData theme) {
+    ErpSyncHelper.fetchAndSync(
+      context: context,
+      theme: theme,
+      moduleName: "인원(인사) 정보",
+      // 실제 거래처 인사 시스템 API 주소로 변경하여 사용하시면 됩니다. (현재는 가상 API)
+      apiUrl: 'https://jsonplaceholder.typicode.com/users?_limit=5',
+      targetCollection: 'users', // PocketBase의 사용자 컬렉션명
+
+      // JSON 데이터를 UserModel 스키마 구조로 파싱합니다.
+      dataMapper: (Map<String, dynamic> erpItem) {
+        final String name = erpItem['name'] ?? '이름 없음';
+        final String code = 'EMP-${erpItem['id']}';
+        // PocketBase의 users 컬렉션은 username과 email이 필수이므로 가공하여 넣습니다.
+        final String safeUsername = 'erp_user_${DateTime.now().millisecondsSinceEpoch}_${erpItem['id']}';
+
+        return {
+          'username': safeUsername,
+          'email': '$safeUsername@plug4rfid.local',
+          'password': 'password123',
+          'passwordConfirm': 'password123',
+          'name': name,
+          'code': code,
+          'tag_id': 'RFID-$code',
+          'department': erpItem['company']?['name'] ?? '본사',
+          'is_approved': true,
+          'role': 'Operator',
+          'metadata': {},
+        };
+      },
+      onLoadingStart: () {
+        if (mounted) setState(() { _isFullScreenLoading = true; });
+      },
+      onLoadingComplete: () {
+        if (mounted) setState(() { _isFullScreenLoading = false; });
+      },
+      onSuccess: () {
+        // UserProvider가 최신 데이터를 다시 불러옵니다.
+        context.read<UserProvider>().fetchData();
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final UserProvider provider = context.watch<UserProvider>();
@@ -468,6 +515,7 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 헤더 및 검색, 기능 버튼 영역
+  /// '인사 시스템 연동(ERP)' 버튼이 새롭게 추가되었습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
@@ -499,6 +547,12 @@ class _UserPageState extends State<UserPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
+
+                    // [신규 버튼] ERP 동기화 (수신) 버튼
+                    _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () {
+                      _triggerErpSync(theme);
+                    }, theme, color: Colors.teal),
+
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -742,7 +796,6 @@ class _UserPageState extends State<UserPage> {
   Widget _buildDesktopListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
     return Row(
       children: [
-        // [수정] 리스트 뷰에서 불필요한 휴지통 아이콘(삭제)을 완전히 제거하여 깔끔하게 복원했습니다.
         GestureDetector(
           onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
           child: Stack(
@@ -834,7 +887,6 @@ class _UserPageState extends State<UserPage> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // [수정] 모바일 화면에서도 마찬가지로 휴지통 아이콘을 제거하고 원래 구조로 복원했습니다.
             GestureDetector(
               onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
               child: Stack(
@@ -1240,7 +1292,6 @@ class _UserPageState extends State<UserPage> {
 
     setState(() { _isFullScreenLoading = true; });
 
-    // Linter 대응: ScaffoldMessenger와 Navigator를 미리 가져옵니다.
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final NavigatorState navigator = Navigator.of(context);
 
@@ -1619,7 +1670,7 @@ class _UserPageState extends State<UserPage> {
     final TextEditingController remarksC = TextEditingController(text: p?.remarks ?? "");
     bool approved = p?.isApproved ?? true;
 
-    // [추가됨] 이미지 선택 및 삭제 상태 관리 변수
+    // 이미지 선택 및 삭제 상태 관리 변수
     XFile? file;
     Uint8List? preview;
     bool isImageDeleted = false;
@@ -1656,7 +1707,6 @@ class _UserPageState extends State<UserPage> {
           return StatefulBuilder(
               builder: (BuildContext innerCtx, StateSetter setS) {
 
-                // [적용] ProductPage와 동일하게 다기능(추가/삭제) 이미지 위젯을 호출합니다.
                 Widget imagePickerWidget = _buildImagePickerBox(
                   context,
                   p,
@@ -1696,7 +1746,7 @@ class _UserPageState extends State<UserPage> {
                                       children: [
                                         Column(
                                             children: [
-                                              imagePickerWidget, // 다기능 위젯으로 교체
+                                              imagePickerWidget,
                                               const SizedBox(height: 16),
                                               Row(children: [const Text("출입 승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)), const SizedBox(width: 8), Switch(value: approved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setS(() { approved = v; }); })])
                                             ]
@@ -1768,7 +1818,7 @@ class _UserPageState extends State<UserPage> {
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
                           'metadata': meta,
-                          // [핵심] 삭제 플래그가 켜졌다면 포켓베이스에 null을 보내어 파일을 초기화합니다.
+                          // 삭제 플래그가 켜졌다면 포켓베이스에 null을 보내어 파일을 초기화합니다.
                           if (isImageDeleted) 'avatar': null,
                         };
 

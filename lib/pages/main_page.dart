@@ -18,8 +18,10 @@ import 'device_map_page.dart';
 import 'kiosk_view.dart';
 // DB에 보관된 출입 기록을 조회하는 페이지를 임포트합니다.
 import 'detection_history_page.dart';
-// [신규 추가] 새롭게 제작한 공지사항 페이지를 임포트합니다.
+// 새롭게 제작한 공지사항 페이지를 임포트합니다.
 import 'notice_page.dart';
+// [신규 추가] 새롭게 제작한 환경설정 페이지를 임포트합니다.
+import 'settings_page.dart';
 
 /// ---------------------------------------------------------------------------
 /// [RFID 솔루션 통합 메인 레이아웃 페이지 (MainPage)]
@@ -422,7 +424,6 @@ class _MainPageState extends State<MainPage> with WindowListener {
       case 1:
         return DevicePage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);
       case 2:
-      // [수정됨] UserPage 생성자에 다시 필수 파라미터인 filter: '전체' 를 명시적으로 추가했습니다.
         return UserPage(searchQuery: "", filter: '전체', isMobile: isMobile, baseUrl: _pbBaseUrl);
       case 3:
         return ProductPage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);
@@ -431,17 +432,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
       case 5:
         return NoticePage(isMobile: isMobile, baseUrl: _pbBaseUrl);
       case 6:
-        return const Center(
-            child: Text(
-                "환경 설정 기능은 현재 개발 진행 중입니다.\n(이곳에 테마 선택 등의 옵션을 추가할 예정입니다)",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: AppTheme.fontPretendard,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                )
-            )
-        );
+      // [수정됨] 기존의 임시 텍스트(Placeholder)를 지우고 새로 만든 환경설정 페이지를 연결했습니다!
+        return SettingsPage(isMobile: isMobile);
       default:
         return const Center(
             child: Text(

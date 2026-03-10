@@ -14,6 +14,7 @@ import '../models/user_model.dart';
 import '../providers/product_provider.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
+import '../core/erp_sync_helper.dart'; // [신규 추가] 공용 ERP 연동 헬퍼
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -296,6 +297,46 @@ class _ProductPageState extends State<ProductPage> {
     return AppTheme.warning;
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [ERP 연동] 거래처 시스템에서 물품 데이터를 가져와 DB에 적용합니다.
+  /// 공용 헬퍼 함수에 ProductModel 스키마에 맞는 변환 규칙(dataMapper)을 주입합니다.
+  /// ---------------------------------------------------------------------------
+  void _triggerErpSync(ThemeData theme) {
+    ErpSyncHelper.fetchAndSync(
+      context: context,
+      theme: theme,
+      moduleName: "물품 마스터",
+      // 실제 거래처 ERP 주소로 변경하여 사용하시면 됩니다. (현재는 가상 API)
+      apiUrl: 'https://jsonplaceholder.typicode.com/posts?_limit=5',
+      targetCollection: 'products', // PocketBase의 자산 컬렉션명
+
+      // JSON 데이터를 ProductModel 스키마 구조로 파싱합니다.
+      dataMapper: (Map<String, dynamic> erpItem) {
+        return {
+          'name': '[ERP] ${erpItem['title'] ?? '이름없음'}',
+          'tag_id': 'ERP-TAG-${erpItem['id']}',
+          'category': 'ERP 자동분류',
+          'location': '입고 대기장',
+          'status': '보유중',
+          'quantity': 100,
+          'safety_stock': 10,
+          'is_approved': true,
+          'metadata': {},
+        };
+      },
+      onLoadingStart: () {
+        if (mounted) setState(() { _isFullScreenLoading = true; });
+      },
+      onLoadingComplete: () {
+        if (mounted) setState(() { _isFullScreenLoading = false; });
+      },
+      onSuccess: () {
+        // ProductProvider가 최신 데이터를 다시 DB로부터 불러오게 합니다.
+        context.read<ProductProvider>().fetchData();
+      },
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // [메인 UI 렌더링 영역]
   // ---------------------------------------------------------------------------
@@ -479,7 +520,7 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 헤더 및 기능 버튼 영역
-  /// '신규 등록' 버튼을 원형으로 변경하고 분리하지 않고 Wrap 내부 우측 끝에 결합했습니다.
+  /// 'ERP 연동' 버튼이 새롭게 추가되었습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
@@ -491,7 +532,7 @@ class _ProductPageState extends State<ProductPage> {
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 12, // 원형 버튼들의 여유로운 배치를 위해 간격 확보
+                  spacing: 12,
                   runSpacing: 12,
                   children: [
                     _buildActionIconButton(Icons.refresh, "새로고침", () {
@@ -511,6 +552,12 @@ class _ProductPageState extends State<ProductPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
+
+                    // [신규 버튼] ERP 동기화 (수신) 버튼
+                    _buildActionIconButton(Icons.sync_alt_rounded, "ERP 연동 (가져오기)", () {
+                      _triggerErpSync(theme);
+                    }, theme, color: Colors.teal),
+
                     _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "엑셀 일괄 임포트", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -523,8 +570,6 @@ class _ProductPageState extends State<ProductPage> {
                     _buildActionIconButton(Icons.delete_sweep_outlined, "리셋", () {
                       _showResetDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
-
-                    // [변경] 아이콘 모양을 'post_add_rounded'로 교체하여 다른 페이지와 차별화하고 등록 의미를 강조합니다.
                     _buildActionIconButton(Icons.post_add_rounded, "신규 등록", () {
                       _showForm(provider, null, theme);
                     }, theme, color: theme.colorScheme.primary),
@@ -545,9 +590,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [개선 포인트] 상단 기능 아이콘을 미니멀리즘 원형 배경으로 감싸도록 수정했습니다.
-  /// ---------------------------------------------------------------------------
   Widget _buildActionIconButton(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
     final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
 
@@ -561,11 +603,11 @@ class _ProductPageState extends State<ProductPage> {
           height: 52,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            shape: BoxShape.circle, // 디자인 철학(미니멀리즘)에 맞춘 원형 컨테이너 적용
-            color: iconColor.withValues(alpha: 0.08), // 은은한 배경색
-            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5), // 깔끔한 테두리
+            shape: BoxShape.circle,
+            color: iconColor.withValues(alpha: 0.08),
+            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5),
           ),
-          child: Icon(icon, color: iconColor, size: isLarge ? 28 : 22), // 원형 안에 쏙 들어가도록 사이즈 소폭 조절
+          child: Icon(icon, color: iconColor, size: isLarge ? 28 : 22),
         ),
       ),
     );
@@ -577,12 +619,10 @@ class _ProductPageState extends State<ProductPage> {
       child: SizedBox(
         width: double.infinity,
         child: SegmentedButton<String>(
-          // [수정] DevicePage와 동일하게 선택된 항목 좌측의 체크(✓) 아이콘을 숨겨 깔끔함을 극대화합니다.
           showSelectedIcon: false,
           style: SegmentedButton.styleFrom(
             selectedBackgroundColor: AppTheme.primary,
             selectedForegroundColor: Colors.white,
-            // 내부 패딩을 늘려 버튼 볼륨을 키우고, 폰트를 크고 또렷하게(w800) 설정합니다.
             padding: const EdgeInsets.symmetric(vertical: 18),
             textStyle: const TextStyle(
               fontFamily: AppTheme.fontPretendard,
@@ -591,7 +631,6 @@ class _ProductPageState extends State<ProductPage> {
             ),
           ),
           segments: const [
-            // styleFrom에서 일괄 적용하므로 개별 TextStyle은 제거하여 코드를 미니멀하게 유지합니다.
             ButtonSegment(value: 'item', label: Text('품명별')),
             ButtonSegment(value: 'location', label: Text('위치별')),
             ButtonSegment(value: 'category', label: Text('분류별')),
@@ -1318,7 +1357,6 @@ class _ProductPageState extends State<ProductPage> {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     bool isApproved = p?.isApproved ?? true;
 
-    // [추가됨] 이미지 선택 및 삭제 상태 관리 변수
     XFile? file;
     Uint8List? preview;
     bool isImageDeleted = false;
@@ -1356,7 +1394,6 @@ class _ProductPageState extends State<ProductPage> {
           return StatefulBuilder(
               builder: (BuildContext innerCtx, StateSetter setS) {
 
-                // [추가됨] 선택 및 삭제 이벤트가 연결된 이미지 픽커 위젯 렌더링
                 Widget imagePickerWidget = _buildImagePickerBox(
                   context,
                   p,
@@ -1373,7 +1410,7 @@ class _ProductPageState extends State<ProductPage> {
                     setS(() {
                       file = null;
                       preview = null;
-                      isImageDeleted = true; // 삭제(X) 클릭 시 플래그 켬
+                      isImageDeleted = true;
                     });
                   },
                   theme,
@@ -1393,7 +1430,7 @@ class _ProductPageState extends State<ProductPage> {
                                       children: [
                                         Column(
                                             children: [
-                                              imagePickerWidget, // [적용] 기능이 완성된 위젯으로 교체
+                                              imagePickerWidget,
                                               const SizedBox(height: 16),
                                               Row(
                                                   children: [
@@ -1542,7 +1579,6 @@ class _ProductPageState extends State<ProductPage> {
                                 'is_approved': isApproved,
                                 'metadata': meta,
                                 'status': p?.status ?? '보유중',
-                                // [추가] 이미지 삭제 플래그가 켜져 있으면 필드를 비웁니다.
                                 if (isImageDeleted) 'image': '',
                               };
 
@@ -1583,7 +1619,6 @@ class _ProductPageState extends State<ProductPage> {
                                   'is_approved': isApproved,
                                   'metadata': meta,
                                   'status': '보유중',
-                                  // [추가] 벌크 생성 시에도 동일하게 처리
                                   if (isImageDeleted) 'image': '',
                                 };
 
@@ -1625,7 +1660,6 @@ class _ProductPageState extends State<ProductPage> {
     final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '200x200') : '';
     final bool isDark = theme.brightness == Brightness.dark;
 
-    // 미리보기가 있거나 (기존 이미지가 있고 삭제되지 않았을 때)
     final bool hasImage = preview != null || (url.isNotEmpty && !isDeleted);
 
     return Stack(

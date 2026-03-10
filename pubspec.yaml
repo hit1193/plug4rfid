@@ -47,6 +47,7 @@ dependencies:
   spreadsheet_decoder: ^2.1.1
   shared_preferences: ^2.5.4
   system_tray: ^2.0.3
+  screen_retriever: ^0.2.0
 
 dev_dependencies:
   flutter_test:
