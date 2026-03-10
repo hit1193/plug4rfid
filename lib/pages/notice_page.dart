@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../models/notice_model.dart';
 import '../theme/app_theme.dart';
 import '../core/pocketbase_client.dart';
+import '../core/erp_sync_helper.dart'; // [공용 모듈] ERP 연동 헬퍼를 불러옵니다.
 
 /// ---------------------------------------------------------------------------
 /// [데이터 전송용 DTO 클래스]
@@ -28,7 +29,8 @@ class NoticeEditResult {
 
 /// ---------------------------------------------------------------------------
 /// [공지사항 통합 관리 페이지]
-/// 기존 관리 기능에 '키오스크(포스터) 모드'와 '이미지 업로드' 기능이 완벽하게 결합되었습니다.
+/// 기존 관리 기능에 '키오스크(포스터) 모드', '이미지 업로드',
+/// 그리고 공유 모듈을 활용한 'REST API ERP 연동' 기능이 완벽하게 결합되었습니다.
 /// ---------------------------------------------------------------------------
 class NoticePage extends StatefulWidget {
   final bool isMobile;
@@ -60,6 +62,7 @@ class _NoticePageState extends State<NoticePage> {
     _fetchNotices();
   }
 
+  /// DB에서 공지사항 목록을 가져옵니다.
   Future<void> _fetchNotices() async {
     setState(() {
       _isLoading = true;
@@ -83,6 +86,7 @@ class _NoticePageState extends State<NoticePage> {
     }
   }
 
+  /// 중요 공지를 최상단에, 나머지는 최신순으로 정렬합니다.
   void _sortNotices() {
     noticeList.sort((NoticeModel a, NoticeModel b) {
       if (a.isImportant && !b.isImportant) {
@@ -95,6 +99,7 @@ class _NoticePageState extends State<NoticePage> {
     });
   }
 
+  /// 상세 보기 팝업을 띄웁니다.
   void _showDetailDialog(NoticeModel notice) {
     showDialog(
       context: context,
@@ -117,7 +122,45 @@ class _NoticePageState extends State<NoticePage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [2] 공지사항 등록 및 수정 (이미지 파일 Multipart Upload 로직 포함)
+  /// [공용 모듈 호출] 거래처 ERP 연동
+  /// 공용으로 만들어둔 ErpSyncHelper 를 호출하여 코드 중복을 완전히 제거했습니다.
+  /// ---------------------------------------------------------------------------
+  void _triggerErpSync(ThemeData theme) {
+    ErpSyncHelper.fetchAndSync(
+      context: context,
+      theme: theme,
+      moduleName: "공지사항",
+      // 테스트용 가상 API (차후에 거래처 실제 URL로 변경하시면 됩니다)
+      apiUrl: 'https://jsonplaceholder.typicode.com/posts?_limit=3',
+      targetCollection: 'notices', // 저장할 DB 테이블명
+
+      // [핵심] 수신된 ERP의 JSON 데이터를 어떻게 파싱할지 규칙만 전달합니다.
+      dataMapper: (Map<String, dynamic> erpItem) {
+        return {
+          'title': '[ERP 연동] ${erpItem['title']}',
+          'content': erpItem['body'],
+          'author': 'ERP 시스템 (자동화)',
+          'is_important': false,
+          'view_count': 0,
+          'attachments': '',
+        };
+      },
+
+      // 상태 관리(로딩창 제어 및 목록 새로고침)를 콜백으로 전달합니다.
+      onLoadingStart: () {
+        if (mounted) setState(() { _isLoading = true; });
+      },
+      onLoadingComplete: () {
+        if (mounted) setState(() { _isLoading = false; });
+      },
+      onSuccess: () {
+        _fetchNotices(); // 성공 시 공지사항 목록 새로고침
+      },
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [등록/수정] 이미지 파일(attachments) Multipart Upload 로직 포함
   /// ---------------------------------------------------------------------------
   void _showEditDialog({NoticeModel? notice}) {
     showDialog<NoticeEditResult>(
@@ -131,7 +174,6 @@ class _NoticePageState extends State<NoticePage> {
         );
       },
     ).then((NoticeEditResult? result) async {
-      // result에는 텍스트 데이터(model)와 선택된 이미지(imageBytes)가 모두 들어있습니다.
       if (result != null) {
         if (!mounted) return;
         setState(() {
@@ -141,28 +183,24 @@ class _NoticePageState extends State<NoticePage> {
         try {
           final Map<String, dynamic> bodyData = result.model.toJson();
 
-          // [핵심 로직] PocketBase 파일 업로드를 위한 Multipart 준비
           List<http.MultipartFile> files = [];
           if (result.imageBytes != null && result.imageName != null) {
-            // 파일을 HTTP 통신 규격에 맞게 바이트 단위로 포장합니다. (C++Builder의 Stream과 유사)
             files.add(http.MultipartFile.fromBytes(
-              'attachments', // [중요] DB에 생성하신 파일 필드명 'attachments'와 정확히 일치해야 합니다!
+              'attachments',
               result.imageBytes!,
               filename: result.imageName,
             ));
           }
 
           if (notice == null) {
-            // [DB 생성 (Insert)] 새 공지사항 등록 및 이미지 업로드
             await pb.collection('notices').create(body: bodyData, files: files);
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('✅ 새 공지사항과 포스터가 성공적으로 등록되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                content: Text('✅ 새 공지사항이 성공적으로 등록되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
                 elevation: 0,
               ));
             }
           } else {
-            // [DB 수정 (Update)] 기존 공지사항 수정 및 이미지 덮어쓰기
             await pb.collection('notices').update(notice.id, body: bodyData, files: files);
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -210,6 +248,7 @@ class _NoticePageState extends State<NoticePage> {
     });
   }
 
+  /// 단일 삭제
   void _deleteNotice(String noticeId) {
     final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
@@ -268,6 +307,7 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// 일괄 삭제
   void _confirmBulkDelete(ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
@@ -333,6 +373,7 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// 전체 초기화
   void _showResetConfirmationDialog(ThemeData theme) {
     final bool isDarkMode = theme.brightness == Brightness.dark;
 
@@ -400,7 +441,7 @@ class _NoticePageState extends State<NoticePage> {
 
   /// ---------------------------------------------------------------------------
   /// [메인 화면 UI 구성]
-  /// 키오스크 모드(_isKioskMode) 활성화 시 전체 화면 포스터 UI로 전환됩니다.
+  /// 키오스크 모드 활성화 시 전체 화면 포스터 UI로 전환됩니다.
   /// ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
@@ -432,9 +473,7 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
   /// [UI 조각] 키오스크 전용 디스플레이 모드 (포스터 배경 전체화면)
-  /// ---------------------------------------------------------------------------
   Widget _buildKioskDisplayMode(ThemeData theme) {
     if (noticeList.isEmpty) {
       return Scaffold(
@@ -461,7 +500,7 @@ class _NoticePageState extends State<NoticePage> {
       );
     }
 
-    // 통상적으로 대시보드에서는 정렬된 리스트의 가장 '첫 번째' (가장 중요하거나 최신인) 항목을 보여줍니다.
+    // 최신 항목 1개를 전체 화면으로 보여줍니다.
     final NoticeModel latestNotice = noticeList.first;
     final String imageUrl = latestNotice.getImageUrl(widget.baseUrl);
 
@@ -469,7 +508,7 @@ class _NoticePageState extends State<NoticePage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 1. 포스터(배경) 이미지 렌더링
+          // 1. 포스터(배경) 이미지
           if (imageUrl.isNotEmpty)
             Image.network(
               imageUrl,
@@ -477,31 +516,30 @@ class _NoticePageState extends State<NoticePage> {
               errorBuilder: (context, error, stackTrace) => Container(color: Colors.blueGrey.shade900),
             )
           else
-            Container(color: Colors.blueGrey.shade900), // 이미지가 없을 때의 기본 배경색
+            Container(color: Colors.blueGrey.shade900),
 
-          // 2. 가독성을 위한 어두운 그라데이션 오버레이 (미니멀리즘 & 실용성)
+          // 2. 가독성을 위한 어두운 그라데이션 오버레이
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.black.withValues(alpha: 0.8), // 상단은 살짝 어둡게 (제목 가독성)
-                  Colors.transparent,                  // 중간은 이미지가 잘 보이게
-                  Colors.black.withValues(alpha: 0.9), // 하단은 아주 어둡게 (본문 가독성)
+                  Colors.black.withValues(alpha: 0.8),
+                  Colors.transparent,
+                  Colors.black.withValues(alpha: 0.9),
                 ],
               ),
             ),
           ),
 
-          // 3. 텍스트 컨텐츠 렌더링
+          // 3. 텍스트 컨텐츠
           Padding(
             padding: EdgeInsets.all(widget.isMobile ? 32.0 : 80.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // 상단: 중요 태그 및 제목
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -534,7 +572,6 @@ class _NoticePageState extends State<NoticePage> {
                   ],
                 ),
 
-                // 하단: 본문 내용 요약 및 작성 정보
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -575,7 +612,7 @@ class _NoticePageState extends State<NoticePage> {
             ),
           ),
 
-          // 4. 관리자 모드로 돌아가기 버튼 (구석에 작게 배치)
+          // 4. 관리자 모드로 돌아가기 버튼
           Positioned(
             top: 24,
             right: 24,
@@ -590,6 +627,7 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// [UI 조각] 화면 전체 로딩 오버레이
   Widget _buildGlobalLoadingOverlay(ThemeData theme) {
     return Container(
       color: Colors.black.withValues(alpha: 0.1),
@@ -618,6 +656,7 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// [UI 조각] 상단 컨트롤 패널
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
@@ -721,6 +760,24 @@ class _NoticePageState extends State<NoticePage> {
           onPressed: () => _showResetConfirmationDialog(theme),
         ),
 
+        const SizedBox(width: 12),
+
+        // [공용 모듈 연동] ERP 버튼
+        OutlinedButton.icon(
+          icon: const Icon(Icons.sync_alt_rounded, size: 18),
+          label: const Text(
+            "ERP 연동",
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 15),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.teal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            side: BorderSide(color: Colors.teal.withValues(alpha: 0.5)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+          onPressed: () => _triggerErpSync(theme),
+        ),
+
         const Spacer(),
 
         ElevatedButton.icon(
@@ -796,6 +853,21 @@ class _NoticePageState extends State<NoticePage> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               onPressed: () => _showResetConfirmationDialog(theme),
+            ),
+
+            OutlinedButton.icon(
+              icon: const Icon(Icons.sync_alt_rounded, size: 18),
+              label: const Text(
+                "ERP 연동",
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: AppTheme.weightOthers, fontSize: 14),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.teal,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                side: BorderSide(color: Colors.teal.withValues(alpha: 0.5)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => _triggerErpSync(theme),
             ),
           ],
         ),
@@ -986,7 +1058,7 @@ class _NoticePageState extends State<NoticePage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // [수정] DB의 'attachments' 모델 변수에 맞게 UI 매핑 변경 (notice.attachment 사용)
+                      // 이미지 썸네일 표시 (포스터가 있는 경우)
                       if (notice.attachment.isNotEmpty)
                         Container(
                           width: widget.isMobile ? 50 : 70,
@@ -1148,7 +1220,6 @@ class _NoticeDetailDialog extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 포스터 이미지가 있으면 상단에 크게 렌더링
                     if (imageUrl.isNotEmpty)
                       Container(
                         width: double.infinity,
@@ -1243,7 +1314,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
   late TextEditingController _contentController;
   bool _isImportant = false;
 
-  // 사용자가 선택한 파일의 바이너리 데이터와 이름을 보관합니다.
   Uint8List? _selectedImageBytes;
   String? _selectedImageName;
 
@@ -1264,7 +1334,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
     super.dispose();
   }
 
-  /// 파일 픽커를 호출하여 이미지를 메모리로 읽어옵니다.
   Future<void> _pickImage() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -1292,7 +1361,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
         author: _authorController.text.trim(),
         isImportant: _isImportant,
         viewCount: widget.notice?.viewCount ?? 0,
-        // [수정] DB의 'attachments' 필드를 사용하는 변수로 매핑합니다.
         attachment: widget.notice?.attachment ?? '',
         created: widget.notice?.created ?? DateTime.now(),
         updated: widget.notice?.updated ?? DateTime.now(),
@@ -1354,7 +1422,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // [UI] 포스터 이미지 업로드 영역
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(20),
@@ -1366,15 +1433,12 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                         child: Column(
                           children: [
                             if (_selectedImageBytes != null) ...[
-                              // 새로 선택한 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.memory(_selectedImageBytes!, height: 150, fit: BoxFit.cover),
                               ),
                               const SizedBox(height: 16),
-                              // [수정] 모델의 attachment 변수명을 통해 이미지 존재 여부를 체크합니다.
                             ] else if (widget.notice != null && widget.notice!.attachment.isNotEmpty) ...[
-                              // 기존에 등록되어 있던 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.network(widget.notice!.getImageUrl(widget.baseUrl), height: 150, fit: BoxFit.cover),
