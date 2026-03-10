@@ -1228,6 +1228,11 @@ class _DevicePageState extends State<DevicePage> {
     String dirOptionV = d?.settings['dir_option']?.toString() ?? '3';
     final dirOptionC = TextEditingController(text: dirOptionV);
 
+    // [추가됨] 이미지 선택 및 삭제 상태 관리를 위한 로컬 상태 변수들입니다.
+    XFile? imageFile;
+    Uint8List? imagePreview;
+    bool isImageDeleted = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1236,6 +1241,32 @@ class _DevicePageState extends State<DevicePage> {
         child: StatefulBuilder(
           builder: (context, setDialogState) {
             bool isWide = MediaQuery.of(context).size.width > 750;
+
+            // [추가됨] 선택 및 삭제 이벤트가 모두 연결된 개선된 이미지 피커 위젯을 렌더링합니다.
+            Widget imagePickerWidget = _buildImagePickerBox(
+              context,
+              d,
+              imagePreview,
+              isImageDeleted,
+                  (file, bytes) {
+                // 새 이미지 선택 시
+                setDialogState(() {
+                  imageFile = file;
+                  imagePreview = bytes;
+                  isImageDeleted = false;
+                });
+              },
+                  () {
+                // 삭제 버튼(X) 클릭 시
+                setDialogState(() {
+                  imageFile = null;
+                  imagePreview = null;
+                  isImageDeleted = true; // 서버에 삭제 요청을 하기 위해 플래그를 켭니다.
+                });
+              },
+              theme,
+            );
+
             return AlertDialog(
               title: AppTheme.dialogTitle(d == null ? '신규 장치 등록' : '장치 설정 수정', d == null ? Icons.router : Icons.edit),
               content: SizedBox(
@@ -1249,7 +1280,7 @@ class _DevicePageState extends State<DevicePage> {
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildImagePickerBox(context, d, null, (file, bytes) {}, theme),
+                            imagePickerWidget, // [적용] 기능이 완성된 위젯 교체
                             const SizedBox(width: 30),
                             Expanded(child: _buildFormFields(
                                 context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
@@ -1280,7 +1311,7 @@ class _DevicePageState extends State<DevicePage> {
                           ],
                         )
                       else ...[
-                        _buildImagePickerBox(context, d, null, (file, bytes) { }, theme),
+                        imagePickerWidget, // [적용] 기능이 완성된 위젯 교체
                         const SizedBox(height: 20),
                         _buildFormFields(
                             context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
@@ -1351,10 +1382,13 @@ class _DevicePageState extends State<DevicePage> {
                         'usage_role': usageRoleV,
                         'dir_mode': dirModeV,
                         'dir_option': dirModeV == 'reader_fixed' ? dirOptionV : dirOptionC.text.trim(),
-                      }
+                      },
+                      // [추가] 사용자가 삭제 버튼을 누른 경우, DB에서 파일을 지우도록 빈 문자열을 전달합니다.
+                      if (isImageDeleted) 'image': '',
                     };
 
-                    bool success = await provider.handleSave(d: d, data: data);
+                    // [추가] 새 이미지를 선택한 경우 imageXFile 파라미터로 함께 전송합니다.
+                    bool success = await provider.handleSave(d: d, data: data, imageXFile: imageFile);
 
                     if (success && ctx.mounted) {
                       nav.pop();
@@ -1372,21 +1406,81 @@ class _DevicePageState extends State<DevicePage> {
     );
   }
 
-  Widget _buildImagePickerBox(BuildContext context, DeviceModel? d, Uint8List? preview, Function(XFile, Uint8List) onP, ThemeData theme) {
-    final imgUrl = d?.getImageUrl(widget.baseUrl, thumb: '200x200');
+  /// ---------------------------------------------------------------------------
+  /// [기능] 개선된 이미지 픽커 위젯 (선택, 미리보기, 삭제 기능 통합)
+  /// ---------------------------------------------------------------------------
+  Widget _buildImagePickerBox(
+      BuildContext context,
+      DeviceModel? d,
+      Uint8List? preview,
+      bool isDeleted,
+      Function(XFile, Uint8List) onPicked,
+      VoidCallback onDeleted,
+      ThemeData theme
+      ) {
+    final String? imgUrl = d?.getImageUrl(widget.baseUrl, thumb: '200x200');
     final bool isDark = theme.brightness == Brightness.dark;
 
-    return Container(
-      width: 180, height: 210,
-      padding: const EdgeInsets.all(12.0),
-      decoration: BoxDecoration(
-          color: theme.cardTheme.color,
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 2)
-      ),
-      child: imgUrl != null && imgUrl.isNotEmpty
-          ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network(imgUrl, fit: BoxFit.contain))
-          : const Icon(Icons.add_a_photo_outlined, size: 50, color: Colors.grey),
+    // 이미지를 화면에 렌더링해야 하는지 판단 (방금 선택한 미리보기가 있거나, 삭제되지 않은 기존 URL이 있을 때)
+    final bool hasImage = preview != null || (imgUrl != null && imgUrl.isNotEmpty && !isDeleted);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // 1. 이미지 선택/표시 영역
+        GestureDetector(
+          onTap: () async {
+            final ImagePicker picker = ImagePicker();
+            final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+            if (img != null) {
+              final Uint8List b = await img.readAsBytes();
+              onPicked(img, b);
+            }
+          },
+          child: Container(
+            width: 180, height: 210,
+            padding: const EdgeInsets.all(12.0),
+            decoration: BoxDecoration(
+                color: theme.cardTheme.color,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 2)
+            ),
+            child: Center(
+              child: preview != null
+                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.contain))
+                  : (hasImage
+                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network("$imgUrl?t=${DateTime.now().millisecondsSinceEpoch}", fit: BoxFit.contain))
+                  : const Icon(Icons.add_a_photo_outlined, size: 50, color: Colors.grey)),
+            ),
+          ),
+        ),
+
+        // 2. [추가됨] 이미지 삭제(X) 아이콘 (이미지가 존재할 때만 우측 상단에 겹쳐서 표시)
+        if (hasImage)
+          Positioned(
+            top: -10,
+            right: -10,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onDeleted,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                      color: AppTheme.danger,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.scaffoldBackgroundColor, width: 2.5),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))
+                      ]
+                  ),
+                  child: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

@@ -1317,8 +1317,11 @@ class _ProductPageState extends State<ProductPage> {
 
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     bool isApproved = p?.isApproved ?? true;
+
+    // [추가됨] 이미지 선택 및 삭제 상태 관리 변수
     XFile? file;
     Uint8List? preview;
+    bool isImageDeleted = false;
 
     final Map<String, TextEditingController> metaC = {};
     final Set<String> allMetaKeys = {};
@@ -1352,6 +1355,30 @@ class _ProductPageState extends State<ProductPage> {
         builder: (BuildContext dialogCtx) {
           return StatefulBuilder(
               builder: (BuildContext innerCtx, StateSetter setS) {
+
+                // [추가됨] 선택 및 삭제 이벤트가 연결된 이미지 픽커 위젯 렌더링
+                Widget imagePickerWidget = _buildImagePickerBox(
+                  context,
+                  p,
+                  preview,
+                  isImageDeleted,
+                      (pickedFile, pickedBytes) {
+                    setS(() {
+                      file = pickedFile;
+                      preview = pickedBytes;
+                      isImageDeleted = false;
+                    });
+                  },
+                      () {
+                    setS(() {
+                      file = null;
+                      preview = null;
+                      isImageDeleted = true; // 삭제(X) 클릭 시 플래그 켬
+                    });
+                  },
+                  theme,
+                );
+
                 return AlertDialog(
                     title: AppTheme.dialogTitle(p == null ? '자산 마스터 신규 등록' : '정보 수정 및 제원 편집', p == null ? Icons.add_box : Icons.edit),
                     content: SizedBox(
@@ -1366,36 +1393,7 @@ class _ProductPageState extends State<ProductPage> {
                                       children: [
                                         Column(
                                             children: [
-                                              GestureDetector(
-                                                  onTap: () async {
-                                                    final ImagePicker picker = ImagePicker();
-                                                    final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
-                                                    if (img != null) {
-                                                      final Uint8List b = await img.readAsBytes();
-                                                      setS(() {
-                                                        file = img;
-                                                        preview = b;
-                                                      });
-                                                    }
-                                                  },
-                                                  child: Container(
-                                                      width: 220,
-                                                      height: 250,
-                                                      decoration: BoxDecoration(
-                                                          color: theme.cardTheme.color,
-                                                          borderRadius: BorderRadius.circular(15),
-                                                          border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)
-                                                      ),
-                                                      child: Center(
-                                                          child: preview != null
-                                                              ? Image.memory(preview!, fit: BoxFit.cover)
-                                                              : (p != null && p.getImageUrl(widget.baseUrl).isNotEmpty
-                                                              ? Image.network("${p.getImageUrl(widget.baseUrl)}?t=${p.updated}", fit: BoxFit.cover, errorBuilder: (BuildContext c, Object e, StackTrace? s) => const Icon(Icons.broken_image))
-                                                              : const Icon(Icons.camera_alt, size: 50, color: Colors.grey)
-                                                          )
-                                                      )
-                                                  )
-                                              ),
+                                              imagePickerWidget, // [적용] 기능이 완성된 위젯으로 교체
                                               const SizedBox(height: 16),
                                               Row(
                                                   children: [
@@ -1543,7 +1541,9 @@ class _ProductPageState extends State<ProductPage> {
                                 'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
                                 'is_approved': isApproved,
                                 'metadata': meta,
-                                'status': p?.status ?? '보유중'
+                                'status': p?.status ?? '보유중',
+                                // [추가] 이미지 삭제 플래그가 켜져 있으면 필드를 비웁니다.
+                                if (isImageDeleted) 'image': '',
                               };
 
                               final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
@@ -1582,7 +1582,9 @@ class _ProductPageState extends State<ProductPage> {
                                   'safety_stock': int.tryParse(safeC.text.trim()) ?? 5,
                                   'is_approved': isApproved,
                                   'metadata': meta,
-                                  'status': '보유중'
+                                  'status': '보유중',
+                                  // [추가] 벌크 생성 시에도 동일하게 처리
+                                  if (isImageDeleted) 'image': '',
                                 };
 
                                 bool ok = await provider.handleSave(product: null, data: data, imageXFile: file);
@@ -1605,6 +1607,83 @@ class _ProductPageState extends State<ProductPage> {
               }
           );
         }
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [기능] 개선된 이미지 픽커 위젯 (선택, 미리보기, 삭제 기능 통합)
+  /// ---------------------------------------------------------------------------
+  Widget _buildImagePickerBox(
+      BuildContext context,
+      ProductModel? p,
+      Uint8List? preview,
+      bool isDeleted,
+      Function(XFile, Uint8List) onPicked,
+      VoidCallback onDeleted,
+      ThemeData theme
+      ) {
+    final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '200x200') : '';
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    // 미리보기가 있거나 (기존 이미지가 있고 삭제되지 않았을 때)
+    final bool hasImage = preview != null || (url.isNotEmpty && !isDeleted);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: () async {
+            final ImagePicker picker = ImagePicker();
+            final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+            if (img != null) {
+              final Uint8List b = await img.readAsBytes();
+              onPicked(img, b);
+            }
+          },
+          child: Container(
+            width: 220, height: 250,
+            padding: const EdgeInsets.all(12.0),
+            decoration: BoxDecoration(
+                color: theme.cardTheme.color,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)
+            ),
+            child: Center(
+              child: preview != null
+                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.cover))
+                  : (hasImage
+                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network("$url?t=${p!.updated}", fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)))
+                  : const Icon(Icons.camera_alt, size: 50, color: Colors.grey)),
+            ),
+          ),
+        ),
+
+        // 이미지 삭제(X) 아이콘
+        if (hasImage)
+          Positioned(
+            top: -10,
+            right: -10,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onDeleted,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                      color: AppTheme.danger,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.scaffoldBackgroundColor, width: 2.5),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))
+                      ]
+                  ),
+                  child: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

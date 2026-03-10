@@ -13,6 +13,7 @@ import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
+import '../core/pocketbase_client.dart';
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -345,7 +346,7 @@ class _UserPageState extends State<UserPage> {
             ],
           ),
 
-          if (provider.isSaving && !_isFullScreenLoading)
+          if (provider.isSaving || _isFullScreenLoading)
             _buildGlobalLoadingOverlay(theme),
         ],
       ),
@@ -368,7 +369,7 @@ class _UserPageState extends State<UserPage> {
                 CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
                 SizedBox(height: 25),
                 Text(
-                  "데이터베이스 통신 중...",
+                  "데이터베이스 처리 중...",
                   textAlign: TextAlign.center,
                   style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
                 ),
@@ -385,7 +386,6 @@ class _UserPageState extends State<UserPage> {
   /// 모바일 화면일 경우 4개의 타일을 가로 1줄이 아닌 2x2 그리드로 자동 분할합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildDashboard(Map<String, dynamic> m, UserProvider provider, ThemeData theme) {
-    // 1. 모바일 환경일 때의 레이아웃 (2줄로 나누어 공간 확보)
     if (widget.isMobile) {
       return Container(
         padding: const EdgeInsets.all(16),
@@ -412,7 +412,6 @@ class _UserPageState extends State<UserPage> {
       );
     }
 
-    // 2. 데스크탑(키오스크) 환경일 때의 레이아웃 (가로 1줄로 길게 배치)
     return Container(
       padding: const EdgeInsets.all(16),
       color: theme.scaffoldBackgroundColor,
@@ -469,7 +468,6 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// [반응형 UI 적용] 헤더 및 검색, 기능 버튼 영역
-  /// 상단의 기능 아이콘과 신규 등록 버튼을 모두 원형 디자인으로 통일했습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
@@ -481,7 +479,7 @@ class _UserPageState extends State<UserPage> {
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 12, // 넓은 원형 배치를 위해 간격을 12로 확보
+                  spacing: 12,
                   runSpacing: 12,
                   children: [
                     _buildActionIcon(Icons.refresh, "새로고침", () {
@@ -513,8 +511,6 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
-
-                    // [변경] 외부(Wrap 바깥)에 있던 신규 등록 버튼을 Wrap 내부 우측 끝으로 이동시켜 동일하게 정렬합니다.
                     _buildActionIcon(
                       Icons.person_add_alt_1,
                       "신규 인원 등록",
@@ -545,9 +541,6 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [개선 포인트] 상단 기능 아이콘을 미니멀리즘 원형 배경으로 감싸도록 수정했습니다.
-  /// ---------------------------------------------------------------------------
   Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
     final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
 
@@ -555,15 +548,15 @@ class _UserPageState extends State<UserPage> {
       message: tip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(26), // 터치 영역을 완벽한 원형으로 설정
+        borderRadius: BorderRadius.circular(26),
         child: Container(
           width: 52,
           height: 52,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            shape: BoxShape.circle, // 미니멀리즘 기반 원형 디자인 적용
-            color: iconColor.withValues(alpha: 0.08), // 은은한 배경색
-            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5), // 깔끔한 테두리
+            shape: BoxShape.circle,
+            color: iconColor.withValues(alpha: 0.08),
+            border: Border.all(color: iconColor.withValues(alpha: 0.15), width: 1.5),
           ),
           child: Icon(icon, color: iconColor, size: isLarge ? 28 : 22),
         ),
@@ -588,7 +581,7 @@ class _UserPageState extends State<UserPage> {
               ? Container(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             alignment: Alignment.centerLeft,
-            child: SingleChildScrollView( // 다중 선택 툴바도 좁은 화면에서 스크롤되도록 방어
+            child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
@@ -727,7 +720,6 @@ class _UserPageState extends State<UserPage> {
                         child: Container(
                           padding: const EdgeInsets.all(20),
                           decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-                          // [핵심 변경] 모바일과 데스크탑 레이아웃을 분리하여 호출합니다.
                           child: widget.isMobile
                               ? _buildMobileListItem(item, provider, columns, status, theme)
                               : _buildDesktopListItem(item, provider, columns, status, theme),
@@ -745,12 +737,12 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃 (기존)
-  /// 가로로 넓은 공간을 활용하여 정보와 액션 버튼을 1줄(Row)에 배치합니다.
+  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃
   /// ---------------------------------------------------------------------------
   Widget _buildDesktopListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
     return Row(
       children: [
+        // [수정] 리스트 뷰에서 불필요한 휴지통 아이콘(삭제)을 완전히 제거하여 깔끔하게 복원했습니다.
         GestureDetector(
           onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
           child: Stack(
@@ -833,17 +825,16 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃 (신규)
-  /// 좁은 화면에서 잘리지 않도록 세로(Column) 구조로 정보와 액션 버튼을 위아래로 분리합니다.
+  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃
   /// ---------------------------------------------------------------------------
   Widget _buildMobileListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 상단: 프로필 이미지 및 기본 정보
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // [수정] 모바일 화면에서도 마찬가지로 휴지통 아이콘을 제거하고 원래 구조로 복원했습니다.
             GestureDetector(
               onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
               child: Stack(
@@ -890,12 +881,11 @@ class _UserPageState extends State<UserPage> {
           ],
         ),
         const SizedBox(height: 12),
-        // 중단: 상세 컬럼 항목 (Wrap으로 자동 줄바꿈)
         Wrap(
           spacing: 16, runSpacing: 8,
           children: columns.map((String col) {
             return SizedBox(
-              width: 120, // 모바일에서는 넓이를 약간 줄입니다.
+              width: 120,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -909,7 +899,6 @@ class _UserPageState extends State<UserPage> {
         const SizedBox(height: 16),
         Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
         const SizedBox(height: 8),
-        // 하단: 액션 버튼 그룹 (화면 너비에 맞춰 균등 배치)
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -1537,10 +1526,90 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
+  /// [기능] 개선된 이미지 픽커 위젯 (선택, 미리보기, 삭제 기능 통합)
+  /// 상세 정보 편집창 상단에 위치하며, 삭제(휴지통) 버튼을 직관적으로 제공합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildImagePickerBox(
+      BuildContext context,
+      UserModel? p,
+      Uint8List? preview,
+      bool isDeleted,
+      Function(XFile, Uint8List) onPicked,
+      VoidCallback onDeleted,
+      ThemeData theme,
+      ) {
+    final String? url = p?.getImageUrl(widget.baseUrl, thumb: '200x200');
+    final bool hasImage = preview != null || (url != null && url.isNotEmpty && !isDeleted);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: () async {
+            final ImagePicker picker = ImagePicker();
+            final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+            if (img != null) {
+              final Uint8List b = await img.readAsBytes();
+              onPicked(img, b);
+            }
+          },
+          child: Container(
+            width: 180, height: 210, // 기존 UserPage 크기에 맞춤
+            padding: const EdgeInsets.all(8.0),
+            decoration: BoxDecoration(
+                color: theme.cardTheme.color,
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)
+            ),
+            child: Center(
+              child: preview != null
+                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.cover))
+                  : (hasImage
+                  ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                      "${url!}${url.contains('?') ? '&' : '?'}t=${p!.hashCode}",
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)
+                  )
+              )
+                  : const Icon(Icons.camera_alt, size: 50, color: Colors.grey)),
+            ),
+          ),
+        ),
+
+        // 이미지 삭제(X) 아이콘
+        if (hasImage)
+          Positioned(
+            top: -10,
+            right: -10,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onDeleted,
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                      color: AppTheme.danger,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: theme.scaffoldBackgroundColor, width: 2.5),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))
+                      ]
+                  ),
+                  child: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
   /// [인원 정보 등록 및 편집 다이얼로그]
   /// C++Builder의 Edit Form에 해당하는 영역입니다.
-  /// 데이터베이스 전체에서 사용되는 추가 항목(사용자 정의 필드)들을 수집하여
-  /// 신규 등록 시에도 모두 편집할 수 있도록 동적으로 입력 란을 생성합니다.
   /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
@@ -1549,28 +1618,23 @@ class _UserPageState extends State<UserPage> {
     final TextEditingController deptC = TextEditingController(text: p?.department ?? "");
     final TextEditingController remarksC = TextEditingController(text: p?.remarks ?? "");
     bool approved = p?.isApproved ?? true;
+
+    // [추가됨] 이미지 선택 및 삭제 상태 관리 변수
     XFile? file;
     Uint8List? preview;
+    bool isImageDeleted = false;
 
-    // -----------------------------------------------------------------------
-    // [추가 항목(메타데이터) 필드 동적 수집 및 생성 로직]
-    // 1. 전체 인원(provider.list)을 순회하여 사용 중인 모든 '추가 항목'을 수집합니다.
-    // 2. 신규 등록(추가) 시에도 기존에 만들어진 추가 항목 입력란이 모두 제공됩니다.
-    // -----------------------------------------------------------------------
     final Map<String, TextEditingController> metaC = {};
     final Set<String> allMetaKeys = {};
 
-    // 1. 전체 데이터베이스에 존재하는 모든 추가 항목 키 수집
     for (final UserModel user in provider.list) {
       user.metadata.forEach((String k, dynamic v) {
-        // 내부 시스템 키가 아니고 리스트/맵 등 복합 데이터가 아니면 추가 항목으로 간주
         if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal') && v is! Map && v is! List) {
           allMetaKeys.add(k);
         }
       });
     }
 
-    // 2. 현재 편집 대상자(p)의 고유한 항목 키도 만약을 대비해 병합
     if (p != null) {
       p.metadata.forEach((String k, dynamic v) {
         if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal') && v is! Map && v is! List) {
@@ -1579,16 +1643,11 @@ class _UserPageState extends State<UserPage> {
       });
     }
 
-    // 3. 수집된 키를 오름차순으로 정렬한 후 각각 텍스트 컨트롤러를 할당
     final List<String> sortedMetaKeys = allMetaKeys.toList()..sort();
     for (final String key in sortedMetaKeys) {
-      // 편집 모드면 기존 값을 넣고, 신규 추가 모드면 빈 칸으로 둡니다.
       final String initialValue = p != null ? _safeStr(p.metadata[key]) : "";
       metaC[key] = TextEditingController(text: initialValue);
     }
-
-    // [개선] 아바타 URL 처리를 안전하고 깔끔하게 분리하여 널 세이프티 에러를 완벽히 차단합니다.
-    final String? avatarUrl = p?.getImageUrl(widget.baseUrl);
 
     showDialog(
         context: context,
@@ -1596,6 +1655,30 @@ class _UserPageState extends State<UserPage> {
         builder: (BuildContext dialogCtx) {
           return StatefulBuilder(
               builder: (BuildContext innerCtx, StateSetter setS) {
+
+                // [적용] ProductPage와 동일하게 다기능(추가/삭제) 이미지 위젯을 호출합니다.
+                Widget imagePickerWidget = _buildImagePickerBox(
+                  context,
+                  p,
+                  preview,
+                  isImageDeleted,
+                      (pickedFile, pickedBytes) {
+                    setS(() {
+                      file = pickedFile;
+                      preview = pickedBytes;
+                      isImageDeleted = false;
+                    });
+                  },
+                      () {
+                    setS(() {
+                      file = null;
+                      preview = null;
+                      isImageDeleted = true; // 삭제(X) 클릭 시 플래그 켬
+                    });
+                  },
+                  theme,
+                );
+
                 return AlertDialog(
                     title: AppTheme.dialogTitle(
                         p == null ? '신규 인원 등록' : '정보 수정 및 편집',
@@ -1613,27 +1696,7 @@ class _UserPageState extends State<UserPage> {
                                       children: [
                                         Column(
                                             children: [
-                                              GestureDetector(
-                                                  onTap: () async {
-                                                    final XFile? img = await ImagePicker().pickImage(source: ImageSource.gallery);
-                                                    if (!dialogCtx.mounted) return;
-                                                    if (img != null) {
-                                                      final Uint8List b = await img.readAsBytes();
-                                                      setS(() { file = img; preview = b; });
-                                                    }
-                                                  },
-                                                  child: Container(
-                                                      width: 180, height: 210,
-                                                      decoration: BoxDecoration(color: theme.cardTheme.color, borderRadius: BorderRadius.circular(15), border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)),
-                                                      child: Center(
-                                                          child: preview != null
-                                                              ? Image.memory(preview!, fit: BoxFit.cover)
-                                                              : (avatarUrl != null && avatarUrl.isNotEmpty
-                                                              ? Image.network("$avatarUrl?t=${p!.hashCode}", fit: BoxFit.cover, errorBuilder: (BuildContext c, Object e, StackTrace? s) => const Icon(Icons.broken_image))
-                                                              : const Icon(Icons.camera_alt, size: 40, color: Colors.grey))
-                                                      )
-                                                  )
-                                              ),
+                                              imagePickerWidget, // 다기능 위젯으로 교체
                                               const SizedBox(height: 16),
                                               Row(children: [const Text("출입 승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)), const SizedBox(width: 8), Switch(value: approved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setS(() { approved = v; }); })])
                                             ]
@@ -1652,12 +1715,10 @@ class _UserPageState extends State<UserPage> {
                                         )
                                       ]
                                   ),
-                                  // DB에 저장된 추가 항목(메타데이터)가 하나라도 있다면 기본 항목 아래에 표시합니다.
                                   if (metaC.isNotEmpty) ...[
                                     const SizedBox(height: 32),
                                     const Divider(),
                                     const SizedBox(height: 16),
-                                    // [추가] 추가 항목 구분을 위해 미니멀하고 친절한 타이틀을 제공합니다.
                                     Row(
                                       children: [
                                         Icon(Icons.post_add, color: theme.colorScheme.primary, size: 20),
@@ -1686,7 +1747,6 @@ class _UserPageState extends State<UserPage> {
                       AppTheme.actionButton(label: "통합 저장", onPressed: () async {
                         final Map<String, dynamic> meta = Map<String, dynamic>.from(p?.metadata ?? {});
                         metaC.forEach((String k, TextEditingController c) {
-                          // 추가 항목의 텍스트가 비어있어도 저장되도록 처리하여 필요 시 값을 비울 수 있게 합니다.
                           meta[k] = c.text.trim();
                         });
 
@@ -1707,7 +1767,9 @@ class _UserPageState extends State<UserPage> {
                           'department': deptC.text.trim(),
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
-                          'metadata': meta
+                          'metadata': meta,
+                          // [핵심] 삭제 플래그가 켜졌다면 포켓베이스에 null을 보내어 파일을 초기화합니다.
+                          if (isImageDeleted) 'avatar': null,
                         };
 
                         if (p == null) {
