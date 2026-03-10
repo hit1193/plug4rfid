@@ -698,11 +698,12 @@ class _DevicePageState extends State<DevicePage> {
 
   /// ---------------------------------------------------------------------------
   /// [개선 UI] 실시간 통신 로그 전용 모달(Modal) 팝업 창
+  /// Map 상황판에서 구축한 최신식 7컬럼 터미널 UI를 이 페이지에도 완벽히 똑같이 이식했습니다.
   /// ---------------------------------------------------------------------------
   void _showTerminalDialog(BuildContext context, String deviceId, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
 
-    // [로컬 변수 이름 규칙 준수 및 정밀 파싱 로직 적용]
+    // [지능형 로그 통합 파서] IDRO900F, CHAFON(CF815) 및 범용 리더기의 프로토콜을 모두 식별하고 분리합니다.
     Map<String, String> parseLog(String rawLog) {
       String time = "-";
       String type = "MSG";
@@ -713,50 +714,117 @@ class _DevicePageState extends State<DevicePage> {
       String rawString = rawLog;
 
       try {
+        // 1. 시간 정보 추출 [HH:mm:ss]
         final timeRegex = RegExp(r'^\[(\d{2}:\d{2}:\d{2})\]\s*');
-        final timeMatch = timeRegex.firstMatch(rawLog);
+        final timeMatch = timeRegex.firstMatch(rawString);
 
         if (timeMatch != null) {
           time = timeMatch.group(1) ?? "-";
-          rawString = rawLog.substring(timeMatch.end);
+          rawString = rawString.substring(timeMatch.end);
         }
 
-        if (rawString.startsWith('🎯 [태그 인식]')) {
-          type = 'TAG';
-          String dataPart = rawString.replaceFirst('🎯 [태그 인식]', '').trim();
-          List<String> parts = dataPart.split('|');
+        // [해결 포인트] 2. 수식어 제거: 앞부분의 이모지, 깨진 문자(?, ?? 등), 특수 기호를 깔끔하게 제거합니다.
+        rawString = rawString.replaceAll(RegExp(r'^[ℹ️🔍🎯★<=\?\s]+'), '').trim();
 
-          for (var part in parts) {
-            part = part.trim();
-            if (part.startsWith('EPC:')) {
-              epc = part.substring(4).trim();
-            } else if (part.startsWith('Ant:')) {
-              ant = part.substring(4).trim();
-            } else if (part.startsWith('RSSI:')) {
-              rssi = part.substring(5).trim();
-            } else if (part.startsWith('TID:')) {
-              tid = part.substring(4).trim();
+        // 3. 대괄호로 감싸진 카테고리 태그([장비 응답], [Raw 프레임], [CHAFON...], [태그 인식] 등)를 찾아서 분리합니다.
+        String category = "";
+        final tagRegex = RegExp(r'^.*?\[([^\]]+)\]\s*');
+        final tagMatch = tagRegex.firstMatch(rawString);
+
+        if (tagMatch != null) {
+          category = tagMatch.group(1)!.trim();
+          // 태그 이후의 실제 알맹이 데이터만 추출
+          rawString = rawString.substring(tagMatch.end).trim();
+        }
+
+        String normCat = category.replaceAll(' ', '');
+        String payload = rawString; // 이제 payload에는 "15 00 01..." 이나 ">1T4000..." 같은 순수 데이터만 남습니다.
+
+        // 4. 순수 Payload 데이터를 기반으로 프로토콜 정밀 분석 및 분해
+        // (A) IDRO900F 전용 포맷: >1T40005239...;RFE54 (또는 1T...)
+        final idroRegex = RegExp(r'^>?([1-4])T([0-9A-Fa-f]{4})([0-9A-Fa-f]+)(?:;RF([0-9A-Fa-f]+))?');
+        final idroMatch = idroRegex.firstMatch(payload);
+
+        if (idroMatch != null) {
+          type = 'TAG';
+          ant = idroMatch.group(1)!;
+          epc = idroMatch.group(3)!; // group(2)인 메모리타입(예:4000)은 버림
+          String? rssiHex = idroMatch.group(4);
+
+          if (rssiHex != null) {
+            String hexToParse = rssiHex.length >= 2 ? rssiHex.substring(0, 2) : rssiHex;
+            int? hexVal = int.tryParse(hexToParse, radix: 16);
+            if (hexVal != null) {
+              if (hexVal > 127) hexVal -= 256; // 2의 보수 처리
+              rssi = "$hexVal dBm";
+            } else {
+              rssi = rssiHex;
             }
           }
-          rawString = "";
+        }
+        // (B) 텍스트 명시적 포맷: EPC: xxx Ant: 1
+        else if (payload.contains('EPC:') || payload.contains('Ant:')) {
+          type = 'TAG';
+          final epcMatch = RegExp(r'EPC:\s*([0-9A-Fa-f]+)').firstMatch(payload);
+          final antMatch = RegExp(r'Ant:\s*([1-4])').firstMatch(payload);
+          final tidMatch = RegExp(r'TID:\s*([0-9A-Fa-f]+)').firstMatch(payload);
+          final rssiMatch = RegExp(r'RSSI:\s*(-?\d+\.?\d*)').firstMatch(payload);
 
-        } else if (rawString.startsWith('<<< [SYS]')) {
-          type = 'SYS';
-          rawString = rawString.replaceFirst('<<< [SYS]', '').trim();
-
-        } else if (rawString.startsWith('★★★ [방향 판별 완료]')) {
-          type = 'DIR';
-          rawString = rawString.replaceFirst('★★★ [방향 판별 완료]', '').trim();
-
-        } else if (rawString.startsWith('<== [IDRO900F Raw]') || rawString.startsWith('<== [수신 RX]')) {
+          if (epcMatch != null) epc = epcMatch.group(1)!;
+          if (antMatch != null) ant = antMatch.group(1)!;
+          if (tidMatch != null) tid = tidMatch.group(1)!;
+          if (rssiMatch != null) rssi = rssiMatch.group(1)!;
+        }
+        // (C) CHAFON (CF815) 헥사 스트림 분석: 15 00 01 03 01 01 0C 55 53 45 ...
+        else if (RegExp(r'^([0-9A-Fa-f]{2}\s+)+[0-9A-Fa-f]{2}$').hasMatch(payload)) {
           type = 'RAW';
-          rawString = rawString.replaceAll(RegExp(r'^<== \[[^\]]+\]\s*'), '').trim();
+          List<String> hexParts = payload.split(RegExp(r'\s+'));
 
-        } else if (rawString.startsWith('🔍') || rawString.startsWith('ℹ️')) {
+          // CHAFON ISO18000-6C Inventory 응답 추론 (길이가 7 이상이어야 함)
+          if (hexParts.length > 6) {
+            int len = int.tryParse(hexParts[0], radix: 16) ?? 0;
+            // 배열 길이 검증: Len 값이 전체 배열에서 Len 바이트 자신을 뺀 길이와 같은지
+            if (len == hexParts.length - 1) {
+              int cmd = int.tryParse(hexParts[2], radix: 16) ?? 0;
+              // CMD 0x01(Inventory) 또는 0xEE(Active Mode)
+              if (cmd == 0x01 || cmd == 0xEE) {
+                int epcLenIdx = 6;
+                int epcLen = int.tryParse(hexParts[epcLenIdx], radix: 16) ?? 0;
+
+                // EPC 데이터가 존재하는지 검증
+                if (epcLen > 0 && hexParts.length >= epcLenIdx + 1 + epcLen) {
+                  type = 'TAG';
+                  ant = int.tryParse(hexParts[4], radix: 16)?.toString() ?? "-";
+                  epc = hexParts.sublist(epcLenIdx + 1, epcLenIdx + 1 + epcLen).join('');
+
+                  // RSSI는 EPC의 다음 바이트 위치에 존재
+                  int rssiIdx = epcLenIdx + 1 + epcLen;
+                  if (rssiIdx < hexParts.length - 2) {
+                    int rssiVal = int.tryParse(hexParts[rssiIdx], radix: 16) ?? 0;
+                    if (rssiVal > 127) rssiVal -= 256; // CHAFON도 음수 dBm 처리
+                    rssi = "$rssiVal dBm";
+                  }
+                }
+              }
+            }
+          }
+        }
+        // (D) 그 외 특정 카테고리 매핑
+        else if (normCat.contains('SYS')) {
+          type = 'SYS';
+        }
+        else if (normCat.contains('방향')) {
+          type = 'DIR';
+        }
+        else if (normCat.contains('Raw') || normCat.contains('수신') || normCat.contains('프레임')) {
+          type = 'RAW';
+        }
+        else {
           type = 'INFO';
         }
+
       } catch (e) {
-        // 방어 코드 유지
+        // 파싱 중 에러 발생 시 원본 노출 방어 코드
       }
 
       return {
@@ -766,7 +834,8 @@ class _DevicePageState extends State<DevicePage> {
         "epc": epc,
         "tid": tid,
         "rssi": rssi,
-        "raw": rawString.isEmpty && type != 'TAG' ? rawLog : rawString,
+        // [수정됨] 화면의 'RAW DATA' 칸에는 [장비 응답] 같은 괄호 수식어가 모두 떼어진 순수 데이터만 표시합니다.
+        "raw": rawString,
       };
     }
 
@@ -800,7 +869,7 @@ class _DevicePageState extends State<DevicePage> {
                         TextButton.icon(
                           onPressed: () => provider.clearLogs(deviceId),
                           icon: const Icon(Icons.delete_outline, size: 18),
-                          label: const Text("터미널 창 비우기"),
+                          label: const Text("터미널 창 비우기", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
                           style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
                         )
                       ],
@@ -825,14 +894,14 @@ class _DevicePageState extends State<DevicePage> {
                             ),
                             child: const Row(
                                 children: [
-                                  SizedBox(width: 70, child: Text("TIME", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 45, child: Text("TYPE", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  Expanded(flex: 3, child: Text("EPC", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  Expanded(flex: 2, child: Text("TID", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 70, child: Text("TIME", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 45, child: Text("TYPE", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  Expanded(flex: 3, child: Text("EPC", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  Expanded(flex: 2, child: Text("TID", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
                                   SizedBox(width: 16),
-                                  Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                                  Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
                                 ]
                             ),
                           ),
@@ -879,7 +948,8 @@ class _DevicePageState extends State<DevicePage> {
 
                                     Color rssiColor = Colors.greenAccent;
                                     try {
-                                      double rVal = double.parse(parsed['rssi']!);
+                                      String rssiNum = parsed['rssi']!.replaceAll(' dBm', '');
+                                      double rVal = double.parse(rssiNum);
                                       if (rVal < -80) {
                                         rssiColor = Colors.redAccent;
                                       } else if (rVal < -70) {
@@ -892,33 +962,33 @@ class _DevicePageState extends State<DevicePage> {
                                       child: Row(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(color: Colors.white60, fontSize: 12, fontFamily: 'Courier New'))),
+                                          SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white60, fontSize: 12))),
 
                                           SizedBox(
                                               width: 45,
                                               child: Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                                 decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                                child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                                child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
                                               )
                                           ),
 
-                                          SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+                                          SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
 
                                           Expanded(
                                               flex: 3,
                                               child: Padding(
                                                 padding: const EdgeInsets.only(right: 8.0),
-                                                child: Text(parsed['epc']!, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
+                                                child: Text(parsed['epc']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
                                               )
                                           ),
 
                                           Expanded(
                                               flex: 2,
-                                              child: Text(parsed['tid']!, style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.3))
+                                              child: Text(parsed['tid']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white70, fontSize: 12, height: 1.3))
                                           ),
 
-                                          SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
+                                          SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
 
                                           const SizedBox(width: 16),
 
@@ -927,9 +997,9 @@ class _DevicePageState extends State<DevicePage> {
                                               child: Text(
                                                   parsed['raw']!,
                                                   style: TextStyle(
+                                                      fontFamily: AppTheme.fontPretendard,
                                                       color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'DIR' ? Colors.greenAccent : Colors.white70),
                                                       fontSize: 12,
-                                                      fontFamily: 'Courier New',
                                                       height: 1.3
                                                   )
                                               )
@@ -1058,7 +1128,6 @@ class _DevicePageState extends State<DevicePage> {
                         SizedBox(
                           width: double.infinity,
                           child: SegmentedButton<int>(
-                            // [수정] 선택된 항목 좌측에 나타나는 기본 체크(✓) 아이콘을 숨겨서 깔끔하게 텍스트만 렌더링합니다.
                             showSelectedIcon: false,
                             segments: const [
                               ButtonSegment(value: 0, label: Text("전체")),
@@ -1075,7 +1144,7 @@ class _DevicePageState extends State<DevicePage> {
                                 selectedBackgroundColor: Colors.blueAccent,
                                 selectedForegroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w600, fontSize: 16)
+                                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w600, fontSize: 14)
                             ),
                           ),
                         ),
@@ -1186,7 +1255,6 @@ class _DevicePageState extends State<DevicePage> {
                                 context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
                                 modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
                                     (m, a, ac, uR, dM, dO) {
-                                  // [Linter 완벽 대응] 단일 라인 if문에도 모두 중괄호 블록을 적용했습니다.
                                   setDialogState(() {
                                     if (m != null) {
                                       modelV = m;
@@ -1351,7 +1419,6 @@ class _DevicePageState extends State<DevicePage> {
             IconData mIcon = Icons.router_rounded;
             final String label = e.value;
 
-            // [Linter 완벽 대응] Linter 경고 방지를 위해 모두 중괄호 처리했습니다.
             if (label.contains('고정')) {
               mIcon = Icons.router_rounded;
             } else if (label.contains('휴대') || label.contains('PDA')) {
@@ -1386,7 +1453,6 @@ class _DevicePageState extends State<DevicePage> {
             IconData uIcon = Icons.radar_rounded;
             Color uColor = Colors.teal;
 
-            // [Linter 완벽 대응] if문 중괄호 처리 완료
             if (e.contains('재고조사')) {
               uIcon = Icons.inventory_rounded;
               uColor = Colors.orange;
