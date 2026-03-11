@@ -14,7 +14,7 @@ import '../models/user_model.dart';
 import '../providers/product_provider.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
-import '../core/erp_sync_helper.dart'; // [신규 추가] 공용 ERP 연동 헬퍼
+import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -24,7 +24,7 @@ import '../widgets/bulk_edit_dialog.dart';
 /// [안전한 문자열 변환 유틸리티]
 /// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
 /// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
-/// C++Builder의 VarToStrDef 역할과 동일합니다.
+/// 데이터베이스에서 넘어오는 null 값을 방어하는 최신 Dart의 널 세이프티(Null Safety) 대응 패턴입니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -299,36 +299,94 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ---------------------------------------------------------------------------
   /// [ERP 연동] 거래처 시스템에서 물품 데이터를 가져와 DB에 적용합니다.
-  /// 공용 헬퍼 함수에 ProductModel 스키마에 맞는 변환 규칙(dataMapper)을 주입합니다.
+  /// 수신된 JSON의 키값을 분석하여 기본 필드는 매핑하고,
+  /// 나머지 비정형 데이터는 모조리 metadata에 쑤셔넣는 스키마리스 구조를 적용했습니다.
   /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
-      moduleName: "물품 마스터",
-      // 실제 거래처 ERP 주소로 변경하여 사용하시면 됩니다. (현재는 가상 API)
-      apiUrl: 'https://jsonplaceholder.typicode.com/posts?_limit=5',
-      targetCollection: 'products', // PocketBase의 자산 컬렉션명
+      moduleName: "물품 마스터 (REST API 동적 매핑)",
+      endpoint: 'posts?_limit=5', // 실제 연동하실 ERP의 엔드포인트로 변경하세요.
+      targetCollection: 'products',
 
-      // JSON 데이터를 ProductModel 스키마 구조로 파싱합니다.
+      // [핵심 로직] 엑셀 파싱과 동일하게 수신 데이터를 동적으로 분리합니다.
       dataMapper: (Map<String, dynamic> erpItem) {
+        String parsedName = "이름없음";
+        String parsedTagId = "TAG_${DateTime.now().millisecondsSinceEpoch}";
+        String parsedLocation = "입고 대기장";
+        String parsedStatus = "보유중";
+        String parsedCategory = "ERP 자동분류";
+        String parsedSpec = "";
+        String parsedSn = "";
+
+        // 나머지 비정형 데이터를 담을 마법의 주머니
+        Map<String, dynamic> dynamicMetadata = {};
+
+        // JSON으로 날아온 모든 키-값 쌍을 순회합니다.
+        erpItem.forEach((key, value) {
+          if (value == null) return; // Null 값 안전 처리
+
+          final String lowerKey = key.toLowerCase();
+          final String strValue = value.toString().trim();
+
+          // 1. 시스템을 구동하기 위한 '기본 뼈대' 필드 매핑 규칙
+          if (lowerKey.contains('name') || lowerKey.contains('title') || lowerKey == '품명') {
+            parsedName = strValue;
+          }
+          else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
+            parsedTagId = strValue;
+          }
+          else if (lowerKey.contains('loc') || lowerKey == '위치') {
+            parsedLocation = strValue;
+          }
+          else if (lowerKey.contains('status') || lowerKey == '상태') {
+            parsedStatus = strValue;
+          }
+          else if (lowerKey.contains('category') || lowerKey == '분류') {
+            parsedCategory = strValue;
+          }
+          else if (lowerKey.contains('spec') || lowerKey == '규격') {
+            parsedSpec = strValue;
+          }
+          else if (lowerKey.contains('serial') || lowerKey == 'sn' || lowerKey == '시리얼') {
+            parsedSn = strValue;
+          }
+          // 2. 기본 필드에 해당하지 않는 '나머지 모든 데이터'는 조건 없이 metadata 주머니로 쏙!
+          else {
+            if (strValue.isNotEmpty && strValue != "null") {
+              dynamicMetadata[key] = strValue;
+            }
+          }
+        });
+
+        // 3. 완벽하게 파싱 및 분리된 데이터를 ProductModel 규격에 맞게 반환
         return {
-          'name': '[ERP] ${erpItem['title'] ?? '이름없음'}',
-          'tag_id': 'ERP-TAG-${erpItem['id']}',
-          'category': 'ERP 자동분류',
-          'location': '입고 대기장',
-          'status': '보유중',
-          'quantity': 100,
-          'safety_stock': 10,
+          'name': '[ERP] $parsedName', // ERP 출신임을 알 수 있도록 꼬리표를 답니다.
+          'tag_id': parsedTagId,
+          'location': parsedLocation,
+          'status': parsedStatus,
+          'category': parsedCategory,
+          'spec': parsedSpec,
+          'serial_number': parsedSn,
+          'safety_stock': 5, // 기본값 설정
           'is_approved': true,
-          'metadata': {},
+          'metadata': dynamicMetadata, // <--- 무한한 확장성을 가진 비정형 데이터 저장소
         };
       },
       onLoadingStart: () {
-        if (mounted) setState(() { _isFullScreenLoading = true; });
+        if (mounted) {
+          setState(() {
+            _isFullScreenLoading = true;
+          });
+        }
       },
       onLoadingComplete: () {
-        if (mounted) setState(() { _isFullScreenLoading = false; });
+        if (mounted) {
+          setState(() {
+            _isFullScreenLoading = false;
+          });
+        }
       },
       onSuccess: () {
         // ProductProvider가 최신 데이터를 다시 DB로부터 불러오게 합니다.
@@ -1658,7 +1716,8 @@ class _ProductPageState extends State<ProductPage> {
       ThemeData theme
       ) {
     final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '200x200') : '';
-    final bool isDark = theme.brightness == Brightness.dark;
+
+    // [수정점] 사용하지 않는 isDark 변수를 린터 권장 사항에 따라 삭제했습니다.
 
     final bool hasImage = preview != null || (url.isNotEmpty && !isDeleted);
 
@@ -2300,7 +2359,8 @@ class _ProductPageState extends State<ProductPage> {
           if (colIdx >= headers.length) {
             break;
           }
-          final String cleanHeader = headers[colIdx].replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+          // [수정점] 정규표현식(RegExp)에서 불필요한 이스케이프(\_, \(, \))를 제거하여 린터 경고를 해결했습니다.
+          final String cleanHeader = headers[colIdx].replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
           final String val = _extractString(row[colIdx]);
 
           if (cleanHeader.contains('품명') || cleanHeader.contains('이름')) {

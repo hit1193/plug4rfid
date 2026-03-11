@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // kIsWeb, Uint8List 등 플랫폼 확인 및 데이터 타입 제공
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:file_picker/file_picker.dart'; // 도면 이미지 파일 선택기
+import 'package:shared_preferences/shared_preferences.dart'; // 설정값 로컬 저장소
+import 'dart:io';
 
 import '../models/device_model.dart';
 import '../providers/device_provider.dart';
@@ -38,6 +42,127 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
   // 사이드바(미배치 장치 리스트 뷰) 열림/닫힘 상태
   bool _isSidebarOpen = true;
 
+  // 커스텀 도면 이미지 상태 관리 변수 (Null Safety 적용)
+  String? _customMapImagePath;
+  Uint8List? _customMapImageBytes;
+
+  // 도면 이미지를 완전히 지우고 '빈 배경'만 남길지 결정하는 플래그입니다.
+  // 미니멀리즘 감성을 위해 사용자가 임의로 텅 빈 도화지로 만들 수 있습니다.
+  bool _isMapBlank = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCustomMap(); // 화면이 열릴 때 저장된 도면 정보를 불러옵니다.
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [도면 관리] 로컬 저장소(SharedPreferences)에서 도면 이미지 경로 및 상태를 불러옵니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _loadCustomMap() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // [안전 장치] 비동기 처리 후 위젯이 아직 화면에 존재하는지(mounted) 반드시 확인합니다.
+    if (!mounted) return;
+
+    // 빈 배경 모드인지 먼저 확인합니다.
+    final bool isBlank = prefs.getBool('pref_is_map_blank') ?? false;
+    // 저장된 커스텀 도면 경로를 가져옵니다.
+    final String? savedPath = prefs.getString('pref_custom_map_path');
+
+    setState(() {
+      _isMapBlank = isBlank;
+      // 빈 배경이 아니면서 저장된 경로가 유효할 때만 이미지를 로드합니다.
+      if (!isBlank && savedPath != null && savedPath.isNotEmpty) {
+        _customMapImagePath = savedPath;
+      }
+    });
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [도면 관리] PC 또는 모바일에서 새로운 도면 이미지를 선택합니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _pickCustomMap() async {
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true, // 웹 환경 및 안전한 바이트 처리를 위해 데이터를 함께 로드합니다.
+      );
+
+      // [안전 장치] 사용자가 파일 선택 창에서 취소하거나, 창이 닫힌 경우 방어
+      if (!mounted || result == null) return;
+
+      // 앱 재시작 후에도 도면이 유지되도록 경로를 로컬에 영구 저장합니다.
+      if (result.files.single.path != null && !kIsWeb) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('pref_custom_map_path', result.files.single.path!);
+        // 새로운 도면을 지정했으므로 '빈 화면' 모드를 강제로 해제합니다.
+        await prefs.setBool('pref_is_map_blank', false);
+      }
+
+      // [안전 장치] SharedPreferences 저장 후 다시 mounted 체크
+      if (!mounted) return;
+
+      setState(() {
+        _isMapBlank = false; // 빈 화면 상태 해제
+        _customMapImageBytes = result.files.single.bytes;
+        _customMapImagePath = result.files.single.path;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('✅ 도면 이미지가 성공적으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+        elevation: 0,
+      ));
+    } catch (e) {
+      debugPrint("도면 이미지 선택 중 오류 발생: $e");
+    }
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [도면 관리] 모든 도면 이미지를 지우고 깨끗한 '테마 기본 배경'만 남깁니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _clearMapToBlank() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pref_is_map_blank', true); // 빈 화면 모드를 켭니다.
+    await prefs.remove('pref_custom_map_path'); // 기존에 저장된 커스텀 도면 정보도 날립니다.
+
+    if (!mounted) return;
+
+    setState(() {
+      _isMapBlank = true;
+      _customMapImagePath = null;
+      _customMapImageBytes = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('배경 도면이 완전히 삭제되어 미니멀한 테마 배경으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+      elevation: 0,
+    ));
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [도면 관리] 등록된 커스텀 도면이나 빈 화면을 해제하고 기본 팩토리 이미지로 초기화합니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _restoreDefaultMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('pref_custom_map_path');
+    await prefs.setBool('pref_is_map_blank', false); // 기본 팩토리 이미지를 보여주기 위해 빈 화면 해제
+
+    // [안전 장치] 비동기 처리 후 BuildContext 사용 전 mounted 체크 (Linter 권장)
+    if (!mounted) return;
+
+    setState(() {
+      _isMapBlank = false;
+      _customMapImagePath = null;
+      _customMapImageBytes = null;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('도면이 기본 시스템 이미지로 초기화(복구)되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+      elevation: 0,
+    ));
+  }
+
   /// 장치 모델(프로토콜) 문자열을 분석하여 직관적인 아이콘을 반환합니다.
   /// 블록 스타일을 적용하여 조건별로 명확하게 보이도록 작성했습니다.
   IconData _getIcon(String model) {
@@ -74,8 +199,11 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
     }).toList();
 
     return Scaffold(
-      // 도면 바깥쪽 빈 공간의 배경색 (미니멀하고 깔끔한 회색톤)
-      backgroundColor: const Color(0xFFE5E7EB),
+      // -----------------------------------------------------------------------
+      // [수정] 중앙 집중형 테마 연동
+      // 도면 바깥쪽 빈 공간의 배경색을 중앙 테마(scaffoldBackgroundColor)와 일치시킵니다.
+      // -----------------------------------------------------------------------
+      backgroundColor: theme.scaffoldBackgroundColor,
 
       // -----------------------------------------------------------------------
       // [핵심 레이아웃] Stack 위젯
@@ -166,10 +294,11 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
         color: theme.cardTheme.color?.withValues(alpha: 0.95), // 반투명 느낌 적용
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
+          // [디자인 개선] 사방으로 은은하게 퍼지는 그림자 적용
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.08), // 기존 0.1보다 연하게
+            blurRadius: 15, // 기존 10보다 더 부드럽게 퍼지도록
+            offset: Offset.zero, // 특정 방향 쏠림 없이 사방 동일 적용
           )
         ],
       ),
@@ -194,6 +323,51 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
             ),
           ),
           const Spacer(),
+
+          // [기본 도면 복구 버튼]
+          if (_customMapImageBytes != null || _customMapImagePath != null || _isMapBlank)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Tooltip(
+                message: "기본 팩토리 도면으로 복구",
+                child: IconButton(
+                  icon: const Icon(Icons.image_not_supported_outlined, color: Colors.blueGrey),
+                  onPressed: _restoreDefaultMap,
+                ),
+              ),
+            ),
+
+          // [완전 삭제(테마 배경) 버튼]
+          if (!_isMapBlank)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Tooltip(
+                message: "배경 도면 완전히 지우기",
+                child: IconButton(
+                  icon: const Icon(Icons.layers_clear, color: AppTheme.danger),
+                  onPressed: _clearMapToBlank,
+                ),
+              ),
+            ),
+
+          // [도면 이미지 선택(변경) 버튼]
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: Tooltip(
+              message: "내 PC/기기에서 도면 이미지(JPG, PNG) 찾기",
+              child: OutlinedButton.icon(
+                onPressed: _pickCustomMap,
+                icon: const Icon(Icons.image_search, size: 18),
+                label: const Text("도면 변경", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.colorScheme.primary,
+                  side: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.5)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ),
+
           // 진정한 전체화면(Map Only) 실행 버튼
           Tooltip(
             message: "도면 100% 전체화면",
@@ -244,10 +418,11 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
               color: theme.cardTheme.color,
               borderRadius: BorderRadius.circular(8),
               boxShadow: [
+                // [디자인 개선] 사방으로 은은하게 퍼지는 그림자 통일
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  blurRadius: 8,
-                  offset: const Offset(2, 2),
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: Offset.zero, // 사방 동일
                 )
               ],
               border: Border.all(color: theme.dividerTheme.color ?? Colors.grey.shade300)
@@ -272,10 +447,11 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
         color: theme.cardTheme.color?.withValues(alpha: 0.95), // 도면이 살짝 비치는 고급스러운 효과
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
+          // [디자인 개선] 사방으로 은은하게 퍼지는 그림자 적용 (헤더와 동일한 분위기)
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
+            color: Colors.black.withValues(alpha: 0.08), // 기존 0.15보다 연하게
             blurRadius: 15,
-            offset: const Offset(4, 4),
+            offset: Offset.zero, // 특정 방향 쏠림 없이 사방 동일 적용
           )
         ],
       ),
@@ -436,9 +612,26 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
 
   /// ---------------------------------------------------------------------------
   /// 메인 맵 영역 (도면 및 마커 렌더링)
-  /// [최적화 적용] Positioned.fill 내부에서 화면 100%를 무조건 차지합니다.
+  /// [최적화 적용] 상태에 따라 커스텀 이미지, 기본 이미지, 또는 완전한 빈 배경을 결정합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildMapArea(List<DeviceModel> placed, DeviceProvider provider, ThemeData theme) {
+    // 렌더링할 배경 이미지를 담을 변수입니다.
+    ImageProvider? mapImage;
+
+    // 빈 화면 모드가 아닐 경우에만 이미지를 세팅합니다.
+    if (!_isMapBlank) {
+      if (_customMapImageBytes != null) {
+        // 웹 환경이거나 파일 픽커에서 바이트를 직접 넘겨받은 경우
+        mapImage = MemoryImage(_customMapImageBytes!);
+      } else if (_customMapImagePath != null && _customMapImagePath!.isNotEmpty && !kIsWeb) {
+        // 데스크탑/모바일 로컬 스토리지에 저장된 파일 경로인 경우
+        mapImage = FileImage(File(_customMapImagePath!));
+      } else {
+        // 아무런 설정이 없을 때 표출되는 시스템 기본 팩토리 도면
+        mapImage = const NetworkImage("https://img.freepik.com/free-vector/factory-interior-isometric-composition_1284-24151.jpg");
+      }
+    }
+
     return InteractiveViewer(
       maxScale: 4.0,
       minScale: 0.3,
@@ -469,12 +662,21 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
                 key: _mapKey,
                 width: mapWidth,
                 height: mapHeight,
-                decoration: const BoxDecoration(
-                  color: Colors.white, // 도면 배경색
-                  image: DecorationImage(
-                    image: NetworkImage("https://img.freepik.com/free-vector/factory-interior-isometric-composition_1284-24151.jpg"),
+                decoration: BoxDecoration(
+                  // -----------------------------------------------------------------
+                  // [수정] 중앙 집중형 테마 연동
+                  // 미니멀리즘 디자인을 위해 사용자가 선택한 테마의 기본 배경색을 지정합니다.
+                  // (_isMapBlank가 true가 되면 이미지가 없어지고 이 배경색만 아름답게 남습니다.)
+                  // -----------------------------------------------------------------
+                  color: theme.scaffoldBackgroundColor,
+
+                  // mapImage가 null이 아닐 때만 DecorationImage 위젯을 씌워줍니다.
+                  image: mapImage != null
+                      ? DecorationImage(
+                    image: mapImage,
                     fit: BoxFit.contain,
-                  ),
+                  )
+                      : null,
                 ),
                 child: Stack(
                   clipBehavior: Clip.none,
@@ -569,8 +771,6 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
 
   /// ---------------------------------------------------------------------------
   /// [과감한 미니멀 UI 적용] 장치 상세 정보 및 실시간 로그 팝업창
-  /// 어수선했던 7컬럼 구조와 큰 요약 박스를 완전히 제거하고,
-  /// 좁은 공간에서도 핵심만 보이도록 리스트 형태로 압축했습니다.
   /// ---------------------------------------------------------------------------
   void _showDeviceDetails(BuildContext context, DeviceModel d, DeviceProvider provider, ThemeData theme) {
     final bool isOnline = d.status.toLowerCase() == 'online';
@@ -620,8 +820,6 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
           type = 'DIR';
           rawString = rawString.replaceFirst('★★★ [방향 판별 완료]', '').trim();
         } else if ((rawString.startsWith('<==') && rawString.contains('Raw]')) || rawString.startsWith('<== [수신 RX]')) {
-          // [버그 패치] IDE 스펠링 체커에서 특정 제조사명을 오타로 간주하지 않도록
-          // 하드코딩된 특정 명칭을 빼고, 더 범용적인 문자열 체크 방식으로 리팩토링했습니다.
           type = 'RAW';
           rawString = rawString.replaceAll(RegExp(r'^<== \[[^\]]+\]\s*'), '').trim();
         } else if (rawString.startsWith('🔍') || rawString.startsWith('ℹ️')) {

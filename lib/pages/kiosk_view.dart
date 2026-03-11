@@ -8,7 +8,9 @@ import '../theme/app_theme.dart';
 import '../models/detection_model.dart';
 import '../core/pocketbase_client.dart';
 
+/// ---------------------------------------------------------------------------
 /// RFID 게이트의 운영 모드를 정의하는 열거형입니다.
+/// ---------------------------------------------------------------------------
 enum GateScanMode {
   personnelOnly, // 인원 출입 전용 모드
   itemWorkerMatch // 물품 + 작업자 매칭 모드 (자산 통제)
@@ -80,7 +82,7 @@ class _KioskViewState extends State<KioskView> {
   ];
   int _currentImageIndex = 0;
 
-  // [수정] 기존 하드코딩된 텍스트 대신, DB에서 불러올 때까지 표시할 기본 안내 문구로 변경하고 변수(String)로 만들었습니다.
+  // DB에서 불러올 때까지 표시할 기본 안내 문구
   String _noticeText = "최신 공지사항을 불러오는 중입니다...";
 
   final List<DetectionModel> _realtimeLogs = [];
@@ -106,7 +108,7 @@ class _KioskViewState extends State<KioskView> {
     });
 
     _fetchSummaryData();
-    _fetchNotice(); // [추가됨] 화면 초기화 시점에 가장 최신 공지사항을 가져옵니다.
+    _fetchNotice(); // 화면 초기화 시점에 가장 최신 공지사항을 가져옵니다.
     _initRealtimeSubscription();
   }
 
@@ -127,7 +129,7 @@ class _KioskViewState extends State<KioskView> {
   }
 
   // ---------------------------------------------------------------------------
-  // [비즈니스 로직 생략 없이 유지]
+  // [비즈니스 로직]
   // ---------------------------------------------------------------------------
 
   Future<void> _fetchSummaryData() async {
@@ -135,7 +137,10 @@ class _KioskViewState extends State<KioskView> {
       final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
       // 인원 통계
-      int tIn = 0; int tOut = 0; int cStay = 0;
+      int tIn = 0;
+      int tOut = 0;
+      int cStay = 0;
+
       try {
         final userRecords = await pb.collection('users').getFullList();
         for (var record in userRecords) {
@@ -148,16 +153,23 @@ class _KioskViewState extends State<KioskView> {
           }
           if (lastType == '입장') { cStay++; }
         }
-      } catch (e) { debugPrint("User 통계 에러: $e"); }
+      } catch (e) {
+        debugPrint("User 통계 에러: $e");
+      }
 
       // 물품 통계
-      int totalStock = 0; int itemIn = 0; int itemOut = 0;
+      int totalStock = 0;
+      int itemIn = 0;
+      int itemOut = 0;
+
       try {
         final prodRecords = await pb.collection('products').getFullList();
         for (var p in prodRecords) {
           totalStock += (p.data['stock_count'] as int?) ?? 1;
         }
-      } catch (e) { debugPrint("Product 통계 에러: $e"); }
+      } catch (e) {
+        debugPrint("Product 통계 에러: $e");
+      }
 
       try {
         final DateTime now = DateTime.now();
@@ -175,26 +187,42 @@ class _KioskViewState extends State<KioskView> {
           final isEntry = d.getBoolValue('is_entry');
           final dynamic itemsDynamic = d.data['items_json'];
           int itemsCount = 0;
-          if (itemsDynamic is List) { itemsCount = itemsDynamic.length; }
-          else if (itemsDynamic is String) { itemsCount = (jsonDecode(itemsDynamic) as List).length; }
-          if (isEntry) { itemIn += itemsCount; } else { itemOut += itemsCount; }
+
+          if (itemsDynamic is List) {
+            itemsCount = itemsDynamic.length;
+          } else if (itemsDynamic is String) {
+            itemsCount = (jsonDecode(itemsDynamic) as List).length;
+          }
+
+          if (isEntry) {
+            itemIn += itemsCount;
+          } else {
+            itemOut += itemsCount;
+          }
         }
-      } catch (e) { debugPrint("Detection 통계 에러: $e"); }
+      } catch (e) {
+        debugPrint("Detection 통계 에러: $e");
+      }
 
       if (mounted) {
         setState(() {
-          _todayEntry = tIn; _todayExit = tOut; _currentStay = cStay;
+          _todayEntry = tIn;
+          _todayExit = tOut;
+          _currentStay = cStay;
           _prevDayStay = _currentStay - _todayEntry + _todayExit;
-          _todayIn = itemIn; _todayOut = itemOut; _currentStock = totalStock;
+
+          _todayIn = itemIn;
+          _todayOut = itemOut;
+          _currentStock = totalStock;
           _prevDayStock = _currentStock - _todayIn + _todayOut;
         });
       }
-    } catch (e) { debugPrint("집계 로드 실패: $e"); }
+    } catch (e) {
+      debugPrint("집계 로드 실패: $e");
+    }
   }
 
-  // ---------------------------------------------------------------------------
-  // [신규 추가] DB에서 가장 최신 공지사항을 가져오는 로직
-  // ---------------------------------------------------------------------------
+  // DB에서 가장 최신 공지사항을 가져오는 로직
   Future<void> _fetchNotice() async {
     try {
       // notices 컬렉션에서 등록일(created) 기준 가장 최신 데이터를 1건만 가져옵니다.
@@ -227,15 +255,25 @@ class _KioskViewState extends State<KioskView> {
   void _initRealtimeSubscription() {
     try {
       pb.realtime.unsubscribe('');
-      pb.collection('users').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
-      pb.collection('detections').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
-      pb.collection('products').subscribe('*', (e) { if (mounted) { _fetchSummaryData(); } });
+      pb.collection('users').subscribe('*', (e) {
+        if (mounted) { _fetchSummaryData(); }
+      });
+      pb.collection('detections').subscribe('*', (e) {
+        if (mounted) { _fetchSummaryData(); }
+      });
+      pb.collection('products').subscribe('*', (e) {
+        if (mounted) { _fetchSummaryData(); }
+      });
 
-      // [추가됨] 관리자가 공지사항을 수정하거나 추가하면 키오스크도 즉각 이를 감지하고 텍스트를 업데이트합니다.
-      pb.collection('notices').subscribe('*', (e) { if (mounted) { _fetchNotice(); } });
+      // 관리자가 공지사항을 수정하거나 추가하면 키오스크도 즉각 이를 감지하고 업데이트합니다.
+      pb.collection('notices').subscribe('*', (e) {
+        if (mounted) { _fetchNotice(); }
+      });
 
       debugPrint("✅ 실시간 SSE 구독 설정 완료");
-    } catch (e) { debugPrint("❌ 실시간 구독 중 에러: $e"); }
+    } catch (e) {
+      debugPrint("❌ 실시간 구독 중 에러: $e");
+    }
   }
 
   bool get _canSave {
@@ -245,12 +283,17 @@ class _KioskViewState extends State<KioskView> {
   }
 
   Future<void> _syncServerTime() async {
-    try { setState(() { _timeOffset = Duration.zero; }); } catch (e) { debugPrint("서버 시간 동기화 실패: $e"); }
+    try {
+      setState(() { _timeOffset = Duration.zero; });
+    } catch (e) {
+      debugPrint("서버 시간 동기화 실패: $e");
+    }
   }
 
   void _updateClock() {
     final DateTime now = DateTime.now().add(_timeOffset);
     const List<String> weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
     if (mounted) {
       setState(() {
         _currentTime = "${now.year}년 ${now.month.toString().padLeft(2, '0')}월 ${now.day.toString().padLeft(2, '0')}일 (${weekdays[now.weekday - 1]})   ${now.hour.toString().padLeft(2, '0')} : ${now.minute.toString().padLeft(2, '0')} : ${now.second.toString().padLeft(2, '0')}";
@@ -262,7 +305,9 @@ class _KioskViewState extends State<KioskView> {
     _standbyTimer?.cancel();
     if (_useStandbyMode && _realtimeLogs.isEmpty) {
       _standbyTimer = Timer(Duration(seconds: _standbyTimeoutSeconds), () {
-        if (mounted) { setState(() { _isStandbyActive = true; }); }
+        if (mounted) {
+          setState(() { _isStandbyActive = true; });
+        }
       });
     }
   }
@@ -270,16 +315,21 @@ class _KioskViewState extends State<KioskView> {
   void _startAutoSaveTimer() {
     _autoSaveTimer?.cancel();
     _standbyTimer?.cancel();
+
     if (!_canSave) {
       setState(() { _autoSaveCountdown = _autoSaveDurationSeconds; });
       return;
     }
+
     setState(() { _autoSaveCountdown = _autoSaveDurationSeconds; });
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          if (_autoSaveCountdown > 1) { _autoSaveCountdown--; }
-          else { _executeSaveAndClear(); }
+          if (_autoSaveCountdown > 1) {
+            _autoSaveCountdown--;
+          } else {
+            _executeSaveAndClear();
+          }
         });
       }
     });
@@ -291,32 +341,52 @@ class _KioskViewState extends State<KioskView> {
       for (var log in _realtimeLogs) {
         final Map<String, dynamic> dbRecord = log.toJson();
         dbRecord['timestamp'] = "${log.timestamp.toUtc().toString().replaceAll('T', ' ')}Z";
+
         await pb.collection('detections').create(body: dbRecord);
+
         final userRecords = await pb.collection('users').getList(filter: 'name = "${log.content}"', perPage: 1);
+
         if (userRecords.items.isNotEmpty) {
           final userRecord = userRecords.items.first;
           final Map<String, dynamic> meta = Map<String, dynamic>.from(userRecord.data['metadata'] ?? {});
-          String accessType = log.type == 'person' ? (log.status.contains('퇴장') ? '퇴장' : '입장') : (log.isEntry ? '입장' : '퇴장');
+          String accessType = log.type == 'person'
+              ? (log.status.contains('퇴장') ? '퇴장' : '입장')
+              : (log.isEntry ? '입장' : '퇴장');
+
           meta['last_access_type'] = accessType;
           meta['last_access_time'] = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+
           await pb.collection('users').update(userRecord.id, body: {'metadata': meta});
         }
       }
-    } catch (e) { debugPrint("❌ DB 연동 실패: $e"); }
+    } catch (e) {
+      debugPrint("❌ DB 연동 실패: $e");
+    }
+
     if (mounted) {
-      setState(() { _realtimeLogs.clear(); if (_useStandbyMode) { _isStandbyActive = true; } });
+      setState(() {
+        _realtimeLogs.clear();
+        if (_useStandbyMode) { _isStandbyActive = true; }
+      });
       _resetStandbyTimer();
     }
   }
 
   void _executeCancelAndClear() {
     _autoSaveTimer?.cancel();
-    setState(() { _realtimeLogs.clear(); if (_useStandbyMode) { _isStandbyActive = true; } });
+    setState(() {
+      _realtimeLogs.clear();
+      if (_useStandbyMode) { _isStandbyActive = true; }
+    });
     _resetStandbyTimer();
   }
 
   void _simulateNewDetection() {
-    if (_isStandbyActive) { _realtimeLogs.clear(); _isStandbyActive = false; }
+    if (_isStandbyActive) {
+      _realtimeLogs.clear();
+      _isStandbyActive = false;
+    }
+
     final DateTime detectTime = DateTime.now().add(_timeOffset);
     DetectionModel newLog;
 
@@ -376,8 +446,11 @@ class _KioskViewState extends State<KioskView> {
         );
       }
     }
+
     _simCount++;
-    setState(() { _realtimeLogs.insert(0, newLog); });
+    setState(() {
+      _realtimeLogs.insert(0, newLog);
+    });
     _startAutoSaveTimer();
   }
 
@@ -386,10 +459,15 @@ class _KioskViewState extends State<KioskView> {
       final oldLog = _realtimeLogs.first;
       setState(() {
         _realtimeLogs[0] = DetectionModel(
-            id: oldLog.id, type: oldLog.type, content: '홍길동 책임',
+            id: oldLog.id,
+            type: oldLog.type,
+            content: '홍길동 책임',
             imageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200',
-            spot: oldLog.spot, status: '출고(작업)', isEntry: oldLog.isEntry,
-            items: oldLog.items, timestamp: oldLog.timestamp
+            spot: oldLog.spot,
+            status: '출고(작업)',
+            isEntry: oldLog.isEntry,
+            items: oldLog.items,
+            timestamp: oldLog.timestamp
         );
       });
       _startAutoSaveTimer();
@@ -463,7 +541,10 @@ class _KioskViewState extends State<KioskView> {
               top: isSmall ? 16 : 32,
               right: isSmall ? 8 : 32,
               child: isSmall
-                  ? IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close_rounded, color: Colors.white, size: 32))
+                  ? IconButton(
+                  onPressed: widget.onDismiss,
+                  icon: const Icon(Icons.close_rounded, color: Colors.white, size: 32)
+              )
                   : Row(
                   children: [
                     _buildTestButton(isSmall: false),
@@ -474,7 +555,10 @@ class _KioskViewState extends State<KioskView> {
                     const SizedBox(width: 30),
                     _buildStandbyToggle(isDark: isDark, forceWhiteText: true),
                     const SizedBox(width: 20),
-                    IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close_rounded, color: Colors.white, size: 40))
+                    IconButton(
+                        onPressed: widget.onDismiss,
+                        icon: const Icon(Icons.close_rounded, color: Colors.white, size: 40)
+                    )
                   ]
               )
           ),
@@ -483,7 +567,13 @@ class _KioskViewState extends State<KioskView> {
               bottom: isSmall ? 10 : 30,
               left: isSmall ? 10 : 40,
               right: isSmall ? 10 : 40,
-              child: _MarqueeWidget(text: _noticeText, backgroundColor: Colors.transparent, textColor: Colors.white, forceDarkShadow: true, isSmall: isSmall)
+              child: _MarqueeWidget(
+                  text: _noticeText,
+                  backgroundColor: Colors.transparent,
+                  textColor: Colors.white,
+                  forceDarkShadow: true,
+                  isSmall: isSmall
+              )
           ),
         ],
       ),
@@ -509,9 +599,21 @@ class _KioskViewState extends State<KioskView> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.sensor_door_rounded, size: isSmall ? 50 : 80, color: AppTheme.labelColor(isDark).withValues(alpha: 0.3)),
+                    Icon(
+                        Icons.sensor_door_rounded,
+                        size: isSmall ? 50 : 80,
+                        color: AppTheme.labelColor(isDark).withValues(alpha: 0.3)
+                    ),
                     const SizedBox(height: 24),
-                    Text("게이트 감지 대기 중...", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: isSmall ? 18 : 24, fontWeight: AppTheme.weightMenu, color: AppTheme.labelColor(isDark))),
+                    Text(
+                        "게이트 감지 대기 중...",
+                        style: TextStyle(
+                            fontFamily: AppTheme.fontPretendard,
+                            fontSize: isSmall ? 18 : 24,
+                            fontWeight: AppTheme.weightMenu,
+                            color: AppTheme.labelColor(isDark)
+                        )
+                    ),
                   ],
                 ),
               )
@@ -521,9 +623,13 @@ class _KioskViewState extends State<KioskView> {
                 itemBuilder: (context, index) {
                   final DetectionModel log = _realtimeLogs[index];
                   final bool isWarning = log.content == '미인식 작업자' && _requireWorkerMatch;
+
                   return _LogCardWidget(
-                      log: log, isDark: isDark, theme: theme,
-                      isWarning: isWarning, isSmall: isSmall
+                      log: log,
+                      isDark: isDark,
+                      theme: theme,
+                      isWarning: isWarning,
+                      isSmall: isSmall
                   );
                 },
               ),
@@ -548,7 +654,10 @@ class _KioskViewState extends State<KioskView> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text("실시간 감지 모니터링", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: 24, fontWeight: FontWeight.w700)),
+              Text(
+                  "실시간 감지 모니터링",
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: 24, fontWeight: FontWeight.w700)
+              ),
               IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close_rounded, size: 32)),
             ],
           ),
@@ -576,11 +685,17 @@ class _KioskViewState extends State<KioskView> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: isDark ? Colors.white12 : AppTheme.primary.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(
+                  color: isDark ? Colors.white12 : AppTheme.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12)
+              ),
               child: Icon(Icons.sensor_door_outlined, color: isDark ? Colors.white : AppTheme.primary, size: isSmall ? 28 : 36),
             ),
             const SizedBox(width: 20),
-            Text("실시간 감지 모니터링", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: isSmall ? 24 : 32, fontWeight: FontWeight.w700)),
+            Text(
+                "실시간 감지 모니터링",
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: isSmall ? 24 : 32, fontWeight: FontWeight.w700)
+            ),
           ],
         ),
         Row(
@@ -595,7 +710,10 @@ class _KioskViewState extends State<KioskView> {
               _buildStandbyToggle(isDark: isDark),
             ],
             const SizedBox(width: 32),
-            Text(_currentTime.split('   ').last, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: isSmall ? 20 : 28, fontWeight: AppTheme.weightMenu)),
+            Text(
+                _currentTime.split('   ').last,
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, color: titleColor, fontSize: isSmall ? 20 : 28, fontWeight: AppTheme.weightMenu)
+            ),
             const SizedBox(width: 24),
             IconButton(onPressed: widget.onDismiss, icon: const Icon(Icons.close_rounded, size: 36))
           ],
@@ -612,7 +730,10 @@ class _KioskViewState extends State<KioskView> {
     if (isExtremeSmall) {
       return Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: isDark ? Colors.white.withValues(alpha: 0.05) : AppTheme.silver.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12)),
+        decoration: BoxDecoration(
+            color: isDark ? Colors.white.withValues(alpha: 0.05) : AppTheme.silver.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12)
+        ),
         child: Column(
           children: [
             Row(
@@ -636,7 +757,11 @@ class _KioskViewState extends State<KioskView> {
     // 일반 가로형 요약 바
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        decoration: BoxDecoration(color: isDark ? Colors.white12 : AppTheme.silver.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: isDark ? Colors.white10 : Colors.black12)),
+        decoration: BoxDecoration(
+            color: isDark ? Colors.white12 : AppTheme.silver.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: isDark ? Colors.white10 : Colors.black12)
+        ),
         child: Row(
           children: [
             Expanded(child: _buildSummaryItem(label: "전일", count: _currentScanMode == GateScanMode.personnelOnly ? _prevDayStay : _prevDayStock, isDark: isDark, isSmall: isSmall)),
@@ -652,8 +777,14 @@ class _KioskViewState extends State<KioskView> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(label, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: isSmall ? 12 : 14, color: isHighlight ? color : AppTheme.labelColor(isDark))),
-        Text(count.toString(), style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: isSmall ? 20 : 28, fontWeight: FontWeight.w700, color: isHighlight ? color : AppTheme.dataColor(isDark))),
+        Text(
+            label,
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: isSmall ? 12 : 14, color: isHighlight ? color : AppTheme.labelColor(isDark))
+        ),
+        Text(
+            count.toString(),
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: isSmall ? 20 : 28, fontWeight: FontWeight.w700, color: isHighlight ? color : AppTheme.dataColor(isDark))
+        ),
       ],
     );
   }
@@ -673,7 +804,10 @@ class _KioskViewState extends State<KioskView> {
       child: isPhone
           ? Column(
         children: [
-          Text(canSave ? "$_autoSaveCountdown초 후 자동 저장" : "인식된 작업자 없음!", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: canSave ? AppTheme.dataColor(isDark) : AppTheme.danger)),
+          Text(
+              canSave ? "$_autoSaveCountdown초 후 자동 저장" : "인식된 작업자 없음!",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: canSave ? AppTheme.dataColor(isDark) : AppTheme.danger)
+          ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -688,7 +822,12 @@ class _KioskViewState extends State<KioskView> {
         children: [
           CircularProgressIndicator(value: _autoSaveCountdown / _autoSaveDurationSeconds),
           const SizedBox(width: 20),
-          Expanded(child: Text(canSave ? "$_autoSaveCountdown초 후 자동 저장됩니다." : "보안 경고: 신원을 확인해 주세요!", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+          Expanded(
+              child: Text(
+                  canSave ? "$_autoSaveCountdown초 후 자동 저장됩니다." : "보안 경고: 신원을 확인해 주세요!",
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
+              )
+          ),
           OutlinedButton(onPressed: _executeCancelAndClear, child: const Text("취소")),
           const SizedBox(width: 12),
           ElevatedButton(onPressed: canSave ? _executeSaveAndClear : null, child: const Text("즉시 확정")),
@@ -703,7 +842,10 @@ class _KioskViewState extends State<KioskView> {
 
   Widget _buildModeSwitcher({required bool isDark, bool forceWhiteText = false}) {
     return Container(
-      decoration: BoxDecoration(color: isDark ? Colors.white10 : Colors.black12, borderRadius: BorderRadius.circular(30)),
+      decoration: BoxDecoration(
+          color: isDark ? Colors.white10 : Colors.black12,
+          borderRadius: BorderRadius.circular(30)
+      ),
       padding: const EdgeInsets.all(4),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -721,8 +863,17 @@ class _KioskViewState extends State<KioskView> {
       onTap: () => setState(() => _currentScanMode = mode),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(color: isSel ? AppTheme.primary : Colors.transparent, borderRadius: BorderRadius.circular(20)),
-        child: Text(label, style: TextStyle(color: isSel ? Colors.white : (forceWhite ? Colors.white70 : Colors.black54), fontWeight: FontWeight.bold)),
+        decoration: BoxDecoration(
+            color: isSel ? AppTheme.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(20)
+        ),
+        child: Text(
+            label,
+            style: TextStyle(
+                color: isSel ? Colors.white : (forceWhite ? Colors.white70 : Colors.black54),
+                fontWeight: FontWeight.bold
+            )
+        ),
       ),
     );
   }
@@ -732,22 +883,43 @@ class _KioskViewState extends State<KioskView> {
       onPressed: _simulateNewDetection,
       icon: const Icon(Icons.sensors, size: 18),
       label: Text(isSmall ? "테스트" : "시뮬레이터"),
-      style: ElevatedButton.styleFrom(backgroundColor: Colors.teal.shade600, padding: EdgeInsets.symmetric(horizontal: isSmall ? 12 : 16, vertical: 12)),
+      style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.teal.shade600,
+          padding: EdgeInsets.symmetric(horizontal: isSmall ? 12 : 16, vertical: 12)
+      ),
     );
   }
 
   Widget _buildRequireWorkerToggle({required bool isDark, bool forceWhiteText = false}) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Text("인원필수", style: TextStyle(color: forceWhiteText ? Colors.white : AppTheme.labelColor(isDark), fontSize: 14)),
-      Switch(value: _requireWorkerMatch, onChanged: (v) => setState(() => _requireWorkerMatch = v)),
-    ]);
+    return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+              "인원필수",
+              style: TextStyle(color: forceWhiteText ? Colors.white : AppTheme.labelColor(isDark), fontSize: 14)
+          ),
+          Switch(
+              value: _requireWorkerMatch,
+              onChanged: (v) => setState(() => _requireWorkerMatch = v)
+          ),
+        ]
+    );
   }
 
   Widget _buildStandbyToggle({required bool isDark, bool forceWhiteText = false}) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      Text("대기화면", style: TextStyle(color: forceWhiteText ? Colors.white : AppTheme.labelColor(isDark), fontSize: 14)),
-      Switch(value: _useStandbyMode, onChanged: (v) => setState(() => _useStandbyMode = v)),
-    ]);
+    return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+              "대기화면",
+              style: TextStyle(color: forceWhiteText ? Colors.white : AppTheme.labelColor(isDark), fontSize: 14)
+          ),
+          Switch(
+              value: _useStandbyMode,
+              onChanged: (v) => setState(() => _useStandbyMode = v)
+          ),
+        ]
+    );
   }
 }
 
@@ -755,13 +927,26 @@ class _KioskViewState extends State<KioskView> {
 /// [로그 카드 위젯 - 반응형 대응]
 /// ---------------------------------------------------------------------------
 class _LogCardWidget extends StatelessWidget {
-  final DetectionModel log; final bool isDark; final ThemeData theme; final bool isWarning; final bool isSmall;
-  const _LogCardWidget({required this.log, required this.isDark, required this.theme, required this.isWarning, required this.isSmall});
+  final DetectionModel log;
+  final bool isDark;
+  final ThemeData theme;
+  final bool isWarning;
+  final bool isSmall;
+
+  const _LogCardWidget({
+    required this.log,
+    required this.isDark,
+    required this.theme,
+    required this.isWarning,
+    required this.isSmall
+  });
 
   @override
   Widget build(BuildContext context) {
     final bool isMatched = log.type == 'matched';
-    final Color statusColor = isWarning ? AppTheme.danger : (log.isEntry ? AppTheme.success : Colors.orange.shade700);
+    final Color statusColor = isWarning
+        ? AppTheme.danger
+        : (log.isEntry ? AppTheme.success : Colors.orange.shade700);
 
     return Container(
       padding: EdgeInsets.all(isSmall ? 16 : 24),
@@ -775,45 +960,89 @@ class _LogCardWidget extends StatelessWidget {
         children: [
           Row(
             children: [
-              CircleAvatar(radius: isSmall ? 24 : 32, backgroundImage: log.imageUrl.isNotEmpty ? NetworkImage(log.imageUrl) : null, child: log.imageUrl.isEmpty ? const Icon(Icons.person) : null),
+              // 작업자 프로필 이미지 (너무 축약되었던 코드를 블록 단위로 풀어서 가독성 개선)
+              CircleAvatar(
+                  radius: isSmall ? 24 : 32,
+                  backgroundImage: log.imageUrl.isNotEmpty ? NetworkImage(log.imageUrl) : null,
+                  child: log.imageUrl.isEmpty ? const Icon(Icons.person) : null
+              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(log.content, style: TextStyle(fontSize: isSmall ? 20 : 26, fontWeight: FontWeight.bold)),
-                    Text(log.spot, style: const TextStyle(color: Colors.grey)),
+                    Text(
+                        log.content,
+                        style: TextStyle(fontSize: isSmall ? 20 : 26, fontWeight: FontWeight.bold)
+                    ),
+                    Text(
+                        log.spot,
+                        style: const TextStyle(color: Colors.grey)
+                    ),
                   ],
                 ),
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20), border: Border.all(color: statusColor)),
-                child: Text(log.status, style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)),
+                decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: statusColor)
+                ),
+                child: Text(
+                    log.status,
+                    style: TextStyle(color: statusColor, fontWeight: FontWeight.bold)
+                ),
               )
             ],
           ),
+
+          // 물품이 매칭된 경우 물품 사진들을 보여주는 영역
           if (isMatched && log.items.isNotEmpty) ...[
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
-            Text("📦 감지 물품: ${log.items.length}건", style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+                "📦 감지 물품: ${log.items.length}건",
+                style: const TextStyle(fontWeight: FontWeight.bold)
+            ),
             const SizedBox(height: 8),
             SizedBox(
               height: isSmall ? 100 : 150,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: log.items.length,
-                itemBuilder: (context, i) => Container(
-                  width: isSmall ? 80 : 120,
-                  margin: const EdgeInsets.only(right: 12),
-                  child: Column(
-                    children: [
-                      Expanded(child: Image.network(log.items[i]['image'] ?? '', fit: BoxFit.cover, errorBuilder: (c,e,s) => const Icon(Icons.inventory))),
-                      Text(log.items[i]['name'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ),
+                itemBuilder: (context, i) {
+                  return Container(
+                    width: isSmall ? 80 : 120,
+                    margin: const EdgeInsets.only(right: 12),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          // ClipRRect 위젯을 사용하여 디자인 철학(미니멀리즘)에 맞게
+                          // 딱딱한 사각형 이미지를 둥근 모서리로 부드럽게 감싸줍니다.
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8.0), // 라운딩 수치 조절
+                            child: Image.network(
+                                log.items[i]['image'] ?? '',
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(Icons.inventory);
+                                }
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                            log.items[i]['name'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12)
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             )
           ]
@@ -825,35 +1054,82 @@ class _LogCardWidget extends StatelessWidget {
 
 /// ---------------------------------------------------------------------------
 /// [공지사항 흐르는 텍스트 - 반응형 대응]
+/// (축약되었던 코드를 읽기 쉽게 블록 스타일로 포맷팅 했습니다.)
 /// ---------------------------------------------------------------------------
 class _MarqueeWidget extends StatefulWidget {
-  final String text; final Color backgroundColor; final Color textColor; final bool forceDarkShadow; final bool isSmall;
-  const _MarqueeWidget({required this.text, required this.backgroundColor, required this.textColor, this.forceDarkShadow = false, required this.isSmall});
-  @override State<_MarqueeWidget> createState() => _MarqueeWidgetState();
+  final String text;
+  final Color backgroundColor;
+  final Color textColor;
+  final bool forceDarkShadow;
+  final bool isSmall;
+
+  const _MarqueeWidget({
+    required this.text,
+    required this.backgroundColor,
+    required this.textColor,
+    this.forceDarkShadow = false,
+    required this.isSmall
+  });
+
+  @override
+  State<_MarqueeWidget> createState() => _MarqueeWidgetState();
 }
 
 class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProviderStateMixin {
-  late AnimationController _c;
-  @override void initState() { super.initState(); _c = AnimationController(vsync: this, duration: const Duration(seconds: 25))..repeat(); }
-  @override void dispose() { _c.dispose(); super.dispose(); }
-  @override Widget build(BuildContext context) {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    // 흐르는 텍스트 애니메이션 컨트롤러 설정
+    _controller = AnimationController(
+        vsync: this,
+        duration: const Duration(seconds: 25)
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-        color: widget.backgroundColor,
-        padding: const EdgeInsets.symmetric(vertical: 10.0),
-        child: ClipRect(
-            child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return AnimatedBuilder(
-                      animation: _c,
-                      builder: (context, child) {
-                        final double offset = constraints.maxWidth - (_c.value * (constraints.maxWidth + 2000));
-                        return Transform.translate(offset: Offset(offset, 0), child: child);
-                      },
-                      child: Text(widget.text, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: widget.textColor, fontSize: widget.isSmall ? 18 : 26, fontWeight: FontWeight.bold, shadows: widget.forceDarkShadow ? const [Shadow(color: Colors.black, blurRadius: 10)] : null), maxLines: 1, softWrap: false)
+      color: widget.backgroundColor,
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      child: ClipRect(
+        child: LayoutBuilder(
+            builder: (context, constraints) {
+              return AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  // 오른쪽 끝에서 나타나서 왼쪽으로 스크롤되는 오프셋 계산
+                  final double offset = constraints.maxWidth - (_controller.value * (constraints.maxWidth + 2000));
+                  return Transform.translate(
+                      offset: Offset(offset, 0),
+                      child: child
                   );
-                }
-            )
-        )
+                },
+                child: Text(
+                    widget.text,
+                    style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        color: widget.textColor,
+                        fontSize: widget.isSmall ? 18 : 26,
+                        fontWeight: FontWeight.bold,
+                        shadows: widget.forceDarkShadow
+                            ? const [Shadow(color: Colors.black, blurRadius: 10)]
+                            : null
+                    ),
+                    maxLines: 1,
+                    softWrap: false
+                ),
+              );
+            }
+        ),
+      ),
     );
   }
 }

@@ -41,15 +41,18 @@ class _SettingsPageState extends State<SettingsPage> {
   // [1] 데이터베이스 및 서버 설정
   final TextEditingController _dbUrlController = TextEditingController();
 
-  // [2] ERP 연동 설정
-  final TextEditingController _erpUrlController = TextEditingController();
+  // [2] ERP 연동 설정 (송수신 분리 적용)
+  // 수신(데이터 가져오기)과 송신(데이터 보내기) API 주소를 분리하여 관리합니다.
+  final TextEditingController _erpReceiveUrlController = TextEditingController();
+  final TextEditingController _erpSendUrlController = TextEditingController();
+
   bool _autoSyncEnabled = false;
   int _syncIntervalMin = 10;
 
   // [3] 디스플레이 및 화면 동작 설정
   bool _isKioskModeDefault = false;
 
-  // [수정됨] 화이트 테마의 동그라미 색상을 직관적인 완전 흰색(Colors.white)으로 변경했습니다.
+  // 테마 목록: 앱 전체 색상을 즉각적으로 변경할 수 있는 옵션들
   final List<Map<String, dynamic>> _themeOptions = [
     {'type': AppThemeType.pureWhite, 'color': Colors.white, 'label': '화이트'},
     {'type': AppThemeType.industrial, 'color': AppTheme.colorIndustrial, 'label': '블루'},
@@ -75,15 +78,17 @@ class _SettingsPageState extends State<SettingsPage> {
     _initSettings();
   }
 
+  /// 메모리 누수를 방지하기 위해 화면이 닫힐 때 컨트롤러 자원을 해제합니다.
   @override
   void dispose() {
     _dbUrlController.dispose();
-    _erpUrlController.dispose();
+    _erpReceiveUrlController.dispose();
+    _erpSendUrlController.dispose();
     _bgImagePathController.dispose();
     super.dispose();
   }
 
-  /// 설정값 및 시스템 모니터 정보를 비동기로 불러옵니다.
+  /// 초기화 함수: 모니터 정보를 먼저 가져오고, 저장된 설정값들을 불러옵니다.
   Future<void> _initSettings() async {
     await _fetchDisplays();
     await _loadSettings();
@@ -117,7 +122,11 @@ class _SettingsPageState extends State<SettingsPage> {
       if (mounted) {
         setState(() {
           _dbUrlController.text = prefs.getString('pref_db_url') ?? 'http://127.0.0.1:8090';
-          _erpUrlController.text = prefs.getString('pref_erp_url') ?? 'https://api.erp-system.com/v1';
+
+          // 송수신 URL을 각각 불러옵니다. 기존에 저장된 값이 없다면 안전한 기본값을 제공합니다.
+          _erpReceiveUrlController.text = prefs.getString('pref_erp_receive_url') ?? 'https://api.erp-system.com/v1/read';
+          _erpSendUrlController.text = prefs.getString('pref_erp_send_url') ?? 'https://api.erp-system.com/v1/write';
+
           _autoSyncEnabled = prefs.getBool('pref_auto_sync') ?? false;
           _syncIntervalMin = prefs.getInt('pref_sync_interval') ?? 10;
           _isKioskModeDefault = prefs.getBool('pref_kiosk_default') ?? false;
@@ -157,7 +166,11 @@ class _SettingsPageState extends State<SettingsPage> {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
 
       await prefs.setString('pref_db_url', _dbUrlController.text.trim());
-      await prefs.setString('pref_erp_url', _erpUrlController.text.trim());
+
+      // 분리된 송수신 URL을 각각 저장합니다.
+      await prefs.setString('pref_erp_receive_url', _erpReceiveUrlController.text.trim());
+      await prefs.setString('pref_erp_send_url', _erpSendUrlController.text.trim());
+
       await prefs.setBool('pref_auto_sync', _autoSyncEnabled);
       await prefs.setInt('pref_sync_interval', _syncIntervalMin);
       await prefs.setBool('pref_kiosk_default', _isKioskModeDefault);
@@ -204,6 +217,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 데이터베이스 서버와의 연결 상태를 점검하는 테스트 함수입니다.
   Future<void> _testDbConnection() async {
     final String targetUrl = _dbUrlController.text.trim();
     if (targetUrl.isEmpty) return;
@@ -242,7 +256,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
 
-    // 동적 테마 연동
+    // 동적 테마 연동: 사용자가 선택한 테마의 주요 색상을 가져옵니다.
     final Color dynamicPrimary = theme.colorScheme.primary;
 
     if (_isLoading) {
@@ -266,11 +280,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 left: widget.isMobile ? 16.0 : 32.0,
                 top: widget.isMobile ? 16.0 : 32.0,
                 right: widget.isMobile ? 16.0 : 32.0,
-                bottom: (widget.isMobile ? 16.0 : 32.0) + 20.0, // 하단 20px 추가
+                bottom: (widget.isMobile ? 16.0 : 32.0) + 20.0, // 하단 여백 추가
               ),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 900),
+                  constraints: const BoxConstraints(maxWidth: 900), // 가독성을 위해 최대 너비를 제한합니다.
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -321,7 +335,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(height: 24),
 
                       // ----------------------------------------------------------------
-                      // 섹션 2: ERP 연동 설정
+                      // 섹션 2: ERP 연동 설정 (수신/송신 URL 분리)
                       // ----------------------------------------------------------------
                       _buildSectionCard(
                         title: "2. 외부 ERP 시스템 통신 설정",
@@ -332,14 +346,22 @@ class _SettingsPageState extends State<SettingsPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              "거래처 또는 사내 ERP 시스템과 데이터를 주고받을 기본 REST API 주소와 백그라운드 동기화 정책을 설정합니다.",
+                              "거래처 또는 사내 ERP 시스템과 데이터를 주고받을 수신/송신 API 주소와 백그라운드 동기화 정책을 설정합니다.",
                               style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
                             ),
                             const SizedBox(height: 20),
+                            // [수정됨] 수신 전용 URL 입력 필드 추가
                             TextField(
-                              controller: _erpUrlController,
+                              controller: _erpReceiveUrlController,
                               style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),
-                              decoration: AppTheme.inputDecoration(label: "ERP API 기본 주소 (Base URL)", context: context, prefixIcon: Icons.api_rounded),
+                              decoration: AppTheme.inputDecoration(label: "수신용 API 주소 (데이터 조회용)", context: context, prefixIcon: Icons.download_rounded),
+                            ),
+                            const SizedBox(height: 16),
+                            // [수정됨] 송신 전용 URL 입력 필드 추가
+                            TextField(
+                              controller: _erpSendUrlController,
+                              style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),
+                              decoration: AppTheme.inputDecoration(label: "송신용 API 주소 (데이터 등록/수정용)", context: context, prefixIcon: Icons.upload_rounded),
                             ),
                             const SizedBox(height: 24),
 
@@ -347,7 +369,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               decoration: AppTheme.listItemDecoration(context, isSelected: _autoSyncEnabled, statusColor: dynamicPrimary),
                               child: SwitchListTile(
                                 title: const Text("백그라운드 자동 동기화 활성화", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
-                                subtitle: const Text("앱을 켜두면 보이지 않는 곳에서 주기적으로 ERP 데이터를 가져옵니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
+                                subtitle: const Text("앱을 켜두면 보이지 않는 곳에서 주기적으로 ERP 데이터를 수신하여 로컬에 업데이트합니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
                                 value: _autoSyncEnabled,
                                 activeThumbColor: dynamicPrimary,
                                 activeTrackColor: dynamicPrimary.withValues(alpha: 0.4),
@@ -453,7 +475,6 @@ class _SettingsPageState extends State<SettingsPage> {
                                                 ]
                                             ),
                                             child: isSelected
-                                            // [수정됨] 흰색 배경일 때는 체크 마크를 검은색으로, 그 외에는 흰색으로 그립니다.
                                                 ? Icon(Icons.check_rounded, color: color == Colors.white ? Colors.black87 : Colors.white, size: 28)
                                                 : null,
                                           ),
@@ -485,7 +506,6 @@ class _SettingsPageState extends State<SettingsPage> {
                               DropdownButtonFormField<String>(
                                 initialValue: _selectedDisplayId,
                                 decoration: AppTheme.inputDecoration(label: "출력 대상 모니터", context: context),
-                                // [수정됨] 드롭다운 아이템 내부에 모니터 아이콘(Row 활용)을 추가하여 가시성을 높였습니다.
                                 items: [
                                   const DropdownMenuItem(
                                       value: null,

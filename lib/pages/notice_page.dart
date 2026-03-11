@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import '../models/notice_model.dart';
 import '../theme/app_theme.dart';
 import '../core/pocketbase_client.dart';
-import '../core/erp_sync_helper.dart'; // [공용 모듈] ERP 연동 헬퍼를 불러옵니다.
+import '../core/erp_sync_helper.dart'; // [공용 모듈] 중앙 집중식 ERP 연동 헬퍼
 
 /// ---------------------------------------------------------------------------
 /// [데이터 전송용 DTO 클래스]
@@ -123,15 +123,17 @@ class _NoticePageState extends State<NoticePage> {
 
   /// ---------------------------------------------------------------------------
   /// [공용 모듈 호출] 거래처 ERP 연동
-  /// 공용으로 만들어둔 ErpSyncHelper 를 호출하여 코드 중복을 완전히 제거했습니다.
+  /// DataModule 철학이 적용된 ErpSyncHelper 를 호출합니다.
   /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
       moduleName: "공지사항",
-      // 테스트용 가상 API (차후에 거래처 실제 URL로 변경하시면 됩니다)
-      apiUrl: 'https://jsonplaceholder.typicode.com/posts?_limit=3',
+      // [수정됨] apiUrl 대신 endpoint를 전달합니다.
+      // (테스트 시 환경설정에서 수신 URL을 https://jsonplaceholder.typicode.com 로 맞추거나,
+      // 실제 ERP API의 목적지(endpoint)를 여기에 적어주시면 됩니다.)
+      endpoint: 'posts?_limit=3',
       targetCollection: 'notices', // 저장할 DB 테이블명
 
       // [핵심] 수신된 ERP의 JSON 데이터를 어떻게 파싱할지 규칙만 전달합니다.

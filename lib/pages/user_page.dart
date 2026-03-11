@@ -24,7 +24,7 @@ import '../widgets/bulk_edit_dialog.dart';
 /// [안전한 문자열 변환 유틸리티]
 /// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
 /// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
-/// C++Builder의 VarToStrDef 역할과 동일합니다.
+/// 데이터베이스에서 넘어오는 null 값을 방어하는 최신 Dart의 널 세이프티(Null Safety) 대응 패턴입니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -272,45 +272,99 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// [ERP 연동] 외부 시스템에서 인원 명부를 가져와 DB에 적용합니다.
+  /// (업데이트됨) 수신된 JSON의 키값을 분석하여 기본 필드는 매핑하고,
+  /// 나머지 비정형 데이터는 모조리 metadata에 쑤셔넣는 스키마리스 구조를 적용했습니다.
   /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
-      moduleName: "인원(인사) 정보",
-      // 실제 거래처 인사 시스템 API 주소로 변경하여 사용하시면 됩니다. (현재는 가상 API)
-      apiUrl: 'https://jsonplaceholder.typicode.com/users?_limit=5',
-      targetCollection: 'users', // PocketBase의 사용자 컬렉션명
+      moduleName: "인원(인사) 마스터 (REST API 동적 매핑)",
+      endpoint: 'users?_limit=5', // 실제 연동하실 인사 ERP의 엔드포인트로 변경하세요.
+      targetCollection: 'users',
 
-      // JSON 데이터를 UserModel 스키마 구조로 파싱합니다.
+      // [핵심 로직] 엑셀 파싱과 동일하게 수신 데이터를 동적으로 분리합니다.
       dataMapper: (Map<String, dynamic> erpItem) {
-        final String name = erpItem['name'] ?? '이름 없음';
-        final String code = 'EMP-${erpItem['id']}';
-        // PocketBase의 users 컬렉션은 username과 email이 필수이므로 가공하여 넣습니다.
-        final String safeUsername = 'erp_user_${DateTime.now().millisecondsSinceEpoch}_${erpItem['id']}';
+        String parsedName = "이름없음";
+        String parsedCode = "";
+        String parsedDept = "미지정";
+        String parsedTagId = "";
 
+        // 나머지 비정형 데이터를 담을 마법의 주머니
+        Map<String, dynamic> dynamicMetadata = {};
+
+        // JSON으로 날아온 모든 키-값 쌍을 순회합니다.
+        erpItem.forEach((key, value) {
+          if (value == null) return; // Null 값 안전 처리
+
+          final String lowerKey = key.toLowerCase();
+          final String strValue = value.toString().trim();
+
+          // 1. 시스템을 구동하기 위한 '기본 뼈대' 필드 매핑 규칙 (인사 정보용)
+          if (lowerKey.contains('name') || lowerKey.contains('이름') || lowerKey.contains('성명')) {
+            parsedName = strValue;
+          }
+          else if (lowerKey == 'id' || lowerKey.contains('code') || lowerKey.contains('사번') || lowerKey.contains('사원번호')) {
+            parsedCode = strValue;
+          }
+          else if (lowerKey.contains('dept') || lowerKey.contains('department') || lowerKey.contains('company') || lowerKey.contains('부서') || lowerKey.contains('소속')) {
+            parsedDept = strValue;
+          }
+          else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
+            parsedTagId = strValue;
+          }
+          // 2. 기본 필드에 해당하지 않는 '나머지 모든 데이터(직급, 전화번호 등)'는 metadata 주머니로 쏙!
+          else {
+            if (strValue.isNotEmpty && strValue != "null") {
+              dynamicMetadata[key] = strValue;
+            }
+          }
+        });
+
+        // 빈 필수값 보정 처리
+        if (parsedCode.isEmpty) {
+          parsedCode = "EMP_${DateTime.now().millisecondsSinceEpoch % 100000}";
+        }
+        if (parsedTagId.isEmpty) {
+          parsedTagId = "TAG_$parsedCode";
+        }
+
+        // PocketBase users 컬렉션에 필수로 필요한 계정(Auth) 정보 생성
+        String safeUsername = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+        if (safeUsername.isEmpty || safeUsername.length < 3) {
+          safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
+        }
+
+        // 3. 완벽하게 파싱 및 분리된 데이터를 UserModel 규격에 맞게 반환
         return {
           'username': safeUsername,
           'email': '$safeUsername@plug4rfid.local',
           'password': 'password123',
           'passwordConfirm': 'password123',
-          'name': name,
-          'code': code,
-          'tag_id': 'RFID-$code',
-          'department': erpItem['company']?['name'] ?? '본사',
+          'name': '[ERP] $parsedName', // ERP 데이터임을 표기
+          'code': parsedCode,
+          'tag_id': parsedTagId,
+          'department': parsedDept,
           'is_approved': true,
-          'role': 'Operator',
-          'metadata': {},
+          'metadata': dynamicMetadata, // <--- 무한한 확장성을 가진 비정형 데이터 저장소
         };
       },
       onLoadingStart: () {
-        if (mounted) setState(() { _isFullScreenLoading = true; });
+        if (mounted) {
+          setState(() {
+            _isFullScreenLoading = true;
+          });
+        }
       },
       onLoadingComplete: () {
-        if (mounted) setState(() { _isFullScreenLoading = false; });
+        if (mounted) {
+          setState(() {
+            _isFullScreenLoading = false;
+          });
+        }
       },
       onSuccess: () {
-        // UserProvider가 최신 데이터를 다시 불러옵니다.
+        // UserProvider가 최신 데이터를 다시 DB로부터 불러오게 합니다.
         context.read<UserProvider>().fetchData();
       },
     );
@@ -1431,7 +1485,8 @@ class _UserPageState extends State<UserPage> {
             break;
           }
           final String rawHeader = headers[colIdx];
-          final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s\_\-\(\)]+'), '').toLowerCase();
+          // [린터 반영 완료] 정규표현식에서 불필요한 escape 문자를 제거했습니다.
+          final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
           final String val = _extractString(row[colIdx]);
           if (val.isNotEmpty) {
             hasRowData = true;
@@ -1660,7 +1715,6 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// [인원 정보 등록 및 편집 다이얼로그]
-  /// C++Builder의 Edit Form에 해당하는 영역입니다.
   /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
