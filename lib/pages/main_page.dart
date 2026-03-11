@@ -20,7 +20,7 @@ import 'kiosk_view.dart';
 import 'detection_history_page.dart';
 // 새롭게 제작한 공지사항 페이지를 임포트합니다.
 import 'notice_page.dart';
-// [신규 추가] 새롭게 제작한 환경설정 페이지를 임포트합니다.
+// 새롭게 제작한 환경설정 페이지를 임포트합니다.
 import 'settings_page.dart';
 
 /// ---------------------------------------------------------------------------
@@ -28,7 +28,14 @@ import 'settings_page.dart';
 /// 좌측 사이드바와 우측 본문 영역을 동적으로 관리하며 메뉴 네비게이션을 담당합니다.
 /// ---------------------------------------------------------------------------
 class MainPage extends StatefulWidget {
-  const MainPage({super.key});
+  // [신규 추가] main.dart로부터 전달받는 키오스크 모드 시작 설정값 변수입니다.
+  final bool initialKioskMode;
+
+  // [수정] 생성자에서 initialKioskMode를 받을 수 있도록 파라미터를 추가했습니다.
+  const MainPage({
+    super.key,
+    this.initialKioskMode = false, // 값이 전달되지 않았을 경우를 대비한 안전한 기본값
+  });
 
   @override
   State<MainPage> createState() {
@@ -37,7 +44,9 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> with WindowListener {
-  bool _isKioskMode = false;
+  // [수정] 초기값을 고정(false)하지 않고, initState에서 전달받은 값으로 설정하기 위해 late 키워드 사용
+  late bool _isKioskMode;
+
   bool _isSidebarExtended = true;
   int _selectedIndex = 0;
   final String _pbBaseUrl = "http://127.0.0.1:8090";
@@ -59,6 +68,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
   @override
   void initState() {
     super.initState();
+
+    // [핵심 추가] 부모 위젯(main.dart)에서 전달받은 환경설정 값으로 키오스크 모드 여부를 세팅합니다.
+    // 이제 설정창에서 '키오스크 모드로 시작'을 켜두셨다면, 앱 시작 시 즉시 키오스크 화면이 표출됩니다.
+    _isKioskMode = widget.initialKioskMode;
+
     windowManager.addListener(this);
     _initSystemTray();
   }
@@ -123,6 +137,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
     final ThemeProvider themeProvider = context.watch<ThemeProvider>();
     final ThemeData theme = themeProvider.themeData;
 
+    // 만약 _isKioskMode가 true라면 일반 대시보드를 그리지 않고 곧바로 KioskView를 전체화면으로 렌더링합니다.
     if (_isKioskMode) {
       return Scaffold(
           body: KioskView(
@@ -432,7 +447,6 @@ class _MainPageState extends State<MainPage> with WindowListener {
       case 5:
         return NoticePage(isMobile: isMobile, baseUrl: _pbBaseUrl);
       case 6:
-      // [수정됨] 기존의 임시 텍스트(Placeholder)를 지우고 새로 만든 환경설정 페이지를 연결했습니다!
         return SettingsPage(isMobile: isMobile);
       default:
         return const Center(
