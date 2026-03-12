@@ -48,6 +48,7 @@ dependencies:
   shared_preferences: ^2.5.4
   system_tray: ^2.0.3
   screen_retriever: ^0.2.0
+  flutter_libserialport: ^0.6.0
 
 dev_dependencies:
   flutter_test:

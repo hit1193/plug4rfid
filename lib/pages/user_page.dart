@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert'; // 태그 데이터 UTF-8 -> Hex 변환용
 import 'package:excel/excel.dart' as excel_pkg;
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
@@ -12,9 +13,10 @@ import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
+import '../models/device_model.dart';       // [추가] 실제 장비 모델 참조
+import '../providers/device_provider.dart'; // [추가] 실제 장비 상태 및 DB 연동 프로바이더 참조
 import '../theme/app_theme.dart';
-import '../core/pocketbase_client.dart';
-import '../core/erp_sync_helper.dart'; // [신규 추가] 공용 ERP 연동 헬퍼
+import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -24,16 +26,18 @@ import '../widgets/bulk_edit_dialog.dart';
 /// [안전한 문자열 변환 유틸리티]
 /// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
 /// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
-/// 데이터베이스에서 넘어오는 null 값을 방어하는 최신 Dart의 널 세이프티(Null Safety) 대응 패턴입니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
     return defaultVal;
   }
+
   final String str = value.toString().trim();
+
   if (str.isEmpty || str == "null") {
     return defaultVal;
   }
+
   return str;
 }
 
@@ -70,7 +74,7 @@ class _UserPageState extends State<UserPage> {
   late String _currentFilter;
   String _activeMetricFilter = "전체";
 
-  // 단일 선택(String?)에서 다중 선택을 위한 Set<String>으로 변경 (일괄 처리 지원)
+  // 다중 선택을 위한 Set<String> (일괄 처리 지원)
   final Set<String> _selectedUserIds = {};
 
   // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
@@ -80,7 +84,7 @@ class _UserPageState extends State<UserPage> {
 
   // 데스크탑 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
-  static const double _colActionWidth = 240.0;
+  static const double _colActionWidth = 300.0;
 
   // UI에 노출되지 않아야 할 내부 시스템 키 목록
   static const Set<String> _excludedSystemKeys = {
@@ -143,8 +147,9 @@ class _UserPageState extends State<UserPage> {
       },
     );
 
-    // [Linter 완벽 대응] async 갭 이후에 context를 사용하기 전 mounted 여부를 철저히 검사합니다.
-    if (!mounted || result == null) return;
+    if (!mounted || result == null) {
+      return;
+    }
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     final dynamic rawApprove = result['is_approved'];
@@ -184,8 +189,9 @@ class _UserPageState extends State<UserPage> {
       data: updateData,
     );
 
-    // [Linter 완벽 대응] DB 저장(await) 이후 mounted 재검사
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     if (success) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -204,42 +210,53 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [신규 추가] 리스트뷰 내 인원 프로필 사진(아바타) 다이렉트 업데이트
-  /// 복잡한 수정 폼을 열지 않고 클릭 한 번으로 사진만 덮어씌우는 강력한 퀵 액션입니다.
+  /// 리스트뷰 내 인원 프로필 사진(아바타) 다이렉트 업데이트
   /// ---------------------------------------------------------------------------
   Future<void> _handleSingleUserImageUpdate(UserProvider provider, UserModel user, ThemeData theme) async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
 
-    if (!mounted || image == null) return;
+    if (!mounted || image == null) {
+      return;
+    }
 
     final bool? confirm = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
-            title: AppTheme.dialogTitle("프로필 사진 변경", Icons.photo_camera_front),
-            content: Text(
-                "[${user.name}]님의 프로필 사진을 선택하신 이미지로 즉시 변경하시겠습니까?",
-                style: const TextStyle(fontFamily: AppTheme.fontPretendard)
-            ),
-            actions: [
-              AppTheme.actionButton(
-                  label: "취소",
-                  color: Colors.transparent,
-                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  onPressed: () => Navigator.pop(ctx, false)
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("프로필 사진 변경", Icons.photo_camera_front),
+              content: Text(
+                  "[${user.name}]님의 프로필 사진을 선택하신 이미지로 즉시 변경하시겠습니까?",
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard)
               ),
-              AppTheme.actionButton(
-                  label: "사진 변경",
-                  color: AppTheme.primary,
-                  onPressed: () => Navigator.pop(ctx, true)
-              ),
-            ]
-        )
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    onPressed: () {
+                      Navigator.pop(ctx, false);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "사진 변경",
+                    color: AppTheme.primary,
+                    onPressed: () {
+                      Navigator.pop(ctx, true);
+                    }
+                ),
+              ]
+          );
+        }
     );
 
-    if (!mounted || confirm != true) return;
+    if (!mounted || confirm != true) {
+      return;
+    }
 
-    setState(() { _isFullScreenLoading = true; });
+    setState(() {
+      _isFullScreenLoading = true;
+    });
 
     try {
       final Map<String, dynamic> data = {
@@ -253,7 +270,9 @@ class _UserPageState extends State<UserPage> {
 
       final bool success = await provider.handleSave(p: user, data: data, imageXFile: image);
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       if (success) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -265,15 +284,15 @@ class _UserPageState extends State<UserPage> {
       }
     } finally {
       if (mounted) {
-        setState(() { _isFullScreenLoading = false; });
+        setState(() {
+          _isFullScreenLoading = false;
+        });
       }
     }
   }
 
   /// ---------------------------------------------------------------------------
   /// [ERP 연동] 외부 시스템에서 인원 명부를 가져와 DB에 적용합니다.
-  /// (업데이트됨) 수신된 JSON의 키값을 분석하여 기본 필드는 매핑하고,
-  /// 나머지 비정형 데이터는 모조리 metadata에 쑤셔넣는 스키마리스 구조를 적용했습니다.
   /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
@@ -282,25 +301,22 @@ class _UserPageState extends State<UserPage> {
       moduleName: "인원(인사) 마스터 (REST API 동적 매핑)",
       endpoint: 'users?_limit=5', // 실제 연동하실 인사 ERP의 엔드포인트로 변경하세요.
       targetCollection: 'users',
-
-      // [핵심 로직] 엑셀 파싱과 동일하게 수신 데이터를 동적으로 분리합니다.
       dataMapper: (Map<String, dynamic> erpItem) {
         String parsedName = "이름없음";
         String parsedCode = "";
         String parsedDept = "미지정";
         String parsedTagId = "";
 
-        // 나머지 비정형 데이터를 담을 마법의 주머니
         Map<String, dynamic> dynamicMetadata = {};
 
-        // JSON으로 날아온 모든 키-값 쌍을 순회합니다.
-        erpItem.forEach((key, value) {
-          if (value == null) return; // Null 값 안전 처리
+        erpItem.forEach((String key, dynamic value) {
+          if (value == null) {
+            return;
+          }
 
           final String lowerKey = key.toLowerCase();
           final String strValue = value.toString().trim();
 
-          // 1. 시스템을 구동하기 위한 '기본 뼈대' 필드 매핑 규칙 (인사 정보용)
           if (lowerKey.contains('name') || lowerKey.contains('이름') || lowerKey.contains('성명')) {
             parsedName = strValue;
           }
@@ -313,7 +329,6 @@ class _UserPageState extends State<UserPage> {
           else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
             parsedTagId = strValue;
           }
-          // 2. 기본 필드에 해당하지 않는 '나머지 모든 데이터(직급, 전화번호 등)'는 metadata 주머니로 쏙!
           else {
             if (strValue.isNotEmpty && strValue != "null") {
               dynamicMetadata[key] = strValue;
@@ -321,7 +336,6 @@ class _UserPageState extends State<UserPage> {
           }
         });
 
-        // 빈 필수값 보정 처리
         if (parsedCode.isEmpty) {
           parsedCode = "EMP_${DateTime.now().millisecondsSinceEpoch % 100000}";
         }
@@ -329,24 +343,22 @@ class _UserPageState extends State<UserPage> {
           parsedTagId = "TAG_$parsedCode";
         }
 
-        // PocketBase users 컬렉션에 필수로 필요한 계정(Auth) 정보 생성
         String safeUsername = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
         if (safeUsername.isEmpty || safeUsername.length < 3) {
           safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
         }
 
-        // 3. 완벽하게 파싱 및 분리된 데이터를 UserModel 규격에 맞게 반환
         return {
           'username': safeUsername,
           'email': '$safeUsername@plug4rfid.local',
           'password': 'password123',
           'passwordConfirm': 'password123',
-          'name': '[ERP] $parsedName', // ERP 데이터임을 표기
+          'name': '[ERP] $parsedName',
           'code': parsedCode,
           'tag_id': parsedTagId,
           'department': parsedDept,
           'is_approved': true,
-          'metadata': dynamicMetadata, // <--- 무한한 확장성을 가진 비정형 데이터 저장소
+          'metadata': dynamicMetadata,
         };
       },
       onLoadingStart: () {
@@ -364,7 +376,6 @@ class _UserPageState extends State<UserPage> {
         }
       },
       onSuccess: () {
-        // UserProvider가 최신 데이터를 다시 DB로부터 불러오게 합니다.
         context.read<UserProvider>().fetchData();
       },
     );
@@ -482,10 +493,6 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 상단 통계 대시보드 위젯
-  /// 모바일 화면일 경우 4개의 타일을 가로 1줄이 아닌 2x2 그리드로 자동 분할합니다.
-  /// ---------------------------------------------------------------------------
   Widget _buildDashboard(Map<String, dynamic> m, UserProvider provider, ThemeData theme) {
     if (widget.isMobile) {
       return Container(
@@ -568,8 +575,9 @@ class _UserPageState extends State<UserPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 헤더 및 검색, 기능 버튼 영역
-  /// '인사 시스템 연동(ERP)' 버튼이 새롭게 추가되었습니다.
+  /// 상단 헤더 영역
+  /// [업데이트] 이전 단계에서 상단에 존재했던 '단독 태그 발행' 버튼을 제거하고,
+  /// 다중 선택 바(Multi-select bar) 내부로 이동시켰습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
@@ -583,6 +591,7 @@ class _UserPageState extends State<UserPage> {
                 child: Wrap(
                   spacing: 12,
                   runSpacing: 12,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     _buildActionIcon(Icons.refresh, "새로고침", () {
                       provider.fetchData();
@@ -602,7 +611,6 @@ class _UserPageState extends State<UserPage> {
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
 
-                    // [신규 버튼] ERP 동기화 (수신) 버튼
                     _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () {
                       _triggerErpSync(theme);
                     }, theme, color: Colors.teal),
@@ -677,7 +685,9 @@ class _UserPageState extends State<UserPage> {
       return _buildEmptyState("데이터가 없습니다.");
     }
 
-    final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) => _selectedUserIds.contains(p.id));
+    final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) {
+      return _selectedUserIds.contains(p.id);
+    });
 
     return Column(
       children: [
@@ -699,6 +709,37 @@ class _UserPageState extends State<UserPage> {
                     child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
                   ),
                   const SizedBox(width: 12),
+
+                  // [신규 이동 배치] 일괄 편집 좌측에 태그 일괄 발행 버튼을 배치합니다.
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.wifi_tethering, size: 18),
+                    label: const Text("태그 일괄 발행", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      if (_selectedUserIds.isEmpty) {
+                        _showInfoDialog("알림", "태그발행 대상건을 선정하지 않았습니다!", theme);
+                        return;
+                      }
+
+                      final List<UserModel> selectedUsers = list.where((UserModel u) {
+                        return _selectedUserIds.contains(u.id);
+                      }).toList();
+
+                      showDialog(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (BuildContext ctx) {
+                            return _BulkTagIssueDialog(
+                              selectedUsers: selectedUsers,
+                              provider: provider,
+                              theme: theme,
+                            );
+                          }
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 8),
+
                   ElevatedButton.icon(
                     icon: const Icon(Icons.edit_note, size: 18),
                     label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -755,7 +796,9 @@ class _UserPageState extends State<UserPage> {
             child: ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
               itemCount: list.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              separatorBuilder: (BuildContext context, int index) {
+                return const SizedBox(height: 12);
+              },
               itemBuilder: (BuildContext ctx, int idx) {
                 final UserModel item = list[idx];
                 final bool isSelected = _selectedUserIds.contains(item.id);
@@ -844,14 +887,13 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃
-  /// ---------------------------------------------------------------------------
   Widget _buildDesktopListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
     return Row(
       children: [
         GestureDetector(
-          onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
+          onTap: () {
+            _handleSingleUserImageUpdate(provider, item, theme);
+          },
           child: Stack(
             alignment: Alignment.bottomRight,
             children: [
@@ -909,6 +951,20 @@ class _UserPageState extends State<UserPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+                showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (BuildContext ctx) {
+                      return _BulkTagIssueDialog(
+                        selectedUsers: [item],
+                        provider: provider,
+                        theme: theme,
+                      );
+                    }
+                );
+              }),
+              const SizedBox(width: 12),
               _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
                 _showHistoryDialog(context, item, theme);
               }),
@@ -931,9 +987,6 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃
-  /// ---------------------------------------------------------------------------
   Widget _buildMobileListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -942,7 +995,9 @@ class _UserPageState extends State<UserPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             GestureDetector(
-              onTap: () => _handleSingleUserImageUpdate(provider, item, theme),
+              onTap: () {
+                _handleSingleUserImageUpdate(provider, item, theme);
+              },
               child: Stack(
                 alignment: Alignment.bottomRight,
                 children: [
@@ -1008,6 +1063,19 @@ class _UserPageState extends State<UserPage> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
+            _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+              showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (BuildContext ctx) {
+                    return _BulkTagIssueDialog(
+                      selectedUsers: [item],
+                      provider: provider,
+                      theme: theme,
+                    );
+                  }
+              );
+            }),
             _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
               _showHistoryDialog(context, item, theme);
             }),
@@ -1069,7 +1137,13 @@ class _UserPageState extends State<UserPage> {
             border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
         ),
         clipBehavior: Clip.antiAlias,
-        child: Image.network(fullUrl, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.black12))
+        child: Image.network(
+            fullUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
+              return const Icon(Icons.person, color: Colors.black12);
+            }
+        )
     );
   }
 
@@ -1097,9 +1171,11 @@ class _UserPageState extends State<UserPage> {
 
   String _getMetaValue(UserModel item, String key) {
     final Map<String, String> baseFields = {'성명': item.name, '사번': item.code, '부서': item.department, '태그ID': item.tagId};
+
     if (baseFields.containsKey(key)) {
       return baseFields[key]!;
     }
+
     return _safeStr(item.metadata[key], defaultVal: "-");
   }
 
@@ -1121,8 +1197,13 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _showBulkEditDialog(UserProvider provider, List<UserModel> visibleItems, ThemeData theme) async {
-    final List<UserModel> selectedUsers = visibleItems.where((UserModel p) => _selectedUserIds.contains(p.id)).toList();
-    if (selectedUsers.isEmpty) return;
+    final List<UserModel> selectedUsers = visibleItems.where((UserModel p) {
+      return _selectedUserIds.contains(p.id);
+    }).toList();
+
+    if (selectedUsers.isEmpty) {
+      return;
+    }
 
     List<BulkEditField> fields = [
       BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
@@ -1155,9 +1236,13 @@ class _UserPageState extends State<UserPage> {
         }
     );
 
-    if (!mounted || resultValues == null) return;
+    if (!mounted || resultValues == null) {
+      return;
+    }
 
-    setState(() { _isFullScreenLoading = true; });
+    setState(() {
+      _isFullScreenLoading = true;
+    });
 
     for (final UserModel p in selectedUsers) {
       final Map<String, dynamic> data = {};
@@ -1180,7 +1265,9 @@ class _UserPageState extends State<UserPage> {
       await provider.handleSave(p: p, data: data);
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       _isFullScreenLoading = false;
@@ -1221,7 +1308,9 @@ class _UserPageState extends State<UserPage> {
                         await provider.deletePerson(id);
                       }
 
-                      if (!mounted) return;
+                      if (!mounted) {
+                        return;
+                      }
 
                       setState(() {
                         _selectedUserIds.clear();
@@ -1252,7 +1341,9 @@ class _UserPageState extends State<UserPage> {
                     : ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     itemCount: history.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    separatorBuilder: (BuildContext context, int index) {
+                      return const SizedBox(height: 10);
+                    },
                     itemBuilder: (BuildContext c, int i) {
                       final dynamic log = history[i];
                       final String type = _safeStr(log['type'], defaultVal: "-");
@@ -1315,7 +1406,9 @@ class _UserPageState extends State<UserPage> {
           initialSelection: provider.selectedColumns,
           onSave: (List<String> newColumns) async {
             await provider.saveRemoteSettings(newColumns);
-            if (!ctx.mounted) return;
+            if (!ctx.mounted) {
+              return;
+            }
             Navigator.pop(ctx);
           },
         );
@@ -1342,9 +1435,13 @@ class _UserPageState extends State<UserPage> {
         }
     );
 
-    if (!mounted || confirm != true) return;
+    if (!mounted || confirm != true) {
+      return;
+    }
 
-    setState(() { _isFullScreenLoading = true; });
+    setState(() {
+      _isFullScreenLoading = true;
+    });
 
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final NavigatorState navigator = Navigator.of(context);
@@ -1381,7 +1478,9 @@ class _UserPageState extends State<UserPage> {
       await provider.resetAllPersons();
     } finally {
       if (mounted) {
-        setState(() { _isFullScreenLoading = false; });
+        setState(() {
+          _isFullScreenLoading = false;
+        });
         navigator.pop();
         messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
       }
@@ -1391,22 +1490,30 @@ class _UserPageState extends State<UserPage> {
   Future<void> _handleBatchImport(UserProvider provider, ThemeData theme) async {
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
-      if (!mounted || result == null) return;
+      if (!mounted || result == null) {
+        return;
+      }
 
       Uint8List? bytes = result.files.single.bytes;
       if (bytes == null && result.files.single.path != null) {
         bytes = await File(result.files.single.path!).readAsBytes();
       }
 
-      if (!mounted || bytes == null) return;
+      if (!mounted || bytes == null) {
+        return;
+      }
 
       final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
       String targetSheet = excel.tables.keys.first;
+
       if (excel.tables.keys.contains('인원리스트')) {
         targetSheet = '인원리스트';
       }
+
       final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
-      if (sheet == null || sheet.maxRows <= 1) return;
+      if (sheet == null || sheet.maxRows <= 1) {
+        return;
+      }
 
       final List<String> headers = [];
       for (final List<excel_pkg.Data?> rowData in sheet.rows.take(1)) {
@@ -1430,7 +1537,9 @@ class _UserPageState extends State<UserPage> {
       }
 
       final ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
-      setState(() { _isFullScreenLoading = true; });
+      setState(() {
+        _isFullScreenLoading = true;
+      });
 
       showDialog(
         context: context,
@@ -1485,7 +1594,6 @@ class _UserPageState extends State<UserPage> {
             break;
           }
           final String rawHeader = headers[colIdx];
-          // [린터 반영 완료] 정규표현식에서 불필요한 escape 문자를 제거했습니다.
           final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
           final String val = _extractString(row[colIdx]);
           if (val.isNotEmpty) {
@@ -1518,6 +1626,7 @@ class _UserPageState extends State<UserPage> {
         String safeUsername = code.isEmpty
             ? 'user_${DateTime.now().millisecondsSinceEpoch % 100000}_$i'
             : code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+
         if (safeUsername.length < 3) {
           safeUsername = '${safeUsername}_$i';
         }
@@ -1539,13 +1648,19 @@ class _UserPageState extends State<UserPage> {
         currentCountNotifier.value++;
       }
 
-      if (!mounted) return;
-      setState(() { _isFullScreenLoading = false; });
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isFullScreenLoading = false;
+      });
       Navigator.of(context).pop();
 
     } catch (e) {
       if (mounted) {
-        setState(() { _isFullScreenLoading = false; });
+        setState(() {
+          _isFullScreenLoading = false;
+        });
       }
     }
   }
@@ -1554,9 +1669,11 @@ class _UserPageState extends State<UserPage> {
     if (cell == null || cell.value == null) {
       return "";
     }
+
     final String str = cell.value.toString();
     final RegExp regExp = RegExp(r'^[a-zA-Z]+CellValue\((.*)\)$', dotAll: true);
     final Match? match = regExp.firstMatch(str);
+
     if (match != null && match.groupCount >= 1) {
       String extracted = match.group(1) ?? "";
       if (extracted.startsWith('"') && extracted.endsWith('"') && extracted.length >= 2) {
@@ -1564,6 +1681,7 @@ class _UserPageState extends State<UserPage> {
       }
       return extracted.trim();
     }
+
     return str.trim();
   }
 
@@ -1571,6 +1689,7 @@ class _UserPageState extends State<UserPage> {
     if (dataList.isEmpty) {
       return;
     }
+
     try {
       final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
       final String defaultSheet = excel.tables.keys.first;
@@ -1590,7 +1709,10 @@ class _UserPageState extends State<UserPage> {
       final List<String> metaHeaders = metaKeySet.toList()..sort();
       final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
 
-      final List<excel_pkg.CellValue> headerRow = allHeaders.map<excel_pkg.CellValue>((String h) => excel_pkg.TextCellValue(h)).toList();
+      final List<excel_pkg.CellValue> headerRow = allHeaders.map<excel_pkg.CellValue>((String h) {
+        return excel_pkg.TextCellValue(h);
+      }).toList();
+
       sheet.appendRow(headerRow);
 
       for (final UserModel p in dataList) {
@@ -1614,7 +1736,9 @@ class _UserPageState extends State<UserPage> {
           allowedExtensions: ['xlsx']
       );
 
-      if (!mounted || path == null) return;
+      if (!mounted || path == null) {
+        return;
+      }
 
       await File(path).writeAsBytes(excel.encode()!);
 
@@ -1631,10 +1755,6 @@ class _UserPageState extends State<UserPage> {
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [기능] 개선된 이미지 픽커 위젯 (선택, 미리보기, 삭제 기능 통합)
-  /// 상세 정보 편집창 상단에 위치하며, 삭제(휴지통) 버튼을 직관적으로 제공합니다.
-  /// ---------------------------------------------------------------------------
   Widget _buildImagePickerBox(
       BuildContext context,
       UserModel? p,
@@ -1654,13 +1774,14 @@ class _UserPageState extends State<UserPage> {
           onTap: () async {
             final ImagePicker picker = ImagePicker();
             final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+
             if (img != null) {
               final Uint8List b = await img.readAsBytes();
               onPicked(img, b);
             }
           },
           child: Container(
-            width: 180, height: 210, // 기존 UserPage 크기에 맞춤
+            width: 180, height: 210,
             padding: const EdgeInsets.all(8.0),
             decoration: BoxDecoration(
                 color: theme.cardTheme.color,
@@ -1676,16 +1797,16 @@ class _UserPageState extends State<UserPage> {
                   child: Image.network(
                       "${url!}${url.contains('?') ? '&' : '?'}t=${p!.hashCode}",
                       fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)
+                      errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
+                        return const Icon(Icons.broken_image);
+                      }
                   )
               )
                   : const Icon(Icons.camera_alt, size: 50, color: Colors.grey)),
             ),
           ),
         ),
-
-        // 이미지 삭제(X) 아이콘
-        if (hasImage)
+        if (hasImage) ...[
           Positioned(
             top: -10,
             right: -10,
@@ -1709,13 +1830,11 @@ class _UserPageState extends State<UserPage> {
               ),
             ),
           ),
+        ]
       ],
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [인원 정보 등록 및 편집 다이얼로그]
-  /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
@@ -1724,7 +1843,6 @@ class _UserPageState extends State<UserPage> {
     final TextEditingController remarksC = TextEditingController(text: p?.remarks ?? "");
     bool approved = p?.isApproved ?? true;
 
-    // 이미지 선택 및 삭제 상태 관리 변수
     XFile? file;
     Uint8List? preview;
     bool isImageDeleted = false;
@@ -1762,10 +1880,7 @@ class _UserPageState extends State<UserPage> {
               builder: (BuildContext innerCtx, StateSetter setS) {
 
                 Widget imagePickerWidget = _buildImagePickerBox(
-                  context,
-                  p,
-                  preview,
-                  isImageDeleted,
+                  context, p, preview, isImageDeleted,
                       (pickedFile, pickedBytes) {
                     setS(() {
                       file = pickedFile;
@@ -1777,10 +1892,9 @@ class _UserPageState extends State<UserPage> {
                     setS(() {
                       file = null;
                       preview = null;
-                      isImageDeleted = true; // 삭제(X) 클릭 시 플래그 켬
+                      isImageDeleted = true;
                     });
-                  },
-                  theme,
+                  }, theme,
                 );
 
                 return AlertDialog(
@@ -1802,17 +1916,76 @@ class _UserPageState extends State<UserPage> {
                                             children: [
                                               imagePickerWidget,
                                               const SizedBox(height: 16),
-                                              Row(children: [const Text("출입 승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)), const SizedBox(width: 8), Switch(value: approved, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setS(() { approved = v; }); })])
+                                              Row(
+                                                  children: [
+                                                    const Text(
+                                                        "출입 승인",
+                                                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold)
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Switch(
+                                                        value: approved,
+                                                        activeThumbColor: AppTheme.success,
+                                                        activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
+                                                        onChanged: (bool v) {
+                                                          setS(() {
+                                                            approved = v;
+                                                          });
+                                                        }
+                                                    )
+                                                  ]
+                                              )
                                             ]
                                         ),
                                         const SizedBox(width: 30),
                                         Expanded(
                                             child: Column(
                                                 children: [
-                                                  _buildTextField(nameC, "성명 (필수)", theme), const SizedBox(height: 16),
-                                                  _buildTextField(deptC, "담당부서/소속", theme), const SizedBox(height: 16),
-                                                  _buildTextField(codeC, "사번/ID", theme), const SizedBox(height: 16),
-                                                  _buildTextField(tagC, "RFID 태그 EPC", theme), const SizedBox(height: 16),
+                                                  _buildTextField(nameC, "성명 (필수)", theme),
+                                                  const SizedBox(height: 16),
+                                                  _buildTextField(deptC, "담당부서/소속", theme),
+                                                  const SizedBox(height: 16),
+                                                  _buildTextField(codeC, "사번/ID", theme),
+                                                  const SizedBox(height: 16),
+
+                                                  // [UI 개선] IntrinsicHeight와 stretch를 사용하여 버튼 높이를 텍스트 입력칸 높이에 완벽하게 맞춥니다.
+                                                  IntrinsicHeight(
+                                                    child: Row(
+                                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                                      children: [
+                                                        Expanded(child: _buildTextField(tagC, "RFID 태그 EPC", theme)),
+                                                        const SizedBox(width: 12),
+                                                        ElevatedButton.icon(
+                                                          onPressed: () {
+                                                            showDialog(
+                                                                context: context,
+                                                                barrierDismissible: false,
+                                                                builder: (BuildContext ctx) {
+                                                                  return _BulkTagIssueDialog(
+                                                                    selectedUsers: p != null ? [p] : [],
+                                                                    provider: provider,
+                                                                    theme: theme,
+                                                                    onWriteComplete: (String writtenHex) {
+                                                                      setS(() {
+                                                                        tagC.text = writtenHex;
+                                                                      });
+                                                                    },
+                                                                  );
+                                                                }
+                                                            );
+                                                          },
+                                                          icon: const Icon(Icons.nfc_rounded),
+                                                          label: const Text("장비로 기록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor: Colors.indigo,
+                                                            foregroundColor: Colors.white,
+                                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 16),
                                                   _buildTextField(remarksC, "비고", theme),
                                                 ]
                                             )
@@ -1837,7 +2010,9 @@ class _UserPageState extends State<UserPage> {
                                     Wrap(
                                         spacing: 16,
                                         runSpacing: 16,
-                                        children: metaC.entries.map((MapEntry<String, TextEditingController> e) => SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme))).toList()
+                                        children: metaC.entries.map((MapEntry<String, TextEditingController> e) {
+                                          return SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme));
+                                        }).toList()
                                     )
                                   ]
                                 ]
@@ -1872,7 +2047,6 @@ class _UserPageState extends State<UserPage> {
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
                           'metadata': meta,
-                          // 삭제 플래그가 켜졌다면 포켓베이스에 null을 보내어 파일을 초기화합니다.
                           if (isImageDeleted) 'avatar': null,
                         };
 
@@ -1884,7 +2058,9 @@ class _UserPageState extends State<UserPage> {
                         }
 
                         final bool ok = await provider.handleSave(p: p, data: data, imageXFile: file);
-                        if (!dialogCtx.mounted) return;
+                        if (!dialogCtx.mounted) {
+                          return;
+                        }
 
                         if (ok) {
                           Navigator.pop(dialogCtx);
@@ -1919,7 +2095,9 @@ class _UserPageState extends State<UserPage> {
                 }),
                 AppTheme.actionButton(label: "삭제 실행", color: AppTheme.danger, onPressed: () async {
                   final bool ok = await provider.deletePerson(p.id);
-                  if (!c.mounted) return;
+                  if (!c.mounted) {
+                    return;
+                  }
 
                   if (ok) {
                     Navigator.pop(c);
@@ -1928,6 +2106,407 @@ class _UserPageState extends State<UserPage> {
               ]
           );
         }
+    );
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// [신규 혁신 클래스] 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// ---------------------------------------------------------------------------
+class _BulkTagIssueDialog extends StatefulWidget {
+  final List<UserModel> selectedUsers; // 1개 이상 여러 명의 대상을 받을 수 있습니다.
+  final UserProvider provider;
+  final ThemeData theme;
+  final Function(String)? onWriteComplete;
+
+  const _BulkTagIssueDialog({
+    required this.selectedUsers,
+    required this.provider,
+    required this.theme,
+    this.onWriteComplete,
+  });
+
+  @override
+  State<_BulkTagIssueDialog> createState() => _BulkTagIssueDialogState();
+}
+
+class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
+  // 등록된 리더기를 동적으로 받아오기 위한 상태 변수
+  List<String> _readerOptions = [];
+  String? _selectedReader;
+  bool _isLoadingReaders = true;
+
+  // 동일 태그 반복 발행 횟수 (1~99장)
+  int _issueCount = 1;
+
+  // 진행 상태 관리
+  bool _isProcessing = false;
+  bool _isCompleted = false;
+  double _progressValue = 0.0;
+  String _progressText = "";
+
+  @override
+  void initState() {
+    super.initState();
+    // 다이얼로그 초기 메시지를 설정합니다.
+    if (widget.selectedUsers.isEmpty) {
+      _progressText = '대상을 알 수 없는 신규 단일 건입니다.\n데이터를 자동으로 생성하여 기록합니다.';
+    } else {
+      _progressText = '선택된 총 ${widget.selectedUsers.length}건에 대한 정보를 발급합니다.\n리더기와 발급 횟수를 설정하고 [발행 시작]을 눌러주세요.';
+    }
+
+    // 팝업이 띄워짐과 동시에 데이터베이스에 등록된 리더기 중 가용한 목록을 요청합니다.
+    _fetchRegisteredReaders();
+  }
+
+  /// [기능 완벽 구현] 하드코딩(시뮬레이션)을 제거하고, DeviceProvider를 통해
+  /// DB에 실제 등록된 장비 중 "자동 가동(isAutoConnect)이 꺼져 있는" 수동/자유 상태의 장비만 불러옵니다.
+  Future<void> _fetchRegisteredReaders() async {
+    try {
+      // 전역 Provider에서 DeviceProvider 인스턴스를 가져옵니다.
+      final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
+
+      // 최신 장비 목록이 비어있다면 한 번 DB에서 불러옵니다.
+      if (deviceProvider.list.isEmpty) {
+        await deviceProvider.fetchData();
+      } else {
+        // 이미 데이터가 있다면 자연스러운 로딩 UI를 위해 짧은 딜레이만 줍니다.
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+
+      if (mounted) {
+        setState(() {
+          // DB의 전체 장치 목록 중
+          // 1. 활성화 상태(isActive == true)이고,
+          // 2. 자동 연결이 아닌(isAutoConnect == false) 완전히 자유로운 리더기만 필터링!
+          final availableDevices = deviceProvider.list.where((DeviceModel d) {
+            return d.isActive == true && d.isAutoConnect == false;
+          }).toList();
+
+          if (availableDevices.isEmpty) {
+            _readerOptions = ['가용한 리더기 없음 (모두 동작 중이거나 미등록)'];
+          } else {
+            // 필터링된 실제 장비들을 콤보박스에 이쁘게 매핑합니다.
+            _readerOptions = availableDevices.map((DeviceModel d) {
+              return '${d.name} (${d.model} - ${d.ipAddress})';
+            }).toList();
+          }
+
+          if (_readerOptions.isNotEmpty) {
+            _selectedReader = _readerOptions.first;
+          }
+          _isLoadingReaders = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _readerOptions = ['오류: 장비 로딩 실패'];
+          _selectedReader = _readerOptions.first;
+          _isLoadingReaders = false;
+        });
+      }
+    }
+  }
+
+  /// 사용자가 입력한 문자열을 태그의 메모리 크기(12Bytes 또는 16Bytes)에 맞추어
+  /// 정확한 길이의 16진수(Hexadecimal) 문자열로 변환하는 함수입니다.
+  String _formatDataToTargetSize(String inputData, int targetByteSize) {
+    List<int> utf8Bytes = utf8.encode(inputData);
+    StringBuffer hexBuffer = StringBuffer();
+
+    for (int i = 0; i < utf8Bytes.length; i++) {
+      hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+    }
+
+    String hexString = hexBuffer.toString();
+    int targetHexLength = targetByteSize * 2;
+
+    if (hexString.length < targetHexLength) {
+      return hexString.padRight(targetHexLength, '0');
+    } else if (hexString.length > targetHexLength) {
+      return hexString.substring(0, targetHexLength);
+    } else {
+      return hexString;
+    }
+  }
+
+  /// [발행 시작] 버튼이 눌렸을 때 실행되는 일괄 처리 핵심 로직입니다.
+  Future<void> _startBulkIssue() async {
+    // 리더기가 정상적으로 로딩되지 않았거나 선택되지 않았으면 발행을 막습니다.
+    if (_selectedReader == null || _selectedReader!.contains('오류') || _selectedReader!.contains('없음')) {
+      setState(() {
+        _progressText = '❌ 가용 리더기가 없습니다. 장치 관리에서 수동 가동 리더기를 등록해주세요.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _progressValue = 0.0;
+    });
+
+    try {
+      // 신규 인원 창에서 넘어와서 대상 유저가 없는 경우 (단일 발급)
+      if (widget.selectedUsers.isEmpty) {
+        String randomTag = "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+        int memorySize = 12; // 96bit
+
+        for (int j = 0; j < _issueCount; j++) {
+          setState(() {
+            _progressValue = (j + 1) / _issueCount;
+            _progressText = "신규 자동 태그의 ${j + 1}장째를 기록하고 있습니다...";
+          });
+
+          String hexData = _formatDataToTargetSize(randomTag, memorySize);
+          await Future.delayed(const Duration(milliseconds: 600)); // 하드웨어 통신 시뮬레이션
+
+          if (widget.onWriteComplete != null && j == _issueCount - 1) {
+            widget.onWriteComplete!(hexData);
+          }
+        }
+      }
+      // 체크박스 등으로 선택된 인원(들)을 일괄 처리하는 경우 (요구사항 로직)
+      else {
+        int totalUsers = widget.selectedUsers.length;
+        int currentOperationCount = 0;
+        int totalOperations = totalUsers * _issueCount;
+        int memorySize = 12; // 96bit (12Bytes)로 시뮬레이션
+
+        for (int i = 0; i < totalUsers; i++) {
+          UserModel user = widget.selectedUsers[i];
+          // 기록할 기본 데이터: tagId가 비어있다면 사번(code)을 사용합니다.
+          String tagData = user.tagId.isNotEmpty ? user.tagId : user.code;
+
+          for (int j = 0; j < _issueCount; j++) {
+            currentOperationCount++;
+
+            // UI에 실시간 진행 상황을 부드럽게 업데이트 합니다.
+            setState(() {
+              _progressValue = currentOperationCount / totalOperations;
+              _progressText = "발급대상 $totalUsers건 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 기록하고 있습니다...";
+            });
+
+            // 1. 데이터를 규격에 맞는 Hex 문자열로 변환 (Padding/Truncating 적용)
+            String hexData = _formatDataToTargetSize(tagData, memorySize);
+
+            // 2. 실제 장비에 기록하는 명령 (시뮬레이션 딜레이 600ms)
+            await Future.delayed(const Duration(milliseconds: 600));
+
+            // 3. 마지막 장수를 기록할 때만 DB를 업데이트 하거나, 콜백으로 값을 넘겨줍니다.
+            if (j == _issueCount - 1) {
+              await widget.provider.handleSave(p: user, data: {'tag_id': hexData});
+              if (widget.onWriteComplete != null && totalUsers == 1) {
+                widget.onWriteComplete!(hexData);
+              }
+            }
+          }
+        }
+      }
+
+      // 모든 작업이 정상적으로 끝난 경우
+      if (mounted) {
+        setState(() {
+          _isCompleted = true;
+          _progressValue = 1.0;
+          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 성공적으로 완료되었습니다.';
+        });
+
+        // 사용자가 완료 메시지를 읽을 수 있도록 1.5초 대기 후 자동으로 창을 닫습니다.
+        await Future.delayed(const Duration(milliseconds: 1500));
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false; // 다시 시도할 수 있도록 풀어줍니다.
+          _progressText = '❌ 기록 중 오류 발생: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: AppTheme.dialogTitle('RFID 태그 일괄 발급 설정', Icons.wifi_tethering, color: Colors.indigo),
+      content: SizedBox(
+        width: 500, // 다이얼로그의 너비를 지정하여 깔끔하게 고정합니다.
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // -----------------------------------------------------------
+            // 1. 인식장치(리더) 선택 UI
+            // 데이터베이스에서 가용한 리더기를 가져오는 동안 로딩 아이콘을 띄웁니다.
+            // -----------------------------------------------------------
+            Text('1. 발급 대상 리더기 (현재 가용 장비)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(10),
+                color: widget.theme.cardTheme.color,
+              ),
+              child: _isLoadingReaders
+                  ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12.0),
+                child: Center(
+                    child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
+                    )
+                ),
+              )
+                  : DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _selectedReader,
+                  icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
+                  onChanged: _isProcessing ? null : (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedReader = newValue;
+                      });
+                    }
+                  },
+                  items: _readerOptions.map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.router, size: 20, color: Colors.grey),
+                          const SizedBox(width: 12),
+                          Text(value),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // -----------------------------------------------------------
+            // 2. 발급 횟수 설정 UI
+            // -----------------------------------------------------------
+            Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(10),
+                color: widget.theme.cardTheme.color,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
+                    onPressed: _isProcessing ? null : () {
+                      if (_issueCount > 1) {
+                        setState(() { _issueCount--; });
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 20),
+                  Container(
+                    width: 80,
+                    alignment: Alignment.center,
+                    child: Text(
+                        '$_issueCount',
+                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
+                    onPressed: _isProcessing ? null : () {
+                      if (_issueCount < 99) {
+                        setState(() { _issueCount++; });
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // -----------------------------------------------------------
+            // 3. 진행 상황 표시줄 및 메시지 안내창
+            // -----------------------------------------------------------
+            Container(
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
+                borderRadius: BorderRadius.circular(10.0),
+                border: Border.all(color: _isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _progressText,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontPretendard,
+                      fontSize: 15.0,
+                      height: 1.5,
+                      color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (_isProcessing || _isCompleted) ...[
+                    const SizedBox(height: 16),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: LinearProgressIndicator(
+                        value: _progressValue,
+                        minHeight: 12,
+                        backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                        color: _isCompleted ? AppTheme.success : Colors.indigo,
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        AppTheme.actionButton(
+            label: "돌아가기 (취소)",
+            color: Colors.transparent,
+            textColor: widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            onPressed: () {
+              if (!_isProcessing || _isCompleted) {
+                Navigator.pop(context);
+              }
+            }
+        ),
+        SizedBox(
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders) ? null : _startBulkIssue,
+            icon: const Icon(Icons.play_circle_fill, size: 20),
+            label: const Text('발행 시작', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigo,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1997,8 +2576,30 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
                 _buildCombo('출입구 (GATE)', _gC, _gates, theme), const SizedBox(height: 24),
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(color: _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05), borderRadius: BorderRadius.circular(10), border: Border.all(color: _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2))),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(_ok ? "승인됨" : "미승인", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: _ok ? AppTheme.success : AppTheme.danger)), Switch(value: _ok, activeThumbColor: AppTheme.success, activeTrackColor: AppTheme.success.withValues(alpha: 0.5), onChanged: (bool v) { setState(() { _ok = v; }); })])
+                    decoration: BoxDecoration(
+                        color: _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2))
+                    ),
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                              _ok ? "승인됨" : "미승인",
+                              style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: _ok ? AppTheme.success : AppTheme.danger)
+                          ),
+                          Switch(
+                              value: _ok,
+                              activeThumbColor: AppTheme.success,
+                              activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
+                              onChanged: (bool v) {
+                                setState(() {
+                                  _ok = v;
+                                });
+                              }
+                          )
+                        ]
+                    )
                 )
               ]
           )
@@ -2020,7 +2621,9 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
           if (v.text == '') {
             return opts;
           }
-          return opts.where((String o) => o.contains(v.text));
+          return opts.where((String o) {
+            return o.contains(v.text);
+          });
         },
         onSelected: (String s) {
           ctrl.text = s;

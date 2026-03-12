@@ -157,7 +157,9 @@ class DeviceProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// -------------------------------------------------------------------------
   /// 장치 접속 및 통신 시작
+  /// -------------------------------------------------------------------------
   Future<void> connectDevice(DeviceModel device) async {
     if (device.ipAddress.isEmpty || _activeProtocols.containsKey(device.id)) {
       return;
@@ -171,25 +173,33 @@ class DeviceProvider extends ChangeNotifier {
     bool success = await protocol.connect();
 
     if (success) {
-      _logSystem(device.id, "접속 성공. 자동 Inventory 시작 대기 중...");
+      _logSystem(device.id, "접속 성공. 장치 운용 목적 판별 중...");
 
       protocol.tagStream.listen((tagData) {
         _onDataReceived(device.id, tagData);
       });
 
-      try {
-        await protocol.startInventory();
-        _logSystem(device.id, "자동 Inventory 명령 전송 완료. 태그 수신 시작!");
-      } catch (e) {
-        _logSystem(device.id, "Inventory 자동 시작 실패: $e");
+      // [핵심 논리 개선] 장비의 용도가 '태그 발급용'인 경우,
+      // 상시 Inventory(연속 읽기)를 가동하면 Write 패킷과 충돌이 발생할 수 있으므로 대기합니다.
+      String usageRole = device.settings['usage_role']?.toString() ?? '';
+
+      if (usageRole == '수동스캔(단일등록)') {
+        _logSystem(device.id, "발급 전용 데스크 장치 인식됨. 상시 스캔을 중지하고 Write 명령(Idle) 대기 모드로 진입합니다.");
+      } else {
+        try {
+          await protocol.startInventory();
+          _logSystem(device.id, "상시 감시(Inventory) 자동 시작 완료. 태그 수신 시작!");
+        } catch (e) {
+          _logSystem(device.id, "Inventory 자동 시작 실패: $e");
+        }
       }
 
-      await handleSave(d: device, data: {'status': 'Online'});
+      await handleSave(d: device, data: {'status': 'Online'}, skipAutoConnect: true);
     } else {
       _logSystem(device.id, "접속 실패 (Timeout 또는 IP/Port 오류).");
       protocol.dispose();
       _activeProtocols.remove(device.id);
-      await handleSave(d: device, data: {'status': 'Offline'});
+      await handleSave(d: device, data: {'status': 'Offline'}, skipAutoConnect: true);
     }
   }
 
@@ -222,6 +232,25 @@ class DeviceProvider extends ChangeNotifier {
       await protocol.setAntennaPower(antennaIndex, powerLevel);
 
       _logSystem(deviceId, "파워 변경 완료 및 재가동");
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// [신규 추가] 특정 장치에 RFID 태그 메모리 쓰기(Write) 명령 하달
+  /// UI(태그 일괄 발행 창)에서 넘어온 변환된 Hex 데이터를 실제 장비로 전송합니다.
+  /// -------------------------------------------------------------------------
+  Future<bool> writeTagData(String deviceId, String targetHex) async {
+    if (_activeProtocols.containsKey(deviceId)) {
+      final protocol = _activeProtocols[deviceId]!;
+
+      _logSystem(deviceId, "태그 기록 명령 전송 준비 (데이터: $targetHex)");
+
+      // EPC 영역(Bank 1)에 기록하며, PC/CRC 영역(Offset 0, 1)을 건너뛰기 위해 Offset 2부터 씁니다.
+      await protocol.writeTagMemory(1, 2, targetHex);
+      return true;
+    } else {
+      _logSystem(deviceId, "⚠️ 오류: 기록하려는 장치와 통신이 연결되어 있지 않습니다.");
+      return false;
     }
   }
 
