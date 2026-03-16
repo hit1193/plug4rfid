@@ -17,8 +17,7 @@ import '../providers/theme_provider.dart';
 /// ---------------------------------------------------------------------------
 /// [환경설정 페이지]
 /// 데이터베이스(PocketBase) 서버 IP, ERP 연동 주소, 자동 동기화 주기 등
-/// 앱 구동에 필요한 핵심 로컬 설정값들을 관리하는 화면입니다.
-/// 키오스크 환경(장갑을 낀 상태 등)을 고려하여 큼직하고 직관적인 UI로 구성되었습니다.
+/// 상단 타이틀 영역을 제거하고 글로벌 바(Global Bar)에 맞춰 컴팩트하게 구성했습니다.
 /// ---------------------------------------------------------------------------
 class SettingsPage extends StatefulWidget {
   final bool isMobile;
@@ -284,8 +283,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
-
-    // 동적 테마 연동: 사용자가 선택한 테마의 주요 색상을 가져옵니다.
     final Color dynamicPrimary = theme.colorScheme.primary;
 
     if (_isLoading) {
@@ -300,14 +297,13 @@ class _SettingsPageState extends State<SettingsPage> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildTopHeader(theme, isDark, dynamicPrimary),
-          Divider(height: 1, color: theme.dividerTheme.color),
+          // 🔥 [업데이트] 불필요한 타이틀 제거하고 액션 버튼을 우측으로 정렬했습니다.
+          _buildTopHeader(theme, dynamicPrimary),
 
           Expanded(
             child: SingleChildScrollView(
               padding: EdgeInsets.only(
                 left: widget.isMobile ? 16.0 : 32.0,
-                top: widget.isMobile ? 16.0 : 32.0,
                 right: widget.isMobile ? 16.0 : 32.0,
                 bottom: (widget.isMobile ? 16.0 : 32.0) + 20.0, // 하단 여백 추가
               ),
@@ -755,34 +751,13 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// [UI 조각] 상단 타이틀 영역
-  Widget _buildTopHeader(ThemeData theme, bool isDark, Color dynamicPrimary) {
+  /// [UI 조각] 상단 타이틀 영역 (중복 타이틀 제거 및 액션 버튼 우측 정렬)
+  Widget _buildTopHeader(ThemeData theme, Color dynamicPrimary) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: dynamicPrimary.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(Icons.settings_applications_rounded, color: dynamicPrimary, size: 28),
-          ),
-          const SizedBox(width: 16),
-          Text(
-            "시스템 환경설정",
-            style: TextStyle(
-              fontFamily: AppTheme.fontPretendard,
-              fontSize: widget.isMobile ? 20 : 24,
-              fontWeight: AppTheme.weightMenu,
-              color: AppTheme.dataColor(isDark),
-              letterSpacing: -0.5,
-            ),
-          ),
-          const Spacer(),
-
           ElevatedButton.icon(
             icon: const Icon(Icons.save_rounded, size: 20),
             label: const Text("저장 및 적용", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),

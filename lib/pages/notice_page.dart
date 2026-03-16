@@ -29,8 +29,7 @@ class NoticeEditResult {
 
 /// ---------------------------------------------------------------------------
 /// [공지사항 통합 관리 페이지]
-/// 기존 관리 기능에 '키오스크(포스터) 모드', '이미지 업로드',
-/// 그리고 공유 모듈을 활용한 'REST API ERP 연동' 기능이 완벽하게 결합되었습니다.
+/// 중복되는 타이틀 렌더링 부분을 제거하고 액션 버튼들만 콤팩트하게 배치했습니다.
 /// ---------------------------------------------------------------------------
 class NoticePage extends StatefulWidget {
   final bool isMobile;
@@ -130,9 +129,6 @@ class _NoticePageState extends State<NoticePage> {
       context: context,
       theme: theme,
       moduleName: "공지사항",
-      // [수정됨] apiUrl 대신 endpoint를 전달합니다.
-      // (테스트 시 환경설정에서 수신 URL을 https://jsonplaceholder.typicode.com 로 맞추거나,
-      // 실제 ERP API의 목적지(endpoint)를 여기에 적어주시면 됩니다.)
       endpoint: 'posts?_limit=3',
       targetCollection: 'notices', // 저장할 DB 테이블명
 
@@ -462,6 +458,7 @@ class _NoticePageState extends State<NoticePage> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 🔥 [업데이트] 중복된 타이틀을 삭제하고 액션 컨트롤 버튼들만 깔끔하게 남겼습니다.
               _buildTopControlPanel(theme, isDarkMode),
               Expanded(
                 child: _buildListView(theme, isDarkMode),
@@ -661,48 +658,25 @@ class _NoticePageState extends State<NoticePage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [UI 개선] 상단 조작 패널 (불필요한 타이틀 제거, 버튼 우측 정렬)
+  /// ---------------------------------------------------------------------------
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end, // 버튼들을 우측으로 싹 밀어버립니다.
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.campaign_rounded, color: AppTheme.primary, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Text(
-                "공지사항 관리",
-                style: TextStyle(
-                  fontFamily: AppTheme.fontPretendard,
-                  fontSize: widget.isMobile ? 20 : 24,
-                  fontWeight: AppTheme.weightMenu,
-                  color: AppTheme.dataColor(isDark),
-                  letterSpacing: -0.5,
-                ),
-              ),
-              const Spacer(),
-
-              ElevatedButton.icon(
-                icon: const Icon(Icons.desktop_windows_outlined),
-                label: const Text("키오스크(현장 디스플레이) 보기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueGrey.shade800,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                onPressed: () => setState(() => _isKioskMode = true),
-              ),
-            ],
+          ElevatedButton.icon(
+            icon: const Icon(Icons.desktop_windows_outlined),
+            label: const Text("키오스크(현장 디스플레이) 보기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueGrey.shade800,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () => setState(() => _isKioskMode = true),
           ),
           const SizedBox(height: 20),
 
@@ -1064,7 +1038,6 @@ class _NoticePageState extends State<NoticePage> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // [수정] DB의 'attachments' 모델 변수에 맞게 UI 매핑 변경 (notice.attachment 사용)
                       if (notice.attachment.isNotEmpty)
                         Container(
                           width: widget.isMobile ? 50 : 70,
@@ -1370,7 +1343,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
         author: _authorController.text.trim(),
         isImportant: _isImportant,
         viewCount: widget.notice?.viewCount ?? 0,
-        // [수정] DB의 'attachments' 필드를 사용하는 변수로 매핑합니다.
         attachment: widget.notice?.attachment ?? '',
         created: widget.notice?.created ?? DateTime.now(),
         updated: widget.notice?.updated ?? DateTime.now(),
@@ -1415,7 +1387,6 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                       ),
                     ),
                   ),
-                  // [변경] 하단에 있던 커다란 저장 버튼을 상단 타이틀 옆으로 이동시키고 크기를 줄였습니다.
                   ElevatedButton.icon(
                     icon: const Icon(Icons.save_rounded, size: 18),
                     label: const Text("저장", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -1459,15 +1430,12 @@ class _NoticeEditDialogState extends State<_NoticeEditDialog> {
                         child: Column(
                           children: [
                             if (_selectedImageBytes != null) ...[
-                              // 새로 선택한 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.memory(_selectedImageBytes!, height: 150, fit: BoxFit.cover),
                               ),
                               const SizedBox(height: 16),
-                              // [수정] 모델의 attachment 변수명을 통해 이미지 존재 여부를 체크합니다.
                             ] else if (widget.notice != null && widget.notice!.attachment.isNotEmpty) ...[
-                              // 기존에 등록되어 있던 이미지 미리보기
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
                                 child: Image.network(widget.notice!.getImageUrl(widget.baseUrl), height: 150, fit: BoxFit.cover),

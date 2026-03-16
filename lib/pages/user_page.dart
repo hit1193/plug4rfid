@@ -22,10 +22,11 @@ import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
 import '../widgets/column_selection_dialog.dart';
 import '../widgets/bulk_edit_dialog.dart';
 
+// 포켓베이스 다이렉트 접근을 위해 전역 클라이언트 임포트
+import '../core/pocketbase_client.dart';
+
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
-/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
-/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -43,13 +44,11 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
 
 /// ---------------------------------------------------------------------------
 /// [RFID 인원 관리 페이지 (UserPage)]
-/// 메인 화면의 우측 영역에 표출되는 인원 관리 통합 관제 화면입니다.
-/// 미니멀리즘과 키오스크 디자인 철학을 적용하여 직관적으로 구성했습니다.
 /// ---------------------------------------------------------------------------
 class UserPage extends StatefulWidget {
   final String searchQuery;
   final String filter;
-  final bool isMobile; // 화면 너비에 따라 전달받는 모바일 여부 플래그입니다.
+  final bool isMobile;
   final String baseUrl;
 
   const UserPage({
@@ -65,29 +64,19 @@ class UserPage extends StatefulWidget {
 }
 
 class _UserPageState extends State<UserPage> {
-  // ---------------------------------------------------------------------------
-  // [상태 변수 선언부]
-  // ---------------------------------------------------------------------------
   final TextEditingController _searchController = TextEditingController();
 
   String _currentSearchQuery = "";
   late String _currentFilter;
   String _activeMetricFilter = "전체";
 
-  // 다중 선택을 위한 Set<String> (일괄 처리 지원)
   final Set<String> _selectedUserIds = {};
-
-  // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
   bool _isSelectionMode = false;
-
   bool _isFullScreenLoading = false;
 
-  // 데스크탑 레이아웃 고정 치수 (미니멀 디자인 규격)
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 300.0;
 
-  // UI에 노출되지 않아야 할 내부 시스템 키 목록
-  // 'grade'(등급) 필드를 기본 항목으로 승격시켰으므로 동적 메타데이터 화면에서 숨깁니다.
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
@@ -95,8 +84,8 @@ class _UserPageState extends State<UserPage> {
     'image', 'avatar', 'name', 'code', 'department', 'tag_id', 'is_active', 'remarks',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
     'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal', 'error_reason',
-    'email', 'username', 'password', 'passwordConfirm', 'app_login_id', 'app_login_email',
-    'grade' // 등급 필드 추가
+    'email', 'username', 'password', 'passwordConfirm', 'app_login_id',
+    'role'
   };
 
   @override
@@ -113,7 +102,30 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
-  // --- FA 대시보드용 통계 계산 로직 ---
+  /// 🔥 [추가] DB의 영문 role 값을 UI용 한글 문자열로 변환합니다.
+  String _getDisplayRole(String dbRole) {
+    if (dbRole == 'Admin') {
+      return '최고관리자 (Admin)';
+    } else if (dbRole == 'Manager') {
+      return '현장관리자 (Manager)';
+    } else if (dbRole == 'Operator') {
+      return '일반작업자 (Operator)';
+    }
+    return dbRole.isNotEmpty ? dbRole : '일반작업자 (Operator)';
+  }
+
+  /// 🔥 [추가] UI용 한글 문자열을 DB에 저장할 영문 role 값으로 변환합니다.
+  String _getDbRole(String displayRole) {
+    if (displayRole.contains('최고관리자') || displayRole.toLowerCase().contains('admin')) {
+      return 'Admin';
+    } else if (displayRole.contains('현장관리자') || displayRole.toLowerCase().contains('manager')) {
+      return 'Manager';
+    } else if (displayRole.contains('일반작업자') || displayRole.toLowerCase().contains('operator')) {
+      return 'Operator';
+    }
+    return displayRole; // 매칭되지 않으면 원본 리턴
+  }
+
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
@@ -138,9 +150,6 @@ class _UserPageState extends State<UserPage> {
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [수기 출입 처리]
-  /// ---------------------------------------------------------------------------
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -186,7 +195,7 @@ class _UserPageState extends State<UserPage> {
       'metadata': updatedMeta,
     };
 
-    final bool success = await provider.handleSave(
+    final String saveResult = await provider.handleSave(
       p: p,
       data: updateData,
     );
@@ -195,7 +204,7 @@ class _UserPageState extends State<UserPage> {
       return;
     }
 
-    if (success) {
+    if (saveResult.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('[${p.name}]님 $type 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
         backgroundColor: isApproved ? AppTheme.success : AppTheme.danger,
@@ -205,15 +214,12 @@ class _UserPageState extends State<UserPage> {
     } else {
       _showInfoDialog(
           "처리 실패",
-          "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n💡 관리자 화면에서 users 컬렉션의 API Rules 중 Update 권한이 TRUE로 입력되어 있는지 다시 확인해 주세요.",
+          "데이터베이스 업데이트 중 오류가 발생했습니다.\n\n[상세 내용]\n$saveResult",
           Theme.of(context)
       );
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// 리스트뷰 내 인원 프로필 사진(아바타) 다이렉트 업데이트
-  /// ---------------------------------------------------------------------------
   Future<void> _handleSingleUserImageUpdate(UserProvider provider, UserModel user, ThemeData theme) async {
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
@@ -266,23 +272,24 @@ class _UserPageState extends State<UserPage> {
         'code': user.code,
         'tag_id': user.tagId,
         'department': user.department,
+        'role': user.role,
         'is_approved': user.isApproved,
         'metadata': user.metadata,
       };
 
-      final bool success = await provider.handleSave(p: user, data: data, imageXFile: image);
+      final String saveResult = await provider.handleSave(p: user, data: data, imageXFile: image);
 
       if (!mounted) {
         return;
       }
 
-      if (success) {
+      if (saveResult.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('✅ 사진이 성공적으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
           elevation: 0,
         ));
       } else {
-        _showInfoDialog("변경 실패", "사진 업데이트 중 오류가 발생했습니다.", theme);
+        _showInfoDialog("변경 실패", "사진 업데이트 중 오류가 발생했습니다.\n\n[상세 내용]\n$saveResult", theme);
       }
     } finally {
       if (mounted) {
@@ -293,21 +300,18 @@ class _UserPageState extends State<UserPage> {
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [ERP 연동] 외부 시스템에서 인원 명부를 가져와 DB에 적용합니다.
-  /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
       moduleName: "인원(인사) 마스터 (REST API 동적 매핑)",
-      endpoint: 'users?_limit=5', // 실제 연동하실 인사 ERP의 엔드포인트로 변경하세요.
+      endpoint: 'users?_limit=5',
       targetCollection: 'users',
       dataMapper: (Map<String, dynamic> erpItem) {
         String parsedName = "이름없음";
         String parsedCode = "";
         String parsedDept = "미지정";
-        String parsedGrade = "일반작업자"; // 🔥 등급 기본값을 3단계 중 가장 낮은 것으로 설정
+        String parsedRole = "Operator"; // 🔥 DB 규격인 영문으로 초기화
         String parsedTagId = "";
 
         Map<String, dynamic> dynamicMetadata = {};
@@ -322,21 +326,16 @@ class _UserPageState extends State<UserPage> {
 
           if (lowerKey.contains('name') || lowerKey.contains('이름') || lowerKey.contains('성명')) {
             parsedName = strValue;
-          }
-          else if (lowerKey == 'id' || lowerKey.contains('code') || lowerKey.contains('사번') || lowerKey.contains('사원번호')) {
+          } else if (lowerKey == 'id' || lowerKey.contains('code') || lowerKey.contains('사번') || lowerKey.contains('사원번호')) {
             parsedCode = strValue;
-          }
-          else if (lowerKey.contains('dept') || lowerKey.contains('department') || lowerKey.contains('company') || lowerKey.contains('부서') || lowerKey.contains('소속')) {
+          } else if (lowerKey.contains('dept') || lowerKey.contains('department') || lowerKey.contains('company') || lowerKey.contains('부서') || lowerKey.contains('소속')) {
             parsedDept = strValue;
-          }
-          // 등급 정보 파싱
-          else if (lowerKey.contains('grade') || lowerKey.contains('등급') || lowerKey.contains('직급') || lowerKey.contains('level')) {
-            parsedGrade = strValue;
-          }
-          else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
+          } else if (lowerKey.contains('role') || lowerKey.contains('등급') || lowerKey.contains('직급') || lowerKey.contains('level')) {
+            // 🔥 ERP 연동 시에도 DB 허용 값으로 자동 변환
+            parsedRole = _getDbRole(strValue);
+          } else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
             parsedTagId = strValue;
-          }
-          else {
+          } else {
             if (strValue.isNotEmpty && strValue != "null") {
               dynamicMetadata[key] = strValue;
             }
@@ -350,23 +349,21 @@ class _UserPageState extends State<UserPage> {
           parsedTagId = "TAG_$parsedCode";
         }
 
-        // 메타데이터에 파싱된 등급을 넣습니다.
-        dynamicMetadata['grade'] = parsedGrade;
-
-        // ERP 연동 시에도 이메일 기반으로 처리되도록 변경
-        String safeEmailPrefix = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
-        if (safeEmailPrefix.isEmpty || safeEmailPrefix.length < 3) {
-          safeEmailPrefix = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
+        String safeUsername = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+        if (safeUsername.isEmpty || safeUsername.length < 3) {
+          safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
         }
 
         return {
-          'email': '$safeEmailPrefix@plug4rfid.local', // 사용자 정의 이메일이 없을 시 부여
+          'username': safeUsername,
+          'email': '$safeUsername@plug4rfid.local',
           'password': 'password123',
           'passwordConfirm': 'password123',
           'name': '[ERP] $parsedName',
           'code': parsedCode,
           'tag_id': parsedTagId,
           'department': parsedDept,
+          'role': parsedRole,
           'is_approved': true,
           'metadata': dynamicMetadata,
         };
@@ -397,9 +394,6 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
-    // -------------------------------------------------------------------------
-    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
-    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
       final bool matchesFilter = _currentFilter == '전체' ||
           (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
@@ -413,6 +407,8 @@ class _UserPageState extends State<UserPage> {
         matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
             p.code.toLowerCase().contains(q) ||
             p.department.toLowerCase().contains(q) ||
+            p.role.toLowerCase().contains(q) ||
+            _getDisplayRole(p.role).toLowerCase().contains(q) || // 🔥 한글 등급명으로도 검색되게 지원
             p.tagId.toLowerCase().contains(q);
 
         if (!matchesSearch) {
@@ -584,13 +580,11 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// 상단 헤더 영역
-  /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             crossAxisAlignment: widget.isMobile ? CrossAxisAlignment.start : CrossAxisAlignment.center,
@@ -618,11 +612,9 @@ class _UserPageState extends State<UserPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
-
                     _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () {
                       _triggerErpSync(theme);
                     }, theme, color: Colors.teal),
-
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -635,15 +627,9 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
-                    _buildActionIcon(
-                      Icons.person_add_alt_1,
-                      "신규 인원 등록",
-                          () {
-                        _showForm(provider, null, theme);
-                      },
-                      theme,
-                      color: theme.colorScheme.primary,
-                    ),
+                    _buildActionIcon(Icons.person_add_alt_1, "신규 인원 등록", () {
+                      _showForm(provider, null, theme);
+                    }, theme, color: theme.colorScheme.primary),
                   ],
                 ),
               ),
@@ -658,7 +644,7 @@ class _UserPageState extends State<UserPage> {
               });
             },
             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서, 등급 또는 추가 상세내용 검색...", context: context, prefixIcon: Icons.search),
+            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서, 권한 또는 검색...", context: context, prefixIcon: Icons.search),
           ),
         ],
       ),
@@ -667,7 +653,6 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
     final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
-
     return Tooltip(
       message: tip,
       child: InkWell(
@@ -693,9 +678,7 @@ class _UserPageState extends State<UserPage> {
       return _buildEmptyState("데이터가 없습니다.");
     }
 
-    final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) {
-      return _selectedUserIds.contains(p.id);
-    });
+    final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) => _selectedUserIds.contains(p.id));
 
     return Column(
       children: [
@@ -717,7 +700,6 @@ class _UserPageState extends State<UserPage> {
                     child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
                   ),
                   const SizedBox(width: 12),
-
                   ElevatedButton.icon(
                     icon: const Icon(Icons.wifi_tethering, size: 18),
                     label: const Text("태그 일괄 발행", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -727,26 +709,17 @@ class _UserPageState extends State<UserPage> {
                         _showInfoDialog("알림", "태그발행 대상건을 선정하지 않았습니다!", theme);
                         return;
                       }
-
-                      final List<UserModel> selectedUsers = list.where((UserModel u) {
-                        return _selectedUserIds.contains(u.id);
-                      }).toList();
-
+                      final List<UserModel> selectedUsers = list.where((UserModel u) => _selectedUserIds.contains(u.id)).toList();
                       showDialog(
                           context: context,
                           barrierDismissible: false,
-                          builder: (BuildContext ctx) {
-                            return _BulkTagIssueDialog(
-                              selectedUsers: selectedUsers,
-                              provider: provider,
-                              theme: theme,
-                            );
+                          builder: (ctx) {
+                            return _BulkTagIssueDialog(selectedUsers: selectedUsers, provider: provider, theme: theme);
                           }
                       );
                     },
                   ),
                   const SizedBox(width: 8),
-
                   ElevatedButton.icon(
                     icon: const Icon(Icons.edit_note, size: 18),
                     label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -796,17 +769,16 @@ class _UserPageState extends State<UserPage> {
             child: Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
           ),
         ),
-
         Expanded(
           child: Container(
             margin: const EdgeInsets.only(bottom: 20.0),
             child: ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
               itemCount: list.length,
-              separatorBuilder: (BuildContext context, int index) {
+              separatorBuilder: (context, index) {
                 return const SizedBox(height: 12);
               },
-              itemBuilder: (BuildContext ctx, int idx) {
+              itemBuilder: (ctx, idx) {
                 final UserModel item = list[idx];
                 final bool isSelected = _selectedUserIds.contains(item.id);
                 final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
@@ -839,18 +811,11 @@ class _UserPageState extends State<UserPage> {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: isSelected ? AppTheme.primary : Colors.transparent,
-                                border: Border.all(
-                                  color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
-                                  width: 2,
-                                ),
+                                border: Border.all(color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5), width: 2),
                               ),
                               child: Padding(
                                 padding: const EdgeInsets.all(4.0),
-                                child: Icon(
-                                  Icons.check,
-                                  size: 16,
-                                  color: isSelected ? Colors.white : Colors.transparent,
-                                ),
+                                child: Icon(Icons.check, size: 16, color: isSelected ? Colors.white : Colors.transparent),
                               ),
                             ),
                           ),
@@ -858,7 +823,6 @@ class _UserPageState extends State<UserPage> {
                       )
                           : const SizedBox.shrink(),
                     ),
-
                     Expanded(
                       child: InkWell(
                         onTap: () {
@@ -962,12 +926,8 @@ class _UserPageState extends State<UserPage> {
                 showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (BuildContext ctx) {
-                      return _BulkTagIssueDialog(
-                        selectedUsers: [item],
-                        provider: provider,
-                        theme: theme,
-                      );
+                    builder: (ctx) {
+                      return _BulkTagIssueDialog(selectedUsers: [item], provider: provider, theme: theme);
                     }
                 );
               }),
@@ -1029,10 +989,7 @@ class _UserPageState extends State<UserPage> {
                   Row(
                     children: [
                       Flexible(
-                        child: Text(item.name,
-                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null), overflow: TextOverflow.ellipsis),
                       ),
                       const SizedBox(width: 8),
                       _buildStatusBadge(status),
@@ -1074,12 +1031,8 @@ class _UserPageState extends State<UserPage> {
               showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (BuildContext ctx) {
-                    return _BulkTagIssueDialog(
-                      selectedUsers: [item],
-                      provider: provider,
-                      theme: theme,
-                    );
+                  builder: (ctx) {
+                    return _BulkTagIssueDialog(selectedUsers: [item], provider: provider, theme: theme);
                   }
               );
             }),
@@ -1176,13 +1129,13 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// 메타 값을 가져올 때 '등급' 필드도 기본 필드처럼 처리하여 즉시 반환합니다.
+  /// 🔥 [수정] 메타 값을 가져올 때 'role' 필드를 UI용 한글로 변환하여 출력합니다.
   String _getMetaValue(UserModel item, String key) {
     final Map<String, String> baseFields = {
       '성명': item.name,
       '사번': item.code,
       '부서': item.department,
-      '등급': _safeStr(item.metadata['grade']), // 등급을 기본 필드처럼 매핑
+      '권한/등급': _getDisplayRole(item.role), // 영문 DB값을 한글로 매핑
       '태그ID': item.tagId
     };
 
@@ -1221,8 +1174,8 @@ class _UserPageState extends State<UserPage> {
 
     List<BulkEditField> fields = [
       BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
-      // 일괄 편집 창에도 '등급' 필드 추가
-      BulkEditField(key: 'grade', label: '새로운 등급/직급', type: BulkEditFieldType.text),
+      // 일괄 편집 창에서도 'role' 필드를 수정할 수 있도록 유지
+      BulkEditField(key: 'role', label: '새로운 권한/등급', type: BulkEditFieldType.text),
       BulkEditField(key: 'remarks', label: '새로운 공통 비고', type: BulkEditFieldType.text),
       BulkEditField(key: 'is_approved', label: '출입 승인 상태 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
     ];
@@ -1245,10 +1198,7 @@ class _UserPageState extends State<UserPage> {
         context: context,
         barrierDismissible: false,
         builder: (BuildContext ctx) {
-          return BulkEditDialog(
-            title: '${selectedUsers.length}명 인원 정보 일괄 편집',
-            fields: fields,
-          );
+          return BulkEditDialog(title: '${selectedUsers.length}명 인원 정보 일괄 편집', fields: fields);
         }
     );
 
@@ -1271,15 +1221,14 @@ class _UserPageState extends State<UserPage> {
           data['remarks'] = value;
         } else if (key == 'is_approved') {
           data['is_approved'] = value;
-        } else if (key == 'grade') {
-          updatedMeta['grade'] = value; // 등급은 메타데이터 공간에 저장
+        } else if (key == 'role') {
+          // 🔥 일괄 편집 시 입력된 텍스트도 영문 DB값으로 변환 시도
+          data['role'] = _getDbRole(value.toString());
         } else {
           updatedMeta[key] = value;
         }
       });
-
       data['metadata'] = updatedMeta;
-
       await provider.handleSave(p: p, data: data);
     }
 
@@ -1292,7 +1241,6 @@ class _UserPageState extends State<UserPage> {
       _selectedUserIds.clear();
       _isSelectionMode = false;
     });
-
     _showInfoDialog("일괄 편집 완료", "선택하신 ${selectedUsers.length}명의 데이터가 성공적으로 업데이트 되었습니다.", theme);
   }
 
@@ -1305,14 +1253,9 @@ class _UserPageState extends State<UserPage> {
               title: AppTheme.dialogTitle("선택 항목 일괄 삭제", Icons.warning, color: AppTheme.danger),
               content: Text("선택하신 ${_selectedUserIds.length}명의 인원 정보를 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없으며, 출입 이력도 함께 삭제될 수 있습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
               actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
+                AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: cancelColor, onPressed: () {
+                  Navigator.pop(ctx);
+                }),
                 AppTheme.actionButton(
                     label: "일괄 삭제",
                     color: AppTheme.danger,
@@ -1335,7 +1278,6 @@ class _UserPageState extends State<UserPage> {
                         _isFullScreenLoading = false;
                         _isSelectionMode = false;
                       });
-
                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 인원 정보가 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
                     }
                 )
@@ -1402,8 +1344,7 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _showColumnSelectionDialog(UserProvider provider, ThemeData theme) {
-    // 표시 항목 설정 다이얼로그에서도 '등급'을 기본 필수 항목 리스트에 합류시킵니다.
-    final List<String> baseFields = ['성명', '사번', '부서', '등급', '태그ID'];
+    final List<String> baseFields = ['성명', '사번', '부서', '권한/등급', '태그ID'];
 
     final Set<String> metaKeySet = {};
     for (final UserModel p in provider.list) {
@@ -1500,15 +1441,16 @@ class _UserPageState extends State<UserPage> {
         setState(() {
           _isFullScreenLoading = false;
         });
-        navigator.pop();
-        messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
       }
+      navigator.pop();
+      messenger.showSnackBar(const SnackBar(content: Text('초기화 완료', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
     }
   }
 
   Future<void> _handleBatchImport(UserProvider provider, ThemeData theme) async {
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
+
       if (!mounted || result == null) {
         return;
       }
@@ -1604,7 +1546,8 @@ class _UserPageState extends State<UserPage> {
         if (row.isEmpty) {
           continue;
         }
-        String name = "", code = "", dept = "", tagId = "";
+
+        String name = "", code = "", dept = "", tagId = "", role = "";
         final Map<String, dynamic> metadata = {};
         bool hasRowData = false;
 
@@ -1612,9 +1555,11 @@ class _UserPageState extends State<UserPage> {
           if (colIdx >= headers.length) {
             break;
           }
+
           final String rawHeader = headers[colIdx];
           final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
           final String val = _extractString(row[colIdx]);
+
           if (val.isNotEmpty) {
             hasRowData = true;
           }
@@ -1625,6 +1570,9 @@ class _UserPageState extends State<UserPage> {
             code = val;
           } else if (cleanHeader.contains('부서')) {
             dept = val;
+          } else if (cleanHeader.contains('권한/등급') || cleanHeader.contains('role')) {
+            // 🔥 엑셀에서 받아온 문자열도 DB용 영문으로 변환해서 담습니다.
+            role = _getDbRole(val);
           } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
             tagId = val;
           } else if (rawHeader.isNotEmpty && val.isNotEmpty) {
@@ -1635,6 +1583,7 @@ class _UserPageState extends State<UserPage> {
         if (!hasRowData) {
           continue;
         }
+
         if (name.isEmpty) {
           name = "형식에 맞지 않는 건";
         }
@@ -1642,10 +1591,7 @@ class _UserPageState extends State<UserPage> {
           tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
         }
 
-        String safeUsername = code.isEmpty
-            ? 'user_${DateTime.now().millisecondsSinceEpoch % 100000}_$i'
-            : code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
-
+        String safeUsername = code.isEmpty ? 'user_${DateTime.now().millisecondsSinceEpoch % 100000}_$i' : code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
         if (safeUsername.length < 3) {
           safeUsername = '${safeUsername}_$i';
         }
@@ -1659,6 +1605,7 @@ class _UserPageState extends State<UserPage> {
           'code': code,
           'tag_id': tagId,
           'department': dept,
+          'role': role.isEmpty ? 'Operator' : role, // 비어있으면 기본값 Operator
           'is_approved': name != "형식에 맞지 않는 건",
           'metadata': metadata
         };
@@ -1670,6 +1617,7 @@ class _UserPageState extends State<UserPage> {
       if (!mounted) {
         return;
       }
+
       setState(() {
         _isFullScreenLoading = false;
       });
@@ -1715,8 +1663,7 @@ class _UserPageState extends State<UserPage> {
       excel.rename(defaultSheet, '인원리스트');
       final excel_pkg.Sheet sheet = excel['인원리스트'];
 
-      // 엑스포트 시에도 '등급'을 기본 열로 생성합니다.
-      final List<String> baseHeaders = ['성명', '사번', '부서', '등급', '태그ID'];
+      final List<String> baseHeaders = ['성명', '사번', '부서', '권한/등급', '태그ID'];
 
       final Set<String> metaKeySet = {};
       for (final UserModel p in dataList) {
@@ -1726,13 +1673,13 @@ class _UserPageState extends State<UserPage> {
           }
         }
       }
-      final List<String> metaHeaders = metaKeySet.toList()..sort();
-      final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
+
+      final List<String> metaFields = metaKeySet.toList()..sort();
+      final List<String> allHeaders = [...baseHeaders, ...metaFields];
 
       final List<excel_pkg.CellValue> headerRow = allHeaders.map<excel_pkg.CellValue>((String h) {
         return excel_pkg.TextCellValue(h);
       }).toList();
-
       sheet.appendRow(headerRow);
 
       for (final UserModel p in dataList) {
@@ -1740,15 +1687,14 @@ class _UserPageState extends State<UserPage> {
           excel_pkg.TextCellValue(p.name),
           excel_pkg.TextCellValue(p.code),
           excel_pkg.TextCellValue(p.department),
-          // 데이터 기록 시 등급(grade) 값을 추출하여 입력합니다.
-          excel_pkg.TextCellValue(_safeStr(p.metadata['grade'])),
+          // 🔥 [수정] 엑스포트 시, 영문 role값을 다시 친절한 한글로 변환하여 출력합니다.
+          excel_pkg.TextCellValue(_getDisplayRole(p.role)),
           excel_pkg.TextCellValue(p.tagId),
         ];
 
-        for (final String metaKey in metaHeaders) {
+        for (final String metaKey in metaFields) {
           rowData.add(excel_pkg.TextCellValue(_safeStr(p.metadata[metaKey])));
         }
-
         sheet.appendRow(rowData);
       }
 
@@ -1765,10 +1711,7 @@ class _UserPageState extends State<UserPage> {
       await File(path).writeAsBytes(excel.encode()!);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-            elevation: 0
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 엑셀 다운로드가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
       }
     } catch (e) {
       if (mounted) {
@@ -1830,8 +1773,7 @@ class _UserPageState extends State<UserPage> {
         ),
         if (hasImage) ...[
           Positioned(
-            top: -10,
-            right: -10,
+            top: -10, right: -10,
             child: Material(
               color: Colors.transparent,
               child: InkWell(
@@ -1843,9 +1785,7 @@ class _UserPageState extends State<UserPage> {
                       color: AppTheme.danger,
                       shape: BoxShape.circle,
                       border: Border.all(color: theme.scaffoldBackgroundColor, width: 2.5),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))
-                      ]
+                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))]
                   ),
                   child: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
                 ),
@@ -1857,34 +1797,23 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [신규 및 정보 수정 폼 다이얼로그]
-  /// '등급' 필드를 콤보박스(Dropdown)로 변경하여 규격화된 권한 체계를 유지합니다.
-  /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
     final TextEditingController deptC = TextEditingController(text: p?.department ?? "");
 
-    // 🔥 [신규] 통상적인 3단계 등급(권한) 리스트를 정의합니다.
-    final List<String> gradeOptions = ['최고관리자 (Admin)', '현장관리자 (Manager)', '일반작업자 (Operator)'];
+    // 화면(UI)에 띄울 한글 옵션들
+    final List<String> roleOptions = ['최고관리자 (Admin)', '현장관리자 (Manager)', '일반작업자 (Operator)'];
+    String currentDisplayRole = '일반작업자 (Operator)';
 
-    // 기본 선택값은 가장 낮은 '일반작업자'로 설정합니다.
-    String currentGrade = '일반작업자 (Operator)';
-
-    // 기존 데이터가 있다면 해당 값을 불러옵니다.
-    if (p != null) {
-      String savedGrade = _safeStr(p.metadata['grade']);
-      if (savedGrade.isNotEmpty) {
-        // 기존 데이터가 3단계 옵션 중에 있다면 그대로 적용합니다.
-        if (gradeOptions.contains(savedGrade)) {
-          currentGrade = savedGrade;
-        } else {
-          // 만약 엑셀 업로드 등으로 인해 리스트에 없는 값(예: '팀장')이 들어왔다면,
-          // 콤보박스 에러 방지를 위해 임시로 리스트에 추가해 줍니다. (Safe Lookup)
-          gradeOptions.add(savedGrade);
-          currentGrade = savedGrade;
-        }
+    if (p != null && p.role.isNotEmpty) {
+      // 🔥 [수정] DB의 영문 값을 UI용 한글로 변환해서 매칭
+      String mappedRole = _getDisplayRole(p.role);
+      if (roleOptions.contains(mappedRole)) {
+        currentDisplayRole = mappedRole;
+      } else {
+        roleOptions.add(mappedRole);
+        currentDisplayRole = mappedRole;
       }
     }
 
@@ -2004,23 +1933,20 @@ class _UserPageState extends State<UserPage> {
                                                   _buildTextField(nameC, "성명 (필수)", theme),
                                                   const SizedBox(height: 16),
 
-                                                  // 부서와 등급(콤보박스)을 한 줄에 배치합니다.
                                                   Row(
                                                     children: [
                                                       Expanded(child: _buildTextField(deptC, "담당부서/소속", theme)),
                                                       const SizedBox(width: 16),
-                                                      // 🔥 [UI 교체] 텍스트 필드 대신 직접 제작한 드롭다운(콤보박스) 위젯을 사용합니다.
                                                       Expanded(
                                                         child: _buildDropdownField(
-                                                          value: currentGrade,
-                                                          label: "등급/권한",
-                                                          options: gradeOptions,
+                                                          value: currentDisplayRole,
+                                                          label: "권한/등급",
+                                                          options: roleOptions,
                                                           theme: theme,
                                                           onChanged: (String? newValue) {
                                                             if (newValue != null) {
-                                                              // 화면을 다시 그려 콤보박스의 값을 변경합니다.
                                                               setS(() {
-                                                                currentGrade = newValue;
+                                                                currentDisplayRole = newValue;
                                                               });
                                                             }
                                                           },
@@ -2137,8 +2063,6 @@ class _UserPageState extends State<UserPage> {
                         });
 
                         meta['app_login_email'] = inputEmail;
-                        // 🔥 [신규] 콤보박스에서 선택된 등급(currentGrade) 데이터를 메타데이터 공간에 밀어넣습니다.
-                        meta['grade'] = currentGrade;
 
                         final Map<String, dynamic> data = {
                           'email': inputEmail,
@@ -2146,6 +2070,8 @@ class _UserPageState extends State<UserPage> {
                           'code': codeC.text.trim(),
                           'tag_id': tagC.text.trim(),
                           'department': deptC.text.trim(),
+                          // 🔥 [수정] 화면의 한글 문자열을 DB 전용 영문 키값으로 완벽 변환 후 전송!
+                          'role': _getDbRole(currentDisplayRole),
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
                           'metadata': meta,
@@ -2157,15 +2083,15 @@ class _UserPageState extends State<UserPage> {
                           data['passwordConfirm'] = finalPwd;
                         }
 
-                        final bool ok = await provider.handleSave(p: p, data: data, imageXFile: file);
+                        final String saveResult = await provider.handleSave(p: p, data: data, imageXFile: file);
                         if (!dialogCtx.mounted) {
                           return;
                         }
 
-                        if (ok) {
+                        if (saveResult.isEmpty) {
                           Navigator.pop(dialogCtx);
                         } else {
-                          _showInfoDialog("저장 실패", "데이터베이스 저장 중 오류가 발생했습니다.\n입력하신 이메일이 이미 사용 중일 수 있습니다.", theme);
+                          _showInfoDialog("저장 실패", "데이터베이스 저장 중 오류가 발생했습니다.\n\n[상세 내용]\n$saveResult", theme);
                         }
                       })
                     ]
@@ -2176,22 +2102,15 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [UI 조각] 범용 텍스트 필드 빌더
-  /// ---------------------------------------------------------------------------
   Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme, {bool isPassword = false}) {
     return TextField(
         controller: ctrl,
-        obscureText: isPassword, // true일 경우 비밀번호 마스킹
+        obscureText: isPassword,
         style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
         decoration: AppTheme.inputDecoration(label: label, context: context)
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [UI 조각] 드롭다운(콤보박스) 필드 빌더
-  /// 텍스트 필드와 완벽하게 동일한 테마(모서리 둥글기, 여백 등)를 공유합니다.
-  /// ---------------------------------------------------------------------------
   Widget _buildDropdownField({
     required String value,
     required String label,
@@ -2252,7 +2171,7 @@ class _UserPageState extends State<UserPage> {
 /// 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
-  final List<UserModel> selectedUsers; // 1개 이상 여러 명의 대상을 받을 수 있습니다.
+  final List<UserModel> selectedUsers;
   final UserProvider provider;
   final ThemeData theme;
   final Function(String)? onWriteComplete;
@@ -2269,15 +2188,11 @@ class _BulkTagIssueDialog extends StatefulWidget {
 }
 
 class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
-  // 등록된 리더기를 동적으로 받아오기 위한 상태 변수
   List<String> _readerOptions = [];
   String? _selectedReader;
   bool _isLoadingReaders = true;
 
-  // 동일 태그 반복 발행 횟수 (1~99장)
   int _issueCount = 1;
-
-  // 진행 상태 관리
   bool _isProcessing = false;
   bool _isCompleted = false;
   double _progressValue = 0.0;
@@ -2286,37 +2201,26 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   @override
   void initState() {
     super.initState();
-    // 다이얼로그 초기 메시지를 설정합니다.
     if (widget.selectedUsers.isEmpty) {
       _progressText = '대상을 알 수 없는 신규 단일 건입니다.\n데이터를 자동으로 생성하여 기록합니다.';
     } else {
       _progressText = '선택된 총 ${widget.selectedUsers.length}건에 대한 정보를 발급합니다.\n리더기와 발급 횟수를 설정하고 [발행 시작]을 눌러주세요.';
     }
-
-    // 팝업이 띄워짐과 동시에 데이터베이스에 등록된 리더기 중 가용한 목록을 요청합니다.
     _fetchRegisteredReaders();
   }
 
-  /// [기능 완벽 구현] 하드코딩(시뮬레이션)을 제거하고, DeviceProvider를 통해
-  /// DB에 실제 등록된 장비 중 "자동 가동(isAutoConnect)이 꺼져 있는" 수동/자유 상태의 장비만 불러옵니다.
   Future<void> _fetchRegisteredReaders() async {
     try {
-      // 전역 Provider에서 DeviceProvider 인스턴스를 가져옵니다.
       final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
 
-      // 최신 장비 목록이 비어있다면 한 번 DB에서 불러옵니다.
       if (deviceProvider.list.isEmpty) {
         await deviceProvider.fetchData();
       } else {
-        // 이미 데이터가 있다면 자연스러운 로딩 UI를 위해 짧은 딜레이만 줍니다.
         await Future.delayed(const Duration(milliseconds: 300));
       }
 
       if (mounted) {
         setState(() {
-          // DB의 전체 장치 목록 중
-          // 1. 활성화 상태(isActive == true)이고,
-          // 2. 자동 연결이 아닌(isAutoConnect == false) 완전히 자유로운 리더기만 필터링!
           final availableDevices = deviceProvider.list.where((DeviceModel d) {
             return d.isActive == true && d.isAutoConnect == false;
           }).toList();
@@ -2324,7 +2228,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           if (availableDevices.isEmpty) {
             _readerOptions = ['가용한 리더기 없음 (모두 동작 중이거나 미등록)'];
           } else {
-            // 필터링된 실제 장비들을 콤보박스에 이쁘게 매핑합니다.
             _readerOptions = availableDevices.map((DeviceModel d) {
               return '${d.name} (${d.model} - ${d.ipAddress})';
             }).toList();
@@ -2347,8 +2250,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     }
   }
 
-  /// 사용자가 입력한 문자열을 태그의 메모리 크기(12Bytes 또는 16Bytes)에 맞추어
-  /// 정확한 길이의 16진수(Hexadecimal) 문자열로 변환하는 함수입니다.
   String _formatDataToTargetSize(String inputData, int targetByteSize) {
     List<int> utf8Bytes = utf8.encode(inputData);
     StringBuffer hexBuffer = StringBuffer();
@@ -2369,9 +2270,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     }
   }
 
-  /// [발행 시작] 버튼이 눌렸을 때 실행되는 일괄 처리 핵심 로직입니다.
   Future<void> _startBulkIssue() async {
-    // 리더기가 정상적으로 로딩되지 않았거나 선택되지 않았으면 발행을 막습니다.
     if (_selectedReader == null || _selectedReader!.contains('오류') || _selectedReader!.contains('없음')) {
       setState(() {
         _progressText = '❌ 가용 리더기가 없습니다. 장치 관리에서 수동 가동 리더기를 등록해주세요.';
@@ -2385,10 +2284,9 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     });
 
     try {
-      // 신규 인원 창에서 넘어와서 대상 유저가 없는 경우 (단일 발급)
       if (widget.selectedUsers.isEmpty) {
         String randomTag = "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
-        int memorySize = 12; // 96bit
+        int memorySize = 12;
 
         for (int j = 0; j < _issueCount; j++) {
           setState(() {
@@ -2397,41 +2295,33 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           });
 
           String hexData = _formatDataToTargetSize(randomTag, memorySize);
-          await Future.delayed(const Duration(milliseconds: 600)); // 하드웨어 통신 시뮬레이션
+          await Future.delayed(const Duration(milliseconds: 600));
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
             widget.onWriteComplete!(hexData);
           }
         }
-      }
-      // 체크박스 등으로 선택된 인원(들)을 일괄 처리하는 경우 (요구사항 로직)
-      else {
+      } else {
         int totalUsers = widget.selectedUsers.length;
         int currentOperationCount = 0;
         int totalOperations = totalUsers * _issueCount;
-        int memorySize = 12; // 96bit (12Bytes)로 시뮬레이션
+        int memorySize = 12;
 
         for (int i = 0; i < totalUsers; i++) {
           UserModel user = widget.selectedUsers[i];
-          // 기록할 기본 데이터: tagId가 비어있다면 사번(code)을 사용합니다.
           String tagData = user.tagId.isNotEmpty ? user.tagId : user.code;
 
           for (int j = 0; j < _issueCount; j++) {
             currentOperationCount++;
 
-            // UI에 실시간 진행 상황을 부드럽게 업데이트 합니다.
             setState(() {
               _progressValue = currentOperationCount / totalOperations;
               _progressText = "발급대상 $totalUsers건 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 기록하고 있습니다...";
             });
 
-            // 1. 데이터를 규격에 맞는 Hex 문자열로 변환 (Padding/Truncating 적용)
             String hexData = _formatDataToTargetSize(tagData, memorySize);
-
-            // 2. 실제 장비에 기록하는 명령 (시뮬레이션 딜레이 600ms)
             await Future.delayed(const Duration(milliseconds: 600));
 
-            // 3. 마지막 장수를 기록할 때만 DB를 업데이트 하거나, 콜백으로 값을 넘겨줍니다.
             if (j == _issueCount - 1) {
               await widget.provider.handleSave(p: user, data: {'tag_id': hexData});
               if (widget.onWriteComplete != null && totalUsers == 1) {
@@ -2442,7 +2332,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         }
       }
 
-      // 모든 작업이 정상적으로 끝난 경우
       if (mounted) {
         setState(() {
           _isCompleted = true;
@@ -2450,7 +2339,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           _progressText = '✅ 설정하신 모든 태그의 발행 작업이 성공적으로 완료되었습니다.';
         });
 
-        // 사용자가 완료 메시지를 읽을 수 있도록 1.5초 대기 후 자동으로 창을 닫습니다.
         await Future.delayed(const Duration(milliseconds: 1500));
         if (mounted) {
           Navigator.pop(context);
@@ -2460,7 +2348,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _isProcessing = false; // 다시 시도할 수 있도록 풀어줍니다.
+          _isProcessing = false;
           _progressText = '❌ 기록 중 오류 발생: $e';
         });
       }
@@ -2472,15 +2360,11 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     return AlertDialog(
       title: AppTheme.dialogTitle('RFID 태그 일괄 발급 설정', Icons.wifi_tethering, color: Colors.indigo),
       content: SizedBox(
-        width: 500, // 다이얼로그의 너비를 지정하여 깔끔하게 고정합니다.
+        width: 500,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // -----------------------------------------------------------
-            // 1. 인식장치(리더) 선택 UI
-            // 데이터베이스에서 가용한 리더기를 가져오는 동안 로딩 아이콘을 띄웁니다.
-            // -----------------------------------------------------------
             Text('1. 발급 대상 리더기 (현재 가용 장비)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
             const SizedBox(height: 8),
             Container(
@@ -2531,9 +2415,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             ),
             const SizedBox(height: 24),
 
-            // -----------------------------------------------------------
-            // 2. 발급 횟수 설정 UI
-            // -----------------------------------------------------------
             Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
             const SizedBox(height: 8),
             Container(
@@ -2577,9 +2458,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             ),
             const SizedBox(height: 24),
 
-            // -----------------------------------------------------------
-            // 3. 진행 상황 표시줄 및 메시지 안내창
-            // -----------------------------------------------------------
             Container(
               padding: const EdgeInsets.all(16.0),
               decoration: BoxDecoration(
@@ -2685,6 +2563,7 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
         }
       }
     }
+
     _buildings = b.toList()..sort();
     _gates = g.toList()..sort();
     _bC.text = _buildings.isNotEmpty ? _buildings.first : "";

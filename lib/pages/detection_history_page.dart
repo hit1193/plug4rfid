@@ -10,12 +10,7 @@ import '../core/pocketbase_client.dart';
 
 /// ---------------------------------------------------------------------------
 /// [출입 기록(History) 관리자 화면]
-/// PocketBase의 'detections' 컬렉션에 저장된 이력을 조건에 맞게 불러와 렌더링합니다.
-///
-/// [상단 디자인 전면 개편]
-/// - 반응형(isMobile)을 적극 활용하여 모바일에서는 세로 배치, PC에서는 가로 배치 적용
-/// - 조작부(날짜, 검색 등)를 부드러운 배경의 필터 박스로 그룹화하여 깔끔함 강조
-/// - 키오스크 스타일의 넓은 여백과 직관적인 세그먼티드 버튼 적용
+/// 중복되는 상단 타이틀 바를 삭제하고, 직관적인 검색 및 필터 박스만 남겼습니다.
 /// ---------------------------------------------------------------------------
 class DetectionHistoryPage extends StatefulWidget {
   final bool isMobile;
@@ -245,7 +240,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 새롭게 개선된 상단 제어 패널 (타이틀 + 검색/필터부)
+        // 🔥 [업데이트] 중복된 타이틀 영역을 삭제하고 필터 패널만 바로 호출합니다.
         _buildTopControlPanel(theme, isDark),
 
         // 메인 리스트 뷰 영역
@@ -261,60 +256,25 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [UI 개선] 상단 대시보드 제어 패널
-  /// 기존의 조잡했던 배치를 버리고, 타이틀과 필터 영역을 시각적으로 분리했습니다.
+  /// [UI 개선] 상단 대시보드 제어 패널 (중복 타이틀 제거됨)
   /// ---------------------------------------------------------------------------
   Widget _buildTopControlPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
       decoration: const BoxDecoration(
-        color: Colors.transparent, // 전체 배경은 투명하게 (테마를 따름)
+        color: Colors.transparent,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 1. 헤더 (타이틀) 영역
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center, // 아이콘과 타이틀의 수직 중앙 정렬
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.history_rounded, color: AppTheme.primary, size: 28),
-              ),
-              const SizedBox(width: 16),
-              // 불필요한 설명 문구와 Column 위젯을 제거하고 타이틀만 직관적으로 배치합니다.
-              Text(
-                "출입 및 감지 기록",
-                style: TextStyle(
-                  fontFamily: AppTheme.fontPretendard,
-                  fontSize: widget.isMobile ? 20 : 24,
-                  fontWeight: AppTheme.weightMenu,
-                  color: AppTheme.dataColor(isDark),
-                  letterSpacing: -0.5,
-                ),
-              ),
-            ],
+      child: Container(
+        padding: const EdgeInsets.all(16.0),
+        decoration: BoxDecoration(
+          color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03),
+          borderRadius: BorderRadius.circular(AppTheme.cardRadius),
+          border: Border.all(
+            color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05),
           ),
-          const SizedBox(height: 20),
-
-          // 2. 필터 및 검색 컨트롤 박스 (미니멀리즘 카드 스타일)
-          Container(
-            padding: const EdgeInsets.all(16.0),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03),
-              borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-              border: Border.all(
-                color: isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05),
-              ),
-            ),
-            // 화면 크기에 따라 모바일 레이아웃과 데스크톱 레이아웃을 다르게 렌더링합니다.
-            child: widget.isMobile ? _buildMobileFilterLayout(isDark) : _buildDesktopFilterLayout(isDark),
-          ),
-        ],
+        ),
+        // 화면 크기에 따라 모바일 레이아웃과 데스크톱 레이아웃을 다르게 렌더링합니다.
+        child: widget.isMobile ? _buildMobileFilterLayout(isDark) : _buildDesktopFilterLayout(isDark),
       ),
     );
   }
@@ -327,7 +287,6 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
         _buildDatePickerButton(isDark),
         const SizedBox(width: 16),
 
-        // [수정됨] 개별 ActionChip 대신 하나의 깔끔한 세그먼티드 버튼으로 변경
         _buildQuickDateSegmentedButton(isDark),
 
         const Spacer(), // 남는 공간을 모두 차지하여 오른쪽으로 밀어냄
@@ -366,7 +325,7 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
         _buildDatePickerButton(isDark),
         const SizedBox(height: 12),
 
-        // 2줄: [수정됨] 세그먼티드 버튼이 모바일에서는 가로로 꽉 차도록 배치
+        // 2줄: 세그먼티드 버튼이 모바일에서는 가로로 꽉 차도록 배치
         _buildQuickDateSegmentedButton(isDark),
         const SizedBox(height: 16),
 

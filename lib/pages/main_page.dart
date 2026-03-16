@@ -11,6 +11,7 @@ import 'dart:io';
 import '../core/pocketbase_client.dart';
 import '../theme/app_theme.dart';
 import '../providers/theme_provider.dart';
+import '../providers/auth_provider.dart'; // 로그인된 사용자 정보를 가져오기 위해 AuthProvider 임포트!
 
 // 연결할 각 하위 페이지들을 임포트합니다.
 import 'user_page.dart';
@@ -18,22 +19,19 @@ import 'product_page.dart';
 import 'device_page.dart';
 import 'device_map_page.dart';
 import 'kiosk_view.dart';
-// DB에 보관된 출입 기록을 조회하는 페이지를 임포트합니다.
 import 'detection_history_page.dart';
-// 새롭게 제작한 공지사항 페이지를 임포트합니다.
 import 'notice_page.dart';
-// 새롭게 제작한 환경설정 페이지를 임포트합니다.
 import 'settings_page.dart';
 
 /// ---------------------------------------------------------------------------
 /// [RFID 솔루션 통합 메인 레이아웃 페이지 (MainPage)]
 /// 좌측 사이드바와 우측 본문 영역을 동적으로 관리하며 메뉴 네비게이션을 담당합니다.
+/// C++Builder의 MDI Main Form과 같은 역할을 수행합니다.
 /// ---------------------------------------------------------------------------
 class MainPage extends StatefulWidget {
   // main.dart로부터 전달받는 키오스크 모드 시작 설정값 변수입니다.
   final bool initialKioskMode;
 
-  // 생성자에서 initialKioskMode를 받을 수 있도록 파라미터를 추가했습니다.
   const MainPage({
     super.key,
     this.initialKioskMode = false, // 값이 전달되지 않았을 경우를 대비한 안전한 기본값
@@ -46,7 +44,6 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> with WindowListener {
-  // 초기값을 고정(false)하지 않고, initState에서 전달받은 값으로 설정하기 위해 late 키워드 사용
   late bool _isKioskMode;
 
   bool _isSidebarExtended = true;
@@ -56,7 +53,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
   final SystemTray _systemTray = SystemTray();
   final AppWindow _appWindow = AppWindow();
 
-  // 사이드바에 표시될 메뉴 리스트입니다.
+  // 사이드바 및 글로벌 바에 표시될 메뉴 리스트입니다.
   final List<Map<String, dynamic>> _menuItems = [
     {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},        // Index 0
     {'title': '장치 관리', 'icon': FontAwesomeIcons.microchip},            // Index 1
@@ -71,14 +68,10 @@ class _MainPageState extends State<MainPage> with WindowListener {
   void initState() {
     super.initState();
 
-    // 부모 위젯(main.dart)에서 전달받은 환경설정 값으로 키오스크 모드 여부를 세팅합니다.
     _isKioskMode = widget.initialKioskMode;
 
     windowManager.addListener(this);
-
-    // 앱 시작 시 창 위치와 크기를 명확히 제어하는 함수를 호출합니다.
     _initWindowPosition();
-
     _initSystemTray();
   }
 
@@ -89,16 +82,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [창 초기 위치/크기 보정 함수 (안정성 최우선 버전)]
-  /// 화면이 반토막 나고 마우스 포인터를 따라다니던 치명적인 렌더링 버그를 막기 위해,
-  /// 이리저리 창을 옮기는 기교를 모조리 버리고 "가장 단순하고 우직한 전체화면"만 유지합니다.
+  /// [창 초기 위치/크기 보정 함수]
   /// ---------------------------------------------------------------------------
   Future<void> _initWindowPosition() async {
-    // 웹 환경이 아니고 데스크탑 환경일 때만 실행합니다.
     if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
       try {
-        // 복잡한 위치 이동, 딜레이(Delay), 껐다 켜기 로직을 모두 영구 삭제했습니다!
-        // 플러터 엔진이 화면 크기를 헷갈리지 않도록 오직 전체화면 상태인지만 점검하고 덮어씌웁니다.
         bool isFull = await windowManager.isFullScreen();
         if (!isFull) {
           await windowManager.setFullScreen(true);
@@ -109,7 +97,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
     }
   }
 
-  /// 시스템 트레이(작업 표시줄 아이콘) 초기화 함수 (Windows 전용)
+  /// 시스템 트레이(작업 표시줄 아이콘) 초기화 함수
   Future<void> _initSystemTray() async {
     if (!kIsWeb && Platform.isWindows) {
       await _systemTray.initSystemTray(
@@ -162,8 +150,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
   Widget build(BuildContext context) {
     final ThemeProvider themeProvider = context.watch<ThemeProvider>();
     final ThemeData theme = themeProvider.themeData;
+    final AuthProvider authProvider = context.watch<AuthProvider>();
 
-    // 만약 _isKioskMode가 true라면 일반 대시보드를 그리지 않고 곧바로 KioskView를 전체화면으로 렌더링합니다.
     if (_isKioskMode) {
       return Scaffold(
           body: KioskView(
@@ -192,6 +180,9 @@ class _MainPageState extends State<MainPage> with WindowListener {
                   color: theme.scaffoldBackgroundColor,
                   child: Column(
                     children: [
+                      // 글로벌 Top Bar 렌더링
+                      _buildGlobalTopBar(theme, authProvider, isMobile),
+
                       Expanded(
                         child: Container(
                           decoration: BoxDecoration(
@@ -213,6 +204,120 @@ class _MainPageState extends State<MainPage> with WindowListener {
           ),
         );
       },
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [UI 조각] 글로벌 Top Bar (메뉴 타이틀 + 아이콘 & 사용자 프로필 칩)
+  /// ---------------------------------------------------------------------------
+  Widget _buildGlobalTopBar(ThemeData theme, AuthProvider auth, bool isMobile) {
+    final String currentTitle = _menuItems[_selectedIndex]['title'];
+    final dynamic currentIcon = _menuItems[_selectedIndex]['icon'];
+    final bool isDarkMode = theme.brightness == Brightness.dark;
+
+    return Container(
+      height: 70, // 탑 바의 높이 고정
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: theme.dividerTheme.color ?? Colors.black12, width: 1.0),
+          left: BorderSide(color: theme.dividerTheme.color ?? Colors.black12, width: 1.0),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // 타이틀 옆에 현재 메뉴의 아이콘을 멋지게 배치합니다.
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: FaIcon(
+              currentIcon as IconData,
+              size: 22,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 16),
+          // 현재 진입해 있는 메뉴의 타이틀을 큼직하게 보여줍니다.
+          Text(
+            currentTitle,
+            style: TextStyle(
+              fontFamily: AppTheme.fontPretendard,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              color: isDarkMode ? Colors.white : Colors.black87,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const Spacer(), // 남은 공간을 밀어내어 프로필 칩을 우측 끝으로 보냅니다.
+
+          _buildLoginUserInfo(auth, theme),
+        ],
+      ),
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [UI 조각] 로그인된 사용자 정보를 뱃지 형태로 깔끔하게 표시합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildLoginUserInfo(AuthProvider auth, ThemeData theme) {
+    final String userName = auth.currentUser;
+    final String role = auth.role; // 🔥 DB 정규 필드인 role을 활용합니다.
+
+    // 관리자(Admin/Manager)일 경우 강조 색상을 다르게 줍니다.
+    final bool isManagerLevel = auth.isAdmin || role.contains('관리자') || role.toLowerCase().contains('admin');
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: isManagerLevel ? Colors.indigo.withValues(alpha: 0.1) : theme.colorScheme.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isManagerLevel ? Colors.indigo.withValues(alpha: 0.3) : theme.colorScheme.primary.withValues(alpha: 0.3),
+          width: 1.2,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isManagerLevel ? Icons.admin_panel_settings : Icons.person,
+            color: isManagerLevel ? Colors.indigo : theme.colorScheme.primary,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '$userName 님 접속중',
+            style: TextStyle(
+              fontFamily: AppTheme.fontPretendard,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: isManagerLevel ? Colors.indigo : theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: isManagerLevel ? Colors.indigo : theme.colorScheme.primary,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              role, // 🔥 role 필드의 데이터를 그대로 칩 안에 텍스트로 보여줍니다!
+              style: const TextStyle(
+                fontFamily: AppTheme.fontPretendard,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

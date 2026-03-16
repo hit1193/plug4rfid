@@ -12,12 +12,14 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _currentUser;
   bool _isAdmin = false;
+  String _role = '일반작업자 (Operator)'; // 🔥 [수정] 변수명을 role로 변경
 
   // --- 외부 노출용 Getter ---
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _pb.authStore.isValid;
   bool get isAdmin => _isAdmin;
   String get currentUser => _currentUser ?? "Unknown";
+  String get role => _role; // 🔥 [수정] 화면에서 권한을 읽어갈 수 있도록 노출
 
   AuthProvider() {
     // 앱 시작 시, 기존 로그인 세션이 남아있는지 확인하여 자동 복원합니다.
@@ -28,17 +30,42 @@ class AuthProvider extends ChangeNotifier {
     if (_pb.authStore.isValid) {
       final model = _pb.authStore.model;
       if (model is RecordModel) {
-        // 컬렉션 이름이 _superusers 이면 최고 관리자로 판별합니다.
+        // 컬렉션 이름이 _superusers 이면 최고 시스템 관리자로 판별합니다.
         _isAdmin = model.collectionName == '_superusers';
 
         _currentUser = model.getStringValue('name');
         if (_currentUser!.isEmpty) {
           _currentUser = model.getStringValue('email');
         }
+
+        // 🔥 [핵심 로직 변경] DB 기본 필드인 'role'을 다이렉트로 파싱합니다!
+        if (_isAdmin) {
+          _role = '시스템 최고관리자';
+        } else {
+          // 일반 사용자(users 컬렉션)일 경우 최상위 필드인 role 값을 읽어옵니다.
+          String fetchedRole = model.getStringValue('role');
+
+          if (fetchedRole.isNotEmpty) {
+            _role = fetchedRole;
+          } else {
+            // 과거 버전 호환성: 혹시 기존 데이터라서 role 필드가 비어있다면 메타데이터를 백업으로 확인
+            final dynamic meta = model.data['metadata'];
+            if (meta is Map<String, dynamic> && meta.containsKey('grade') && meta['grade'].toString().trim().isNotEmpty) {
+              _role = meta['grade'].toString().trim();
+            } else {
+              _role = '일반작업자 (Operator)';
+            }
+          }
+        }
       } else if (model is AdminModel) {
         _isAdmin = true;
         _currentUser = model.email;
+        _role = '시스템 최고관리자';
       }
+    } else {
+      _currentUser = null;
+      _isAdmin = false;
+      _role = '일반사용자';
     }
   }
 
@@ -51,38 +78,30 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 🔥 [핵심 보정 로직] 태블릿/폰 키패드의 첫 글자 자동 대문자 현상 방어
       String safeUserId = loginId.trim().toLowerCase();
 
-      // 🔥 [초강력 우회 로직] 포켓베이스가 'email' 인증만 허용하는 경우를 위한 자동 치환
-      // UserProvider에서 인원 등록 시 이메일을 '아이디@plug4rfid.local'로 강제 생성했으므로,
-      // DB 설정을 건드릴 필요 없이 로그인할 때 이메일 형식으로 자동 완성해서 찔러넣습니다!
       String fallbackEmail = safeUserId;
       if (!safeUserId.contains('@')) {
         fallbackEmail = '$safeUserId@plug4rfid.local';
       }
 
-      // 1단계: 일반 사용자(users 컬렉션) '이메일 형식'으로 로그인 시도 (가장 유력함)
       try {
         await _pb.collection('users').authWithPassword(fallbackEmail, password);
         _checkSession();
-        return ""; // 성공 시 빈 문자열 반환
+        return "";
 
       } catch (e1) {
-        // 2단계: 혹시나 username 인증이 켜져있을 경우를 대비해 '아이디 원본'으로 재시도
         try {
           await _pb.collection('users').authWithPassword(safeUserId, password);
           _checkSession();
           return "";
         } catch (e2) {
-          // 3단계: 일반 계정이 아니면 최고 관리자(_superusers)로 재시도
           try {
             await _pb.collection('_superusers').authWithPassword(loginId.trim(), password);
             _checkSession();
-            return ""; // 성공 시 빈 문자열 반환
+            return "";
 
           } catch (e3) {
-            // 4단계: 양쪽 모두 실패 시, 구체적인 에러 메시지 추출
             debugPrint("❌ 이메일 변환 로그인 실패: $e1");
             debugPrint("❌ 일반 아이디 로그인 실패: $e2");
             debugPrint("❌ 관리자 계정 로그인 실패: $e3");
@@ -99,7 +118,6 @@ class AuthProvider extends ChangeNotifier {
         }
       }
     } finally {
-      // 성공/실패 여부에 상관없이 로딩 상태를 해제합니다.
       _isLoading = false;
       notifyListeners();
     }
@@ -113,6 +131,7 @@ class AuthProvider extends ChangeNotifier {
     _pb.authStore.clear();
     _currentUser = null;
     _isAdmin = false;
+    _role = '일반사용자'; // 로그아웃 시 권한도 초기화
     notifyListeners();
   }
 }
