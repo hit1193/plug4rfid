@@ -20,6 +20,7 @@ import 'providers/user_provider.dart';
 import 'providers/product_provider.dart';
 import 'providers/device_provider.dart';
 import 'providers/theme_provider.dart';
+import 'providers/auth_provider.dart'; // 🔥 [추가] 로그인 에러 해결을 위해 AuthProvider를 임포트합니다.
 
 // 전역 포켓베이스 클라이언트 임포트
 import 'core/pocketbase_client.dart';
@@ -85,11 +86,17 @@ void main() async {
     });
   }
 
-  // 테마 상태 관리를 위한 프로바이더를 최상단에 주입하고 앱을 실행합니다.
+  // 🔥 [핵심 수정 부분]
+  // 기존에는 ThemeProvider 단일 항목만 주입했지만, MultiProvider를 사용하여
+  // 앱 전체에서 사용할 ThemeProvider와 AuthProvider를 동시에 메모리에 올립니다.
+  // 이 부분이 수정되어야 로그인 페이지에서 프로바이더 참조 오류가 사라집니다.
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => ThemeProvider(),
-      // [수정] 읽어온 키오스크 설정값을 최상위 위젯으로 넘겨줍니다.
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()), // 기존 테마 관리 모듈
+        ChangeNotifierProvider(create: (_) => AuthProvider()),  // 새로 추가된 인증(로그인) 관리 모듈
+      ],
+      // 읽어온 키오스크 설정값을 최상위 위젯으로 넘겨줍니다.
       child: MyApp(initialKioskMode: isKioskDefault),
     ),
   );
@@ -100,7 +107,7 @@ void main() async {
 /// 앱의 전반적인 디자인 테마와 라우팅의 기초를 담당합니다.
 /// ---------------------------------------------------------------------------
 class MyApp extends StatelessWidget {
-  // [신규 추가] 진입점에서 받아온 키오스크 설정 변수
+  // 진입점에서 받아온 키오스크 설정 변수
   final bool initialKioskMode;
 
   const MyApp({
@@ -134,7 +141,7 @@ class MyApp extends StatelessWidget {
 /// 로그인된 사용자는 메인 화면으로, 미인증 사용자는 로그인 화면으로 분기처리합니다.
 /// ---------------------------------------------------------------------------
 class AuthGate extends StatefulWidget {
-  // [신규 추가] 하위 위젯으로 넘겨주기 위한 키오스크 설정 변수
+  // 하위 위젯으로 넘겨주기 위한 키오스크 설정 변수
   final bool initialKioskMode;
 
   const AuthGate({
@@ -196,7 +203,7 @@ class _AuthGateState extends State<AuthGate> {
           ChangeNotifierProvider(create: (_) => ProductProvider()),
           ChangeNotifierProvider(create: (_) => DeviceProvider()),
         ],
-        // [핵심 변경] 모든 프로바이더가 준비된 상태로 메인 페이지를 열면서 키오스크 설정값을 전달합니다.
+        // 모든 프로바이더가 준비된 상태로 메인 페이지를 열면서 키오스크 설정값을 전달합니다.
         child: MainPage(initialKioskMode: widget.initialKioskMode),
       );
     }

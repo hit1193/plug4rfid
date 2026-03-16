@@ -2,22 +2,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // 웹(Web) 환경 판별을 위해 추가
 import 'package:flutter/services.dart';   // 모바일 환경에서의 앱 종료 처리를 위해 추가
 import 'dart:io';                         // 데스크탑 환경에서의 강제 종료(exit)를 위해 추가
-import 'package:pocketbase/pocketbase.dart';
+import 'package:provider/provider.dart';  // 상태 관리 연결을 위해 추가
+import 'package:shared_preferences/shared_preferences.dart'; // 전역 설정값 관리를 위해 추가
 
-import '../core/pocketbase_client.dart';
+import '../providers/auth_provider.dart'; // 분리된 데이터 모듈(Provider) 임포트
 import '../theme/app_theme.dart';
+// import 'main_dashboard_page.dart'; // 추후 접속할 메인 페이지 임포트 (경로에 맞게 수정)
 
 /// ---------------------------------------------------------------------------
 /// [통합 로그인 페이지 (LoginPage)]
-/// C++Builder의 LoginForm 역할을 수행합니다.
-/// 회사코드, 아이디, 비밀번호를 입력받아 PocketBase 서버에 인증을 요청합니다.
-/// 미니멀리즘 디자인 철학을 반영하여 깔끔한 카드 형태로 제작되었습니다.
+/// 오프라인 모드 여부를 스스로 감지하여 UI를 동적으로 변경하는 스마트 로그인 창입니다.
+/// 데이터베이스 통신 로직은 AuthProvider로 완전히 위임하여 아키텍처를 깔끔하게 분리했습니다.
 /// ---------------------------------------------------------------------------
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
   @override
-  State<LoginPage> createState() => _LoginPageState();
+  State<LoginPage> createState() {
+    return _LoginPageState();
+  }
 }
 
 class _LoginPageState extends State<LoginPage> {
@@ -26,11 +29,25 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  bool _isLoading = false;      // 로그인 처리 중 상태 플래그
-  bool _obscurePassword = true; // 비밀번호 숨김 여부
+  bool _obscurePassword = true; // 비밀번호 숨김 여부 (눈 모양 아이콘 토글용)
+
+  // ---------------------------------------------------------------------------
+  // [아키텍처 대응 변수] 환경설정에서 저장한 오프라인 모드 상태를 보관합니다.
+  // ---------------------------------------------------------------------------
+  bool _isInitLoaded = false;   // 설정 로드 완료 여부
+  bool _isOfflineMode = false;  // 오프라인 모드 켜짐 여부
+  String _savedOfflineCode = "";// 환경설정에서 저장한 로컬 회사코드
+
+  @override
+  void initState() {
+    super.initState();
+    // 화면이 켜지자마자 가장 먼저 환경설정값을 읽어옵니다.
+    _loadAuthSettings();
+  }
 
   @override
   void dispose() {
+    // 메모리 누수를 방지하기 위해 컨트롤러 자원을 해제합니다.
     _companyController.dispose();
     _idController.dispose();
     _passwordController.dispose();
@@ -38,235 +55,288 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   /// ---------------------------------------------------------------------------
+  /// [설정값 로드] 환경설정(SettingsPage)에서 기록한 모드와 코드를 가져옵니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _loadAuthSettings() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    if (mounted) {
+      setState(() {
+        _isOfflineMode = prefs.getBool('pref_offline_mode') ?? false;
+        _savedOfflineCode = prefs.getString('pref_offline_company_code') ?? '';
+        _isInitLoaded = true; // 로딩이 완료되면 화면을 렌더링합니다.
+      });
+    }
+  }
+
+  /// ---------------------------------------------------------------------------
   /// [스마트 로그인 처리 로직]
-  /// 입력된 ID/PW를 가지고 일반 사용자(users) 권한인지,
-  /// 최고 관리자(_superusers) 권한인지 자동으로 판별하여 로그인을 시도합니다.
+  /// UI 검증 및 회사 코드 처리를 담당하고, 실제 인증은 AuthProvider에 위임합니다.
   /// ---------------------------------------------------------------------------
   Future<void> _handleLogin() async {
-    final String company = _companyController.text.trim();
+    // 1. 오프라인 모드면 세팅된 코드를 쓰고, 온라인이면 입력받은 코드를 씁니다.
+    final String company = _isOfflineMode ? _savedOfflineCode : _companyController.text.trim();
     final String id = _idController.text.trim();
     final String password = _passwordController.text.trim();
 
-    if (company.isEmpty || id.isEmpty || password.isEmpty) {
-      _showErrorDialog("입력 오류", "회사명(코드), 아이디, 비밀번호를 모두 입력해 주세요.");
+    // 2. 빈 값 검증 로직 (사전 차단)
+    if (id.isEmpty || password.isEmpty) {
+      _showErrorDialog("입력 오류", "아이디와 비밀번호를 모두 입력해 주세요.");
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    if (!_isOfflineMode && company.isEmpty) {
+      _showErrorDialog("입력 오류", "회사명(코드)을 입력해 주세요.");
+      return;
+    }
 
-    try {
-      // 1. 먼저 일반 작업자(users 컬렉션)로 로그인을 시도합니다.
-      // (현장 작업자용 스마트폰/태블릿 배포 시 주로 사용됨)
-      await pb.collection('users').authWithPassword(id, password);
+    if (_isOfflineMode && company.isEmpty) {
+      _showErrorDialog("설정 오류", "환경설정에서 '로컬 전용 회사코드'가 지정되지 않았습니다.\n우측 상단의 톱니바퀴를 눌러 설정해 주세요.");
+      return;
+    }
 
-      // 로그인이 성공하면 pb.authStore.isValid 가 true로 변경되며,
-      // main.dart의 AuthGate가 이를 감지하여 자동으로 MainPage로 화면을 전환합니다!
+    // 키보드를 내립니다.
+    FocusScope.of(context).unfocus();
 
-    } catch (e) {
-      try {
-        // 2. 일반 사용자 로그인이 실패했을 경우,
-        // 사장님이나 시스템 관리자의 계정(_superusers 컬렉션)인지 2차로 확인합니다.
-        await pb.collection('_superusers').authWithPassword(id, password);
+    // 3. Provider를 통한 인증 요청 (데이터베이스 로직 분리)
+    final AuthProvider auth = context.read<AuthProvider>();
+    final String errorMsg = await auth.login(id, password);
 
-      } catch (e2) {
-        // 3. 양쪽 모두 인증에 실패한 경우 에러 메시지를 띄웁니다.
-        if (mounted) {
-          _showErrorDialog("인증 실패", "아이디 또는 비밀번호가 일치하지 않거나 권한이 없습니다.\n다시 확인해 주세요.");
-        }
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+    if (!mounted) return;
+
+    if (errorMsg.isEmpty) {
+      // [데이터 태깅 준비] 최종 확정된 회사코드를 '현재 접속 중인 코드'로 전역 저장소에 기록합니다.
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+      await prefs.setString('current_company_code', company);
+
+      // 로그인 성공 시 메인 화면으로 완벽하게 전환합니다. (스택 지우기)
+      /* // 주석 해제하여 라우팅 연결
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const MainDashboardPage()),
+        (Route<dynamic> route) => false,
+      );
+      */
+
+      // 테스트용 성공 팝업 (라우팅 연결 후 삭제하세요)
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ 시스템 접속 성공!'), backgroundColor: AppTheme.success),
+      );
+
+    } else {
+      // Provider가 넘겨준 구체적인 에러 메시지를 다이얼로그로 띄웁니다.
+      _showErrorDialog("로그인 실패", errorMsg);
     }
   }
 
   /// ---------------------------------------------------------------------------
   /// [취소 처리 로직 (프로그램 강제 종료)]
-  /// C++Builder의 Application->Terminate() 와 완벽하게 동일한 역할을 수행합니다.
-  /// 플랫폼(Windows, Web, Mobile)에 맞추어 안전하게 시스템을 종료합니다.
+  /// 실행 환경(웹, 데스크톱, 모바일)에 맞춰 적절한 종료 처리를 수행합니다.
   /// ---------------------------------------------------------------------------
   void _handleCancel() {
     if (kIsWeb) {
-      // 웹 브라우저 환경에서는 스크립트로 창을 강제로 닫을 수 없으므로 경고창만 표출합니다.
       _showErrorDialog("알림", "웹 브라우저에서는 탭을 직접 닫아주세요.");
     } else if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      // 윈도우 키오스크/PC 환경: 프로세스를 즉시 강제 종료합니다.
-      exit(0);
+      exit(0); // 데스크탑 환경 완벽 종료
     } else {
-      // 안드로이드/iOS 환경: 시스템에 앱 종료를 요청합니다.
-      SystemNavigator.pop();
+      SystemNavigator.pop(); // 안드로이드/iOS 환경 앱 백그라운드 전환 및 종료
     }
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [공통 에러 다이얼로그 (메시지 박스)]
+  /// ---------------------------------------------------------------------------
   void _showErrorDialog(String title, String message) {
     showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: AppTheme.dialogTitle(title, Icons.warning_amber_rounded, color: AppTheme.danger),
-          content: Text(message, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-          actions: [
-            AppTheme.actionButton(
-                label: "확인",
-                onPressed: () => Navigator.pop(ctx)
-            )
-          ],
-        )
+        builder: (ctx) {
+          return AlertDialog(
+            title: AppTheme.dialogTitle(title, Icons.warning_amber_rounded, color: AppTheme.danger),
+            content: Text(message, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+            actions: [
+              AppTheme.actionButton(
+                  label: "확인",
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                  }
+              )
+            ],
+          );
+        }
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    // AuthProvider의 로딩 상태를 구독하여 UI를 동적으로 변경합니다.
+    final AuthProvider auth = context.watch<AuthProvider>();
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
 
+    // 설정값이 아직 안 불러와졌다면 빈 화면(또는 스피너)을 보여주어 UI 깜빡임을 방지합니다.
+    if (!_isInitLoaded) {
+      return Scaffold(
+        backgroundColor: theme.scaffoldBackgroundColor,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
-      body: Center(
-        child: SingleChildScrollView(
-          child: Container(
-            width: 420, // 키오스크/PC 화면에서도 너무 퍼지지 않도록 폭 고정
-            padding: const EdgeInsets.all(40),
-            decoration: BoxDecoration(
-                color: theme.cardTheme.color,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
-                    blurRadius: 30,
-                    offset: const Offset(0, 10),
-                  )
-                ]
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // -----------------------------------------------------------
-                // [회사 로고 이미지 영역]
-                // -----------------------------------------------------------
-                _buildLogoSpace(theme, isDark),
-                const SizedBox(height: 40),
-
-                // -----------------------------------------------------------
-                // [입력 폼 영역]
-                // -----------------------------------------------------------
-                _buildLoginField(
-                    controller: _companyController,
-                    label: "회사명 또는 코드",
-                    icon: Icons.business,
-                    theme: theme
+      body: Stack(
+        children: [
+          // 메인 로그인 폼 영역 (반응형 대응: 중앙 정렬 및 최대 너비 고정)
+          Center(
+            child: SingleChildScrollView(
+              child: Container(
+                width: 420,
+                padding: const EdgeInsets.all(40),
+                decoration: BoxDecoration(
+                    color: theme.cardTheme.color,
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.05),
+                        blurRadius: 30,
+                        offset: const Offset(0, 10),
+                      )
+                    ]
                 ),
-                const SizedBox(height: 16),
-                _buildLoginField(
-                    controller: _idController,
-                    label: "아이디 (이메일 또는 사번)",
-                    icon: Icons.person_outline,
-                    theme: theme
-                ),
-                const SizedBox(height: 16),
-                _buildLoginField(
-                    controller: _passwordController,
-                    label: "비밀번호",
-                    icon: Icons.lock_outline,
-                    isPassword: true,
-                    theme: theme
-                ),
-                const SizedBox(height: 40),
-
-                // -----------------------------------------------------------
-                // [버튼 영역] 취소(프로그램 종료) 및 로그인 버튼을 가로로 나란히 배치
-                // -----------------------------------------------------------
-                Row(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 취소(종료) 버튼 (아웃라인 스타일로 메인 버튼과 시각적 차이를 둠)
-                    Expanded(
-                      child: SizedBox(
-                        height: 56,
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: isDark ? Colors.white70 : Colors.grey.shade700,
-                            side: BorderSide(
-                                color: isDark ? Colors.white24 : Colors.grey.shade300,
-                                width: 2
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: _isLoading ? null : _handleCancel,
-                          child: const Text(
-                            "종료",
-                            style: TextStyle(
-                                fontFamily: AppTheme.fontPretendard,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
+                    // 1. [회사 로고 이미지 영역]
+                    _buildLogoSpace(theme, isDark),
+                    const SizedBox(height: 40),
 
-                    // 로그인 버튼 (프라이머리 컬러 사용)
-                    Expanded(
-                      child: SizedBox(
-                        height: 56,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: theme.colorScheme.primary,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: _isLoading ? null : _handleLogin,
-                          child: _isLoading
-                              ? const SizedBox(
-                              width: 24, height: 24,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)
-                          )
-                              : const Text(
-                            "시스템 접속",
-                            style: TextStyle(
-                                fontFamily: AppTheme.fontPretendard,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold
+                    // -----------------------------------------------------------
+                    // 2. [스마트 UI 분기 - 회사 코드]
+                    // 오프라인 모드가 아닐 때(온라인 SaaS 모드)만 회사코드 입력칸을 노출합니다.
+                    // -----------------------------------------------------------
+                    if (!_isOfflineMode) ...[
+                      _buildLoginField(
+                          controller: _companyController,
+                          label: "회사명 또는 코드",
+                          icon: Icons.business,
+                          theme: theme
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+
+                    // 3. [아이디 및 비밀번호 입력 영역]
+                    _buildLoginField(
+                        controller: _idController,
+                        label: "아이디 (이메일 또는 사번)",
+                        icon: Icons.person_outline,
+                        theme: theme
+                    ),
+                    const SizedBox(height: 16),
+                    _buildLoginField(
+                        controller: _passwordController,
+                        label: "비밀번호",
+                        icon: Icons.lock_outline,
+                        isPassword: true,
+                        theme: theme
+                    ),
+                    const SizedBox(height: 40),
+
+                    // 4. [액션 버튼 영역 (종료 / 시스템 접속)]
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 56,
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: isDark ? Colors.white70 : Colors.grey.shade700,
+                                side: BorderSide(
+                                    color: isDark ? Colors.white24 : Colors.grey.shade300,
+                                    width: 2
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: auth.isLoading ? null : _handleCancel,
+                              child: const Text(
+                                "종료",
+                                style: TextStyle(
+                                    fontFamily: AppTheme.fontPretendard,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: SizedBox(
+                            height: 56,
+                            child: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: theme.colorScheme.primary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: auth.isLoading ? null : _handleLogin,
+                              child: auth.isLoading
+                                  ? const SizedBox(
+                                  width: 24, height: 24,
+                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)
+                              )
+                                  : const Text(
+                                "시스템 접속",
+                                style: TextStyle(
+                                    fontFamily: AppTheme.fontPretendard,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+
+                    // 5. [오프라인 모드 안내 문구]
+                    if (_isOfflineMode) ...[
+                      const SizedBox(height: 24),
+                      Text(
+                        "현재 오프라인(Local) 모드로 구동 중입니다.\n데이터는 [$_savedOfflineCode] 코드로 안전하게 기록됩니다.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          fontSize: 12,
+                          color: Colors.blueGrey.withValues(alpha: 0.8),
+                          height: 1.4,
+                        ),
+                      )
+                    ],
                   ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 
   /// ---------------------------------------------------------------------------
   /// [회사 로고 렌더링 위젯]
-  /// 사장님께서 준비하신 실제 파일(PLUG4ASSET.png)을 스크린 상단에 표출합니다.
+  /// 미니멀리즘 디자인 철학을 반영하여 깔끔하게 에러 처리를 지원합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildLogoSpace(ThemeData theme, bool isDark) {
     return SizedBox(
-      width: double.infinity, // 가로 공간을 꽉 채웁니다
-      // [수정됨] 기존 160에서 240으로 높이를 대폭 키워 로고를 훨씬 더 크고 시원하게 표시합니다.
+      width: double.infinity,
       height: 240,
       child: Image.asset(
-        'assets/images/PLUG4ASSET.png', // 사장님께서 yaml에 등록하신 실제 로고 파일 경로 적용 완료!
-        fit: BoxFit.contain,            // 비율을 유지하며 영역 안에 깔끔하게 맞춥니다. (가로 세로 찌그러짐 방지)
-
-        // [안전장치] 만약 파일명 오타나 설정 문제로 이미지를 불러오지 못할 경우,
-        // 앱이 강제 종료되지 않도록 부드러운 에러 화면을 띄워주는 방어(Guard) 코드입니다.
+        'assets/images/PLUG4ASSET.png',
+        fit: BoxFit.contain,
         errorBuilder: (BuildContext context, Object exception, StackTrace? stackTrace) {
           return Container(
             decoration: BoxDecoration(
@@ -311,7 +381,8 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [로그인 폼 입력 필드 (TEdit)]
+  /// [로그인 폼 입력 필드 전용 위젯 (TEdit 대체)]
+  /// 반복되는 텍스트 필드 코드를 모듈화하여 가독성과 유지보수성을 높였습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildLoginField({
     required TextEditingController controller,
@@ -333,6 +404,7 @@ class _LoginPageState extends State<LoginPage> {
       ),
       decoration: AppTheme.inputDecoration(label: label, context: context).copyWith(
         prefixIcon: Icon(icon, color: Colors.grey.shade400),
+        // 비밀번호 입력란일 경우 우측에 눈 모양 토글 버튼 생성
         suffixIcon: isPassword
             ? IconButton(
           icon: Icon(
@@ -348,7 +420,11 @@ class _LoginPageState extends State<LoginPage> {
             : null,
       ),
       onSubmitted: (_) {
-        if (!_isLoading) _handleLogin(); // 엔터 키를 누르면 바로 로그인 시도
+        // Provider의 isLoading 변수를 참조합니다.
+        final bool isLoading = context.read<AuthProvider>().isLoading;
+        if (!isLoading) {
+          _handleLogin();
+        }
       },
     );
   }

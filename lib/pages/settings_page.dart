@@ -29,7 +29,9 @@ class SettingsPage extends StatefulWidget {
   });
 
   @override
-  State<SettingsPage> createState() => _SettingsPageState();
+  State<SettingsPage> createState() {
+    return _SettingsPageState();
+  }
 }
 
 class _SettingsPageState extends State<SettingsPage> {
@@ -38,7 +40,9 @@ class _SettingsPageState extends State<SettingsPage> {
   // ---------------------------------------------------------------------------
   bool _isLoading = true;
 
-  // [1] 데이터베이스 및 서버 설정
+  // [1] 데이터베이스 및 서버 설정 (하이브리드 아키텍처 대응)
+  bool _isOfflineMode = false; // 오프라인(로컬 망) 단독 동작 여부
+  final TextEditingController _offlineCompanyCodeController = TextEditingController(); // 로컬 전용 회사코드
   final TextEditingController _dbUrlController = TextEditingController();
 
   // [2] ERP 연동 설정 (송수신 분리 적용)
@@ -81,6 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 메모리 누수를 방지하기 위해 화면이 닫힐 때 컨트롤러 자원을 해제합니다.
   @override
   void dispose() {
+    _offlineCompanyCodeController.dispose();
     _dbUrlController.dispose();
     _erpReceiveUrlController.dispose();
     _erpSendUrlController.dispose();
@@ -121,6 +126,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (mounted) {
         setState(() {
+          // 하이브리드 인증 설정을 불러옵니다.
+          _isOfflineMode = prefs.getBool('pref_offline_mode') ?? false;
+          _offlineCompanyCodeController.text = prefs.getString('pref_offline_company_code') ?? '';
           _dbUrlController.text = prefs.getString('pref_db_url') ?? 'http://127.0.0.1:8090';
 
           // 송수신 URL을 각각 불러옵니다. 기존에 저장된 값이 없다면 안전한 기본값을 제공합니다.
@@ -143,7 +151,9 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (e) {
       debugPrint('설정 로드 실패: $e');
       if (mounted) {
-        setState(() { _isLoading = false; });
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
@@ -152,6 +162,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// [데이터 저장] 입력한 설정값을 기기에 영구 저장하기 및 모니터 이동 적용
   /// ---------------------------------------------------------------------------
   Future<void> _saveSettings() async {
+    // 1. 필수값 검증 로직 (DB 주소는 무조건 있어야 함)
     if (_dbUrlController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('데이터베이스 서버 주소는 필수입니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
@@ -160,11 +171,25 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
-    setState(() { _isLoading = true; });
+    // 2. 오프라인 모드일 경우 '회사코드' 필수 입력 검증 (데이터 태깅용)
+    if (_isOfflineMode && _offlineCompanyCodeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('오프라인 모드 활성화 시, 향후 온라인 통합을 위해 로컬 회사코드는 필수입니다!', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+        backgroundColor: AppTheme.danger,
+      ));
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
 
+      // 서버 및 오프라인 아키텍처 저장
+      await prefs.setBool('pref_offline_mode', _isOfflineMode);
+      await prefs.setString('pref_offline_company_code', _offlineCompanyCodeController.text.trim());
       await prefs.setString('pref_db_url', _dbUrlController.text.trim());
 
       // 분리된 송수신 URL을 각각 저장합니다.
@@ -212,7 +237,9 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     } finally {
       if (mounted) {
-        setState(() { _isLoading = false; });
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
@@ -223,17 +250,19 @@ class _SettingsPageState extends State<SettingsPage> {
     if (targetUrl.isEmpty) return;
 
     showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 20),
-            Text("서버 응답을 확인하는 중...", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-          ],
-        ),
-      ),
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Text("서버 응답을 확인하는 중...", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+              ],
+            ),
+          );
+        }
     );
 
     await Future.delayed(const Duration(seconds: 1));
@@ -289,10 +318,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // ----------------------------------------------------------------
-                      // 섹션 1: 메인 서버 연결 설정
+                      // 섹션 1: 메인 서버 연결 설정 (오프라인 모드 포함)
                       // ----------------------------------------------------------------
                       _buildSectionCard(
-                        title: "1. 메인 데이터베이스 서버 (PocketBase)",
+                        title: "1. 메인 데이터베이스 및 동작 모드",
                         icon: Icons.dns_rounded,
                         theme: theme,
                         primaryColor: dynamicPrimary,
@@ -300,10 +329,61 @@ class _SettingsPageState extends State<SettingsPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              "RFID 장비 및 앱에서 생성되는 모든 데이터가 저장되는 메인 서버의 IP 주소(또는 도메인)와 포트를 입력합니다.",
+                              "앱이 데이터를 보관할 서버 환경과 동작 모드를 설정합니다.\n인터넷이 차단된 로컬 폐쇄망에서는 오프라인 모드를 활성화하십시오.",
                               style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
                             ),
                             const SizedBox(height: 20),
+
+                            // [핵심 추가] 오프라인(로컬망) 동작 모드 활성화 스위치
+                            Container(
+                              decoration: AppTheme.listItemDecoration(context, isSelected: _isOfflineMode, statusColor: dynamicPrimary),
+                              child: SwitchListTile(
+                                title: const Text("오프라인 (로컬 폐쇄망) 단독 구동", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
+                                subtitle: const Text("마스터 클라우드 인증을 거치지 않고, 로컬 PocketBase DB에 직접 접속합니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
+                                value: _isOfflineMode,
+                                activeThumbColor: dynamicPrimary,
+                                activeTrackColor: dynamicPrimary.withValues(alpha: 0.4),
+                                onChanged: (bool value) {
+                                  setState(() {
+                                    _isOfflineMode = value;
+                                  });
+                                },
+                              ),
+                            ),
+
+                            // 오프라인 모드가 켜졌을 때만 나타나는 '회사코드' 입력란 (미래 데이터 통합을 위한 태깅용)
+                            AnimatedSize(
+                              duration: const Duration(milliseconds: 300),
+                              child: _isOfflineMode
+                                  ? Padding(
+                                padding: const EdgeInsets.only(top: 16.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    TextField(
+                                      controller: _offlineCompanyCodeController,
+                                      style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),
+                                      decoration: AppTheme.inputDecoration(
+                                          label: "로컬 전용 회사코드 (필수)",
+                                          context: context,
+                                          prefixIcon: Icons.badge_rounded
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 4.0),
+                                      child: Text(
+                                        "💡 향후 온라인(구독형) 서비스로 데이터를 원활하게 이관(마이그레이션)하기 위해,\n오프라인 모드에서도 이 앱이 생성하는 모든 데이터에 해당 코드가 꼬리표처럼 기록됩니다.",
+                                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 12, color: Colors.blueGrey, height: 1.4),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                                  : const SizedBox.shrink(),
+                            ),
+                            const SizedBox(height: 24),
+
                             Row(
                               children: [
                                 Expanded(
@@ -350,14 +430,14 @@ class _SettingsPageState extends State<SettingsPage> {
                               style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
                             ),
                             const SizedBox(height: 20),
-                            // [수정됨] 수신 전용 URL 입력 필드 추가
+                            // 수신 전용 URL 입력 필드
                             TextField(
                               controller: _erpReceiveUrlController,
                               style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),
                               decoration: AppTheme.inputDecoration(label: "수신용 API 주소 (데이터 조회용)", context: context, prefixIcon: Icons.download_rounded),
                             ),
                             const SizedBox(height: 16),
-                            // [수정됨] 송신 전용 URL 입력 필드 추가
+                            // 송신 전용 URL 입력 필드
                             TextField(
                               controller: _erpSendUrlController,
                               style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),

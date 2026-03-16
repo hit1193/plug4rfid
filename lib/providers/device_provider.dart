@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert'; // JSON 디코딩을 위해 추가
+import 'dart:async';   // StreamSubscription(비동기 스트림 제어)을 사용하기 위해 필수
 
 import '../models/device_model.dart';
 import '../services/pb_service.dart';
@@ -9,8 +10,6 @@ import '../services/device_protocols.dart';
 
 /// ---------------------------------------------------------------------------
 /// [Data Structure] 개별 태그의 상태와 이력을 기억하는 클래스
-/// 태그의 마지막 인식 시간, 위치(리더/안테나), 현재 상태(IN/OUT)를 메모리에 보관하여
-/// 중복 인식을 방지하고 동적인 출입 방향을 판별하는데 사용됩니다.
 /// ---------------------------------------------------------------------------
 class TagState {
   String epc;
@@ -30,8 +29,7 @@ class TagState {
 
 /// ---------------------------------------------------------------------------
 /// [Logic] 장치 상태 관리 및 실시간 통신 전담 클래스 (Global DataModule)
-/// UI와 완전히 분리되어 백그라운드에서 소켓 세션을 유지하고,
-/// 수신된 데이터를 파싱하여 방향을 판별한 후 상태를 보관하는 핵심 통제소입니다.
+/// 병렬 통신 엔진을 탑재하여 여러 장치의 동시 접속을 효율적으로 제어합니다.
 /// ---------------------------------------------------------------------------
 class DeviceProvider extends ChangeNotifier {
   final String _collectionName = 'devices';
@@ -42,25 +40,42 @@ class DeviceProvider extends ChangeNotifier {
 
   final Map<String, BaseDeviceProtocol> _activeProtocols = {};
 
-  // [오류 완벽 해결] 원본 문자열(String) 타입만 유지하여 타입 충돌(Map 에러)을 원천 차단합니다.
+  // 윈도우 네이티브 런타임 에러 방지용 (Heap Corruption 방지)
+  // Dart의 Stream(데이터 파이프라인)을 쥐고 있는 구독(Subscription) 객체들을 보관합니다.
+  final Map<String, StreamSubscription> _activeSubscriptions = {};
+
+  // [완벽 종료 방어용 락(Lock)]
+  // 이중 해제(Double Free)를 방지하기 위해, 현재 종료 프로세스가 진행 중인 기기를 추적합니다.
+  final Set<String> _disconnectingDevices = {};
+
+  // 원본 문자열(String) 타입만 유지하여 타입 충돌을 방지합니다.
   final Map<String, List<String>> _packetLogs = {};
 
-  // [핵심 보관소] 시스템 가동 중 인식된 태그들의 상태 이력을 관리하는 메모리 변수
+  // 시스템 가동 중 인식된 태그들의 상태 이력을 관리하는 메모리 변수
   final Map<String, TagState> _tagStates = {};
 
-  List<DeviceModel> get list => _list;
-  bool get isLoading => _isLoading;
-  bool get isSaving => _isSaving;
+  List<DeviceModel> get list {
+    return _list;
+  }
 
-  // 외부 UI(예: 현황판)에서 태그 보관소에 접근할 수 있도록 Getter 제공
-  Map<String, TagState> get tagStates => _tagStates;
+  bool get isLoading {
+    return _isLoading;
+  }
+
+  bool get isSaving {
+    return _isSaving;
+  }
+
+  Map<String, TagState> get tagStates {
+    return _tagStates;
+  }
 
   DeviceProvider() {
     _initializeSequence();
     _subscribe();
   }
 
-  /// 특정 장치의 로그 리스트 반환 (터미널 UI용)
+  /// 특정 장치의 로그 리스트 반환
   List<String> getLogs(String deviceId) {
     return _packetLogs[deviceId] ?? [];
   }
@@ -73,34 +88,82 @@ class DeviceProvider extends ChangeNotifier {
     }
   }
 
-  /// 초기 구동 시퀀스 (DB 로드 -> 활성 장치 자동 연결)
+  /// -------------------------------------------------------------------------
+  /// 초기 구동 시퀀스
+  /// 앱 재시작 시 DB에 남아있는 '유령 상태(Ghost State)'를 클리어합니다.
+  /// -------------------------------------------------------------------------
   Future<void> _initializeSequence() async {
     await fetchData();
+
+    bool needsNotify = false;
+    for (int i = 0; i < _list.length; i++) {
+      if (_list[i].status.toLowerCase() == 'online') {
+        _list[i] = _list[i].copyWith(
+          status: 'Offline',
+          updated: DateTime.now(),
+        );
+        _syncStatusToDbOnly(_list[i].id, 'Offline');
+        needsNotify = true;
+      }
+    }
+
+    if (needsNotify) {
+      notifyListeners();
+    }
+
+    // 초기화가 끝난 후, 진짜 자동 연결이 설정된 장치들만 포트를 엽니다.
     _autoConnectDevices();
   }
 
-  /// 장치 자동 연결 로직
+  /// -------------------------------------------------------------------------
+  /// 병렬 연결 로직
+  /// 장치가 여러 개일 때 순서대로 기다리지 않고 모든 장치를 동시에 연결 시도합니다.
+  /// -------------------------------------------------------------------------
   void _autoConnectDevices() {
     if (_isDisposed) {
       return;
     }
 
+    int autoConnectCount = 0;
     for (var device in _list) {
       if (device.isActive && device.isAutoConnect && device.ipAddress.isNotEmpty) {
-        connectDevice(device);
+        autoConnectCount++;
       }
+    }
+
+    if (autoConnectCount > 0) {
+      debugPrint("🚀 [시스템] $autoConnectCount개의 등록 장치에 대해 병렬 자동 연결 시퀀스 가동");
+      for (var device in _list) {
+        if (device.isActive && device.isAutoConnect && device.ipAddress.isNotEmpty) {
+          connectDevice(device);
+        }
+      }
+    } else {
+      debugPrint("ℹ️ [시스템] 자동 연결(AutoConnect) 설정된 장치가 없습니다.");
     }
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+
+    // 메모리 누수 및 크래시 방지를 위해 모든 스트림 구독 해제
+    for (var sub in _activeSubscriptions.values) {
+      sub.cancel();
+    }
+    _activeSubscriptions.clear();
+
     for (var protocol in _activeProtocols.values) {
-      protocol.dispose();
+      try {
+        protocol.dispose();
+      } catch (e) {
+        debugPrint("프로토콜 해제 오류: $e");
+      }
     }
     _activeProtocols.clear();
     _packetLogs.clear();
     _tagStates.clear();
+    _disconnectingDevices.clear();
     super.dispose();
   }
 
@@ -122,12 +185,12 @@ class DeviceProvider extends ChangeNotifier {
 
     try {
       final records = await PBService.pb.collection(_collectionName).getFullList(sort: '-created');
-
       if (_isDisposed) {
         return;
       }
-
-      _list = records.map((r) => DeviceModel.fromRecord(r)).toList();
+      _list = records.map((r) {
+        return DeviceModel.fromRecord(r);
+      }).toList();
     } catch (e) {
       debugPrint("장치 로드 실패: $e");
     } finally {
@@ -139,18 +202,38 @@ class DeviceProvider extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------------------
-  /// [시스템 로그 헬퍼]
-  /// 장치의 접속, 해제, 오류 등의 시스템 알림을 터미널 창에 띄우기 위한 함수입니다.
+  /// 문자열 안전 정화 기능 (UI 크래시 방지 필터)
+  /// -------------------------------------------------------------------------
+  String _sanitizeString(String input) {
+    if (input.isEmpty) {
+      return "";
+    }
+    try {
+      final StringBuffer buffer = StringBuffer();
+      for (var char in input.runes) {
+        if ((char >= 32 && char <= 126) || (char >= 0xAC00 && char <= 0xD7A3) || char == 10 || char == 13) {
+          buffer.writeCharCode(char);
+        } else {
+          buffer.write('?');
+        }
+      }
+      return buffer.toString();
+    } catch (e) {
+      return "[데이터 손상됨]";
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// 시스템 로그 헬퍼
   /// -------------------------------------------------------------------------
   void _logSystem(String deviceId, String message) {
     if (!_packetLogs.containsKey(deviceId)) {
       _packetLogs[deviceId] = [];
     }
     final timestamp = DateTime.now().toString().substring(11, 19);
-    // 화면에서 'SYS' 타입으로 파싱할 수 있도록 식별자를 붙여 저장합니다.
-    _packetLogs[deviceId]!.add("[$timestamp] <<< [SYS] $message");
+    final cleanedMsg = _sanitizeString(message);
+    _packetLogs[deviceId]!.add("[$timestamp] <<< [SYS] $cleanedMsg");
 
-    // 메모리 과부하 방지를 위해 로그는 100줄까지만 유지
     if (_packetLogs[deviceId]!.length > 100) {
       _packetLogs[deviceId]!.removeAt(0);
     }
@@ -158,66 +241,180 @@ class DeviceProvider extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------------------
-  /// 장치 접속 및 통신 시작
+  /// 개별 장치 접속 로직
   /// -------------------------------------------------------------------------
   Future<void> connectDevice(DeviceModel device) async {
-    if (device.ipAddress.isEmpty || _activeProtocols.containsKey(device.id)) {
+    if (device.ipAddress.isEmpty) {
+      _logSystem(device.id, "⚠️ 오류: 통신 주소가 없습니다.");
       return;
+    }
+
+    // 중복 방어: 이미 종료 중인 기기라면 접속 시도를 무시합니다.
+    if (_disconnectingDevices.contains(device.id)) {
+      _logSystem(device.id, "⏳ 현재 이전 통신을 안전하게 해제하는 중입니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
+
+    // 중복 방어: 이미 해당 장치의 프로토콜이 가동 중이면 기존 것을 안전하게 해제 후 재시작
+    if (_activeProtocols.containsKey(device.id)) {
+      _logSystem(device.id, "🔄 기존 통신 세션 초기화 및 재접속 시도...");
+      await disconnectDevice(device.id); // 안전하게 비동기로 끊어냅니다.
     }
 
     final protocol = DeviceProtocolFactory.create(device.model, device.ipAddress, device.port);
     _activeProtocols[device.id] = protocol;
 
-    _logSystem(device.id, "접속 시도 중: ${device.ipAddress}:${device.port}");
+    _logSystem(device.id, "🚀 접속 프로세스 시작: ${device.ipAddress}:${device.port}");
 
-    bool success = await protocol.connect();
+    try {
+      // 5초 타임아웃으로 한 장비의 지연이 전체 엔진을 멈추지 않게 방어합니다.
+      bool success = await protocol.connect().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            _logSystem(device.id, "⏰ 타임아웃: 포트 응답 없음");
+            return false;
+          }
+      );
 
-    if (success) {
-      _logSystem(device.id, "접속 성공. 장치 운용 목적 판별 중...");
+      if (success) {
+        _logSystem(device.id, "✅ 접속 성공! 데이터 수집 대기 중...");
 
-      protocol.tagStream.listen((tagData) {
-        _onDataReceived(device.id, tagData);
-      });
+        // 스트림을 닫을 때 완벽한 제어를 위해 구독(Subscription) 객체를 맵에 저장해 둡니다.
+        _activeSubscriptions[device.id] = protocol.tagStream.listen(
+                (tagData) {
+              _onDataReceived(device.id, tagData);
+            },
+            onError: (err) {
+              _logSystem(device.id, "❌ 수신 스트림 오류: $err");
+              disconnectDevice(device.id); // 에러 발생 시 안전하게 연결 해제
+            }
+        );
 
-      // [핵심 논리 개선] 장비의 용도가 '태그 발급용'인 경우,
-      // 상시 Inventory(연속 읽기)를 가동하면 Write 패킷과 충돌이 발생할 수 있으므로 대기합니다.
-      String usageRole = device.settings['usage_role']?.toString() ?? '';
-
-      if (usageRole == '수동스캔(단일등록)') {
-        _logSystem(device.id, "발급 전용 데스크 장치 인식됨. 상시 스캔을 중지하고 Write 명령(Idle) 대기 모드로 진입합니다.");
-      } else {
-        try {
-          await protocol.startInventory();
-          _logSystem(device.id, "상시 감시(Inventory) 자동 시작 완료. 태그 수신 시작!");
-        } catch (e) {
-          _logSystem(device.id, "Inventory 자동 시작 실패: $e");
+        String usageRole = device.settings['usage_role']?.toString() ?? '';
+        if (usageRole == '수동스캔(단일등록)') {
+          _logSystem(device.id, "🤫 발급 리더기 모드: 명령 대기 중(Idle)");
+        } else {
+          try {
+            await protocol.startInventory();
+            _logSystem(device.id, "📡 감시 모드 가동: 실시간 태그 수집 시작");
+          } catch (e) {
+            _logSystem(device.id, "⚠️ 인벤토리 명령 실패: $e");
+          }
         }
-      }
 
-      await handleSave(d: device, data: {'status': 'Online'}, skipAutoConnect: true);
-    } else {
-      _logSystem(device.id, "접속 실패 (Timeout 또는 IP/Port 오류).");
-      protocol.dispose();
+        // [UI 즉시 갱신] DB 조회를 기다리지 않고 메모리 상태를 먼저 바꿉니다.
+        _updateLocalStatus(device.id, 'Online');
+        _syncStatusToDbOnly(device.id, 'Online');
+      } else {
+        _logSystem(device.id, "❌ 접속 실패 (포트 점유 또는 설정 오류)");
+        _activeProtocols.remove(device.id);
+        _updateLocalStatus(device.id, 'Offline');
+        _syncStatusToDbOnly(device.id, 'Offline');
+      }
+    } catch (e) {
+      _logSystem(device.id, "🔥 연결 중 치명적 예외: $e");
       _activeProtocols.remove(device.id);
-      await handleSave(d: device, data: {'status': 'Offline'}, skipAutoConnect: true);
+      _updateLocalStatus(device.id, 'Offline');
+      _syncStatusToDbOnly(device.id, 'Offline');
     }
   }
 
-  /// 장치 통신 수동 종료
-  void disconnectDevice(String deviceId) {
+  /// -------------------------------------------------------------------------
+  /// [UI 즉시 반응용] 메모리 내 장치 상태 교체 로직
+  /// -------------------------------------------------------------------------
+  void _updateLocalStatus(String deviceId, String status) {
+    final index = _list.indexWhere((d) {
+      return d.id == deviceId;
+    });
+
+    if (index != -1) {
+      final oldDevice = _list[index];
+      _list[index] = DeviceModel(
+        id: oldDevice.id,
+        collectionId: oldDevice.collectionId,
+        name: oldDevice.name,
+        model: oldDevice.model,
+        ipAddress: oldDevice.ipAddress,
+        port: oldDevice.port,
+        status: status,
+        commMethod: oldDevice.commMethod,
+        isActive: oldDevice.isActive,
+        isAutoConnect: oldDevice.isAutoConnect,
+        settings: oldDevice.settings,
+        clientId: oldDevice.clientId,
+        image: oldDevice.image,
+        posX: oldDevice.posX,
+        posY: oldDevice.posY,
+        created: oldDevice.created,
+        updated: DateTime.now(),
+      );
+      notifyListeners();
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// 백그라운드 DB 동기화
+  /// -------------------------------------------------------------------------
+  Future<void> _syncStatusToDbOnly(String deviceId, String status) async {
+    try {
+      await PBService.pb.collection(_collectionName).update(deviceId, body: {'status': status});
+    } catch (e) {
+      debugPrint("DB 상태 동기화 실패: $e");
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// [초강력 안전 장치] 윈도우 네이티브 힙 손상(Heap Corruption) 완벽 방어
+  /// C++Builder의 Thread->Terminate() -> Thread->WaitFor() -> CloseHandle() 구조 구현
+  /// -------------------------------------------------------------------------
+  Future<void> disconnectDevice(String deviceId) async {
+    if (_disconnectingDevices.contains(deviceId)) {
+      return; // 이미 해제 중인 장치는 중복 진입 방지 (Double Free 차단)
+    }
+
     if (_activeProtocols.containsKey(deviceId)) {
       final protocol = _activeProtocols[deviceId]!;
-      protocol.dispose();
-      _activeProtocols.remove(deviceId);
-
-      _logSystem(deviceId, "통신 세션 수동 종료 완료.");
+      _disconnectingDevices.add(deviceId); // 락(Lock) 설정
 
       try {
-        final device = _list.firstWhere((d) => d.id == deviceId);
-        // 재연결 루프 방지 플래그(skipAutoConnect) 사용
-        handleSave(d: device, data: {'status': 'Offline'}, skipAutoConnect: true);
-      } catch(e) {
-        debugPrint(e.toString());
+        // 1. 하드웨어 전파 발사 중지 명령 (리더기가 쏘는 데이터 자체를 멈춤)
+        try {
+          await protocol.stopInventory();
+          _logSystem(deviceId, "⏹️ 하드웨어 읽기 중단 명령 전송 완료");
+        } catch (_) {}
+
+        // 2. Dart 쪽 수신 파이프라인(Stream) 해제 (C++의 Thread->Terminate() 역할)
+        // 다트의 스트림을 취소하여 C++의 SerialPortReader 루프 탈출을 유도합니다.
+        if (_activeSubscriptions.containsKey(deviceId)) {
+          _logSystem(deviceId, "⏳ 다트 수신 스트림 파이프라인 해제 중...");
+          await _activeSubscriptions[deviceId]!.cancel();
+          _activeSubscriptions.remove(deviceId);
+        }
+
+        // 3. [가장 핵심 방어] C++ 네이티브 스레드 완전 종료 대기 (C++의 Thread->WaitFor() 역할)
+        // 다트에서 cancel()을 호출했더라도 백그라운드의 네이티브 C++ 스레드가
+        // 포트 참조(Handle)를 완전히 내려놓기까지는 약간의 딜레이가 필연적으로 발생합니다.
+        // 이를 기다리지 않고 바로 dispose(free)를 때려버리면 100% 엑스박스가 뜹니다.
+        _logSystem(deviceId, "⏳ C++ 네이티브 스레드 루프 완전 탈출 대기 중 (WaitFor)...");
+        await Future.delayed(const Duration(milliseconds: 800));
+
+        // 4. 물리적 포트/소켓 해제 (CloseHandle & Free 역할)
+        // 네이티브 스레드가 포트 핸들 참조를 완벽히 놓은 고요한 상태에서 해제합니다.
+        _logSystem(deviceId, "⏳ 물리적 포트 자원(Handle) 해제 중...");
+        try {
+          protocol.dispose();
+        } catch (e) {
+          debugPrint("해제 중 오류 무시: $e");
+        }
+
+        _activeProtocols.remove(deviceId);
+        _logSystem(deviceId, "🔌 모든 작업 완료: 장치 연결이 완벽하게 해제되었습니다.");
+
+        _updateLocalStatus(deviceId, 'Offline');
+        _syncStatusToDbOnly(deviceId, 'Offline');
+
+      } finally {
+        _disconnectingDevices.remove(deviceId); // 락(Lock) 해제
       }
     }
   }
@@ -226,38 +423,90 @@ class DeviceProvider extends ChangeNotifier {
   Future<void> setDevicePower(String deviceId, int antennaIndex, int powerLevel) async {
     if (_activeProtocols.containsKey(deviceId)) {
       final protocol = _activeProtocols[deviceId]!;
-
-      _logSystem(deviceId, "안테나($antennaIndex) 파워 변경 명령 하달: ${powerLevel/10}dBm");
-
+      _logSystem(deviceId, "📡 안테나($antennaIndex) 출력 변경 명령: ${powerLevel/10}dBm");
       await protocol.setAntennaPower(antennaIndex, powerLevel);
-
-      _logSystem(deviceId, "파워 변경 완료 및 재가동");
     }
   }
 
   /// -------------------------------------------------------------------------
-  /// [신규 추가] 특정 장치에 RFID 태그 메모리 쓰기(Write) 명령 하달
-  /// UI(태그 일괄 발행 창)에서 넘어온 변환된 Hex 데이터를 실제 장비로 전송합니다.
+  /// 수동으로 태그 읽기(Inventory) 시작 명령 하달
   /// -------------------------------------------------------------------------
-  Future<bool> writeTagData(String deviceId, String targetHex) async {
+  Future<void> triggerDeviceRead(String deviceId) async {
     if (_activeProtocols.containsKey(deviceId)) {
       final protocol = _activeProtocols[deviceId]!;
+      _logSystem(deviceId, "▶️ 수동 읽기(Scan) 시작 명령 하달 완료");
 
-      _logSystem(deviceId, "태그 기록 명령 전송 준비 (데이터: $targetHex)");
-
-      // EPC 영역(Bank 1)에 기록하며, PC/CRC 영역(Offset 0, 1)을 건너뛰기 위해 Offset 2부터 씁니다.
-      await protocol.writeTagMemory(1, 2, targetHex);
-      return true;
+      try {
+        await protocol.startInventory();
+      } catch (e) {
+        _logSystem(deviceId, "❌ 수동 읽기 시작 명령 전송 중 오류 발생: $e");
+      }
     } else {
-      _logSystem(deviceId, "⚠️ 오류: 기록하려는 장치와 통신이 연결되어 있지 않습니다.");
+      _logSystem(deviceId, "⚠️ 오류: 연결된 장치가 없습니다. 통신을 먼저 시작해주세요.");
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// 수동으로 태그 읽기(Inventory) 중지 명령 하달
+  /// -------------------------------------------------------------------------
+  Future<void> stopDeviceRead(String deviceId) async {
+    if (_activeProtocols.containsKey(deviceId)) {
+      final protocol = _activeProtocols[deviceId]!;
+      _logSystem(deviceId, "⏹️ 태그 읽기(Scan) 중단 명령 하달 완료");
+
+      try {
+        await protocol.stopInventory();
+      } catch (e) {
+        _logSystem(deviceId, "❌ 수동 읽기 중단 명령 전송 중 오류 발생: $e");
+      }
+    } else {
+      debugPrint("⚠️ 경고: 장치($deviceId) 연결이 이미 끊어져 있어 중단 명령을 무시합니다.");
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// 특정 장치에 RFID 태그 메모리 쓰기(Write) 명령 하달 (ASCII / Hex 모드 지원)
+  /// -------------------------------------------------------------------------
+  Future<bool> writeTagData(String deviceId, String input, {bool isHexMode = false}) async {
+    if (!_activeProtocols.containsKey(deviceId)) {
+      _logSystem(deviceId, "⚠️ 오류: 연결된 장치가 없습니다.");
+      return false;
+    }
+
+    String finalHex = "";
+
+    try {
+      if (isHexMode) {
+        String cleaned = input.replaceAll(' ', '').toUpperCase();
+        if (!RegExp(r'^[0-9A-F]+$').hasMatch(cleaned)) {
+          _logSystem(deviceId, "⚠️ 오류: 올바른 Hex 형식이 아닙니다.");
+          return false;
+        }
+        if (cleaned.length % 4 != 0) {
+          cleaned = cleaned.padRight(cleaned.length + (4 - cleaned.length % 4), '0');
+        }
+        finalHex = cleaned;
+      } else {
+        finalHex = input.codeUnits.map((unit) {
+          return unit.toRadixString(16).padLeft(2, '0').toUpperCase();
+        }).join('');
+
+        if (finalHex.length % 4 != 0) {
+          finalHex = finalHex.padRight(finalHex.length + (4 - finalHex.length % 4), '0');
+        }
+      }
+
+      _logSystem(deviceId, "📝 태그 쓰기 전송: $finalHex");
+      await _activeProtocols[deviceId]!.writeTagMemory(1, 2, finalHex);
+      return true;
+    } catch (e) {
+      _logSystem(deviceId, "❌ 쓰기 예외 발생: $e");
       return false;
     }
   }
 
   /// -------------------------------------------------------------------------
   /// [데이터 수신 이벤트 파이프라인]
-  /// 프로토콜 단(device_protocols.dart)에서 넘겨준 데이터를 받아 터미널에 표출하고,
-  /// JSON 형태일 경우 디코딩하여 개발자님의 방향 판별 로직으로 태그 정보를 넘깁니다.
   /// -------------------------------------------------------------------------
   void _onDataReceived(String deviceId, String data) {
     if (!_packetLogs.containsKey(deviceId)) {
@@ -265,39 +514,28 @@ class DeviceProvider extends ChangeNotifier {
     }
 
     final timestamp = DateTime.now().toString().substring(11, 19);
+    final cleanedData = _sanitizeString(data);
 
-    // 1. 프로토콜에서 가변 데이터를 정밀하게 가공하여 보낸 JSON 마커 데이터인 경우
-    if (data.startsWith('JSON:')) {
+    if (cleanedData.startsWith('JSON:')) {
       try {
-        // "JSON:" 마커를 잘라내고 순수 JSON 문자열로 디코딩
-        String jsonString = data.substring(5);
+        String jsonString = cleanedData.substring(5);
         Map<String, dynamic> parsed = jsonDecode(jsonString);
 
         String epc = parsed['epc'] ?? "";
         String ant = parsed['ant']?.toString() ?? "1";
         String rssi = parsed['rssi'] ?? "";
-        String tid = parsed['tid'] ?? "";
 
-        // 깔끔하게 포맷팅하여 관리자 터미널에 출력
         _packetLogs[deviceId]!.add("[$timestamp] 🎯 [태그 인식] EPC:$epc | Ant:$ant | RSSI:$rssi");
-
-        // 개발자님이 작성하신 고도화된 방향 판별(비즈니스 로직) 및 상태 보관으로 넘김
         if (epc.isNotEmpty) {
           _processTagDirection(deviceId, epc, ant);
         }
       } catch (e) {
-        // 혹시 파싱 오류가 나도 시스템이 죽지 않고 원문을 출력하도록 방어
-        _packetLogs[deviceId]!.add("[$timestamp] <<< $data");
+        _packetLogs[deviceId]!.add("[$timestamp] <<< $cleanedData");
       }
-    }
-    // 2. 그 외 Raw 데이터 및 일반 로그 문자열 (IDRO Raw Hex 등)
-    else {
-      // 이미 프로토콜(device_protocols.dart) 단에서 "<== [수신 RX]" 등
-      // 직관적인 형태로 보내주고 있으므로 그대로 화면에 표출합니다.
-      _packetLogs[deviceId]!.add("[$timestamp] $data");
+    } else {
+      _packetLogs[deviceId]!.add("[$timestamp] $cleanedData");
     }
 
-    // 메모리 누수 방지 (최근 100개 로그만 유지)
     if (_packetLogs[deviceId]!.length > 100) {
       _packetLogs[deviceId]!.removeAt(0);
     }
@@ -306,45 +544,39 @@ class DeviceProvider extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------------------
-  /// [방향 결정 핵심 비즈니스 로직] (개발자님 작성 원본 유지)
-  /// 물류센터, 공정 등 각 현장 상황에 맞춰 등록된 장비의 Setting값을 읽어와
-  /// 안테나 시퀀스, 리더 시퀀스 등으로 입/출고 방향을 매우 스마트하게 결정합니다.
+  /// [방향 결정 핵심 비즈니스 로직]
   /// -------------------------------------------------------------------------
   void _processTagDirection(String deviceId, String epc, String ant) {
     try {
-      final deviceIndex = _list.indexWhere((d) => d.id == deviceId);
+      final int deviceIndex = _list.indexWhere((d) {
+        return d.id == deviceId;
+      });
       if (deviceIndex == -1) {
         return;
       }
 
       final device = _list[deviceIndex];
-      // 장치 설정값에 저장된 모드를 바탕으로 판별. 기본값 방어 적용.
       final String mode = device.settings['dir_mode']?.toString() ?? 'none';
       final String option = device.settings['dir_option']?.toString() ?? '3';
 
-      // 메모리에서 태그 상태를 가져오고, 처음 인식된 태그면 초기화하여 가져옵니다.
       TagState state = _tagStates[epc] ?? TagState(epc: epc, lastSeenTime: DateTime.fromMillisecondsSinceEpoch(0));
       DateTime now = DateTime.now();
 
       String determinedDirection = "";
       bool shouldLog = false;
 
-      // 현장의 레이아웃(게이트, 지게차, 컨베이어)에 맞춘 다중 판별 로직
       switch (mode) {
         case 'none':
-        // 단순 교차 모드: 일정 시간(option)이 지나고 다시 읽히면 상태 반전(Toggle)
           int discardSeconds = int.tryParse(option) ?? 3;
           if (now.difference(state.lastSeenTime).inSeconds < discardSeconds) {
-            return; // 연속 스캔 무시 (디바운싱 효과)
+            return;
           }
-
           determinedDirection = (state.status == 'IN') ? '출고(OUT)' : '입고(IN)';
           state.status = (state.status == 'IN') ? 'OUT' : 'IN';
           shouldLog = true;
           break;
 
         case 'reader_seq':
-        // 리더기 시퀀스: A리더기 -> B리더기로의 이동을 추적하여 방향 판별
           if (state.lastReaderId.isNotEmpty && state.lastReaderId != deviceId) {
             determinedDirection = '이동 [리더 변경: ${state.lastReaderId} ➔ ${device.name}]';
             shouldLog = true;
@@ -352,7 +584,6 @@ class DeviceProvider extends ChangeNotifier {
           break;
 
         case 'ant_seq':
-        // 안테나 시퀀스: 게이트를 통과할 때 안테나1 -> 안테나2 로의 연속성을 보고 판별
           if (state.lastAntenna.isNotEmpty && state.lastAntenna != ant) {
             if (state.lastAntenna == '1' && ant == '2') {
               determinedDirection = '입고(IN) [Ant 1➔2]';
@@ -360,18 +591,14 @@ class DeviceProvider extends ChangeNotifier {
             } else if (state.lastAntenna == '2' && ant == '1') {
               determinedDirection = '출고(OUT) [Ant 2➔1]';
               state.status = 'OUT';
-            } else {
-              determinedDirection = '이동 [Ant ${state.lastAntenna}➔$ant]';
             }
             shouldLog = true;
           }
           break;
 
         case 'reader_fixed':
-        // 고정 리더기: 이 리더기에 읽히는 순간 조건 없이 무조건 IN 또는 OUT 처리
           determinedDirection = option.contains('OUT') ? '출고(OUT)' : '입고(IN)';
           String newStatus = determinedDirection.contains('IN') ? 'IN' : 'OUT';
-
           if (state.status != newStatus || now.difference(state.lastSeenTime).inSeconds > 3) {
             state.status = newStatus;
             shouldLog = true;
@@ -379,7 +606,6 @@ class DeviceProvider extends ChangeNotifier {
           break;
 
         case 'ant_fixed':
-        // 고정 안테나: 홀수 번호는 IN, 짝수 번호는 OUT 처리 (가장 대중적인 키오스크형 모델)
           int antNum = int.tryParse(ant) ?? 1;
           if (antNum % 2 != 0) {
             determinedDirection = '입고(IN) [Ant $ant]';
@@ -388,25 +614,22 @@ class DeviceProvider extends ChangeNotifier {
             determinedDirection = '출고(OUT) [Ant $ant]';
             state.status = 'OUT';
           }
-
           if (now.difference(state.lastSeenTime).inSeconds > 3) {
             shouldLog = true;
           }
           break;
       }
 
-      // 메모리에 현재 상태값 덮어쓰기 (업데이트)
       state.lastSeenTime = now;
       state.lastReaderId = deviceId;
       state.lastAntenna = ant;
       _tagStates[epc] = state;
 
-      // 방향이 확정되고 로그 기록이 필요한 경우 시스템 터미널에 특별히 알림
       if (shouldLog && determinedDirection.isNotEmpty) {
         _logSystem(deviceId, "★★★ [방향 판별 완료] EPC: $epc ➔ $determinedDirection");
       }
     } catch (e) {
-      debugPrint("방향 판단 로직 오류: $e");
+      debugPrint("방향 판단 오류: $e");
     }
   }
 
@@ -418,7 +641,7 @@ class DeviceProvider extends ChangeNotifier {
     });
   }
 
-  /// 장비 설정 저장 로직 (자동 연결 처리 포함)
+  /// 장비 설정 저장 로직
   Future<bool> handleSave({
     required DeviceModel? d,
     required Map<String, dynamic> data,
@@ -428,7 +651,6 @@ class DeviceProvider extends ChangeNotifier {
     if (_isDisposed) {
       return false;
     }
-
     _isSaving = true;
     notifyListeners();
 
@@ -451,20 +673,18 @@ class DeviceProvider extends ChangeNotifier {
       await fetchData();
 
       try {
-        final savedDevice = _list.firstWhere((item) => item.id == savedId);
-        // 저장이 완료된 후 활성화 & 자동연결 상태라면 통신 세션을 즉시 백그라운드로 올립니다.
+        final savedDevice = _list.firstWhere((item) {
+          return item.id == savedId;
+        });
         if (savedDevice.isActive && savedDevice.isAutoConnect && !skipAutoConnect) {
           Future.delayed(const Duration(milliseconds: 300), () {
             connectDevice(savedDevice);
           });
         }
-      } catch (e) {
-        debugPrint("자동 연결 트리거 에러: $e");
-      }
+      } catch (_) {}
 
       return true;
     } catch (e) {
-      debugPrint("장치 데이터 저장 에러: $e");
       return false;
     } finally {
       if (!_isDisposed) {

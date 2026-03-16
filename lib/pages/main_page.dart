@@ -4,6 +4,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'dart:io';
 
 import '../core/pocketbase_client.dart';
@@ -28,10 +30,10 @@ import 'settings_page.dart';
 /// 좌측 사이드바와 우측 본문 영역을 동적으로 관리하며 메뉴 네비게이션을 담당합니다.
 /// ---------------------------------------------------------------------------
 class MainPage extends StatefulWidget {
-  // [신규 추가] main.dart로부터 전달받는 키오스크 모드 시작 설정값 변수입니다.
+  // main.dart로부터 전달받는 키오스크 모드 시작 설정값 변수입니다.
   final bool initialKioskMode;
 
-  // [수정] 생성자에서 initialKioskMode를 받을 수 있도록 파라미터를 추가했습니다.
+  // 생성자에서 initialKioskMode를 받을 수 있도록 파라미터를 추가했습니다.
   const MainPage({
     super.key,
     this.initialKioskMode = false, // 값이 전달되지 않았을 경우를 대비한 안전한 기본값
@@ -44,7 +46,7 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> with WindowListener {
-  // [수정] 초기값을 고정(false)하지 않고, initState에서 전달받은 값으로 설정하기 위해 late 키워드 사용
+  // 초기값을 고정(false)하지 않고, initState에서 전달받은 값으로 설정하기 위해 late 키워드 사용
   late bool _isKioskMode;
 
   bool _isSidebarExtended = true;
@@ -69,11 +71,14 @@ class _MainPageState extends State<MainPage> with WindowListener {
   void initState() {
     super.initState();
 
-    // [핵심 추가] 부모 위젯(main.dart)에서 전달받은 환경설정 값으로 키오스크 모드 여부를 세팅합니다.
-    // 이제 설정창에서 '키오스크 모드로 시작'을 켜두셨다면, 앱 시작 시 즉시 키오스크 화면이 표출됩니다.
+    // 부모 위젯(main.dart)에서 전달받은 환경설정 값으로 키오스크 모드 여부를 세팅합니다.
     _isKioskMode = widget.initialKioskMode;
 
     windowManager.addListener(this);
+
+    // 앱 시작 시 창 위치와 크기를 명확히 제어하는 함수를 호출합니다.
+    _initWindowPosition();
+
     _initSystemTray();
   }
 
@@ -81,6 +86,27 @@ class _MainPageState extends State<MainPage> with WindowListener {
   void dispose() {
     windowManager.removeListener(this);
     super.dispose();
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [창 초기 위치/크기 보정 함수 (안정성 최우선 버전)]
+  /// 화면이 반토막 나고 마우스 포인터를 따라다니던 치명적인 렌더링 버그를 막기 위해,
+  /// 이리저리 창을 옮기는 기교를 모조리 버리고 "가장 단순하고 우직한 전체화면"만 유지합니다.
+  /// ---------------------------------------------------------------------------
+  Future<void> _initWindowPosition() async {
+    // 웹 환경이 아니고 데스크탑 환경일 때만 실행합니다.
+    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      try {
+        // 복잡한 위치 이동, 딜레이(Delay), 껐다 켜기 로직을 모두 영구 삭제했습니다!
+        // 플러터 엔진이 화면 크기를 헷갈리지 않도록 오직 전체화면 상태인지만 점검하고 덮어씌웁니다.
+        bool isFull = await windowManager.isFullScreen();
+        if (!isFull) {
+          await windowManager.setFullScreen(true);
+        }
+      } catch (e) {
+        debugPrint("창 초기화 중 오류 발생: $e");
+      }
+    }
   }
 
   /// 시스템 트레이(작업 표시줄 아이콘) 초기화 함수 (Windows 전용)

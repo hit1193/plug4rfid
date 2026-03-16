@@ -7,7 +7,7 @@ import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../models/user_model.dart';
-// [중요 수정] 기존 PBService를 지우고, DataModule 역할을 하는 전역 클라이언트를 임포트합니다.
+// 기존 PBService를 지우고, DataModule 역할을 하는 전역 클라이언트를 임포트합니다.
 import '../core/pocketbase_client.dart';
 
 /// ---------------------------------------------------------------------------
@@ -60,9 +60,7 @@ Map<String, dynamic>? _parseExcelIsolate(Uint8List bytes) {
 /// C++Builder의 DataModule 역할을 수행하며, UI 스레드에 데이터 변경을 통지합니다.
 /// ---------------------------------------------------------------------------
 class UserProvider extends ChangeNotifier {
-  // [중요 수정] 전역 pb 객체를 내부 변수로 매핑합니다.
-  // 이제 main.dart에서 획득한 '최고 관리자(Superuser) 권한'이 탑재된
-  // 신분증(토큰)을 그대로 이 프로바이더에서도 공유하여 사용하게 됩니다! (403 에러 원천 차단)
+  // 전역 pb 객체를 내부 변수로 매핑합니다.
   final PocketBase _pb = pb;
 
   // 데이터 대상 컬렉션 이름 (포켓베이스 기본 Auth 테이블)
@@ -149,8 +147,8 @@ class UserProvider extends ChangeNotifier {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [통합 저장 처리] - Insert / Update
-  /// 포켓베이스 Auth 컬렉션의 특성에 맞춰 부분 업데이트(Delta)를 수행합니다.
+  /// [단건 통합 저장 처리] - 화면에서 1명씩 추가/수정 시
+  /// 복잡했던 아이디(username) 생성 로직을 완전히 제거하고 이메일 중심으로 심플하게 재편!
   /// ---------------------------------------------------------------------------
   Future<bool> handleSave({
     required UserModel? p,
@@ -173,36 +171,60 @@ class UserProvider extends ChangeNotifier {
         ));
       }
 
-      // 2. 기존 데이터와 비교하여 변경되지 않은 민감 필드(이메일, 아이디)는 전송 제외
-      if (p != null) {
-        if (data.containsKey('email') && data['email'] == p.email) {
-          data.remove('email');
-        }
-        if (data.containsKey('username') && data['username'] == p.username) {
-          data.remove('username');
-        }
+      // -----------------------------------------------------------------------
+      // [데이터 가공 공통 규칙] 비밀번호 강제 동기화
+      // -----------------------------------------------------------------------
+      if (data.containsKey('password') && data['password'].toString().trim().isNotEmpty) {
+        data['passwordConfirm'] = data['password'].toString().trim();
+      }
+
+      // 🔥 [핵심 방어 1] 포켓베이스 v0.23 이상에서는 일반 계정이 verified 값을 건드리면 400 에러 발생!
+      // 따라서 페이로드에서 아예 제거해 버립니다.
+      data.remove('verified');
+      data['emailVisibility'] = true;
+
+      // 🔥 [보안 권한 체크] 현재 접속 중인 계정이 시스템 최고 관리자(_superusers)인지 판별
+      bool isAdmin = false;
+      final authModel = _pb.authStore.model;
+      if (authModel is RecordModel && authModel.collectionName == '_superusers') {
+        isAdmin = true;
+      } else if (authModel is AdminModel) {
+        isAdmin = true; // 구버전 호환용
       }
 
       RecordModel record;
+
       if (p == null) {
-        // [INSERT] 신규 인원 등록
-        // 포켓베이스 users 컬렉션 요구사항인 초기 비밀번호 세팅
-        if (!data.containsKey('password')) {
-          data['password'] = 'password123';
-          data['passwordConfirm'] = 'password123';
+        // [INSERT] 신규 인원 등록 (이메일 기반)
+        if (!data.containsKey('password') || data['password'].toString().trim().isEmpty) {
+          data['password'] = '12345678';
+          data['passwordConfirm'] = '12345678';
         }
+
         record = await _pb.collection(_collectionName).create(body: data, files: files);
         _list.insert(0, UserModel.fromRecord(record));
+
       } else {
         // [UPDATE] 기존 인원 정보 수정
-        // 비밀번호를 명시적으로 바꾸지 않는 경우 필드 자체를 제거하여 안전하게 처리
         if (data.containsKey('password') && data['password'].toString().trim().isEmpty) {
           data.remove('password');
           data.remove('passwordConfirm');
         }
+
+        // 🔥 [핵심 방어 2] 최고 관리자가 아닌 일반 계정(앱 내 수퍼바이저 포함)일 경우의 필터링
+        // 일반 사용자는 PocketBase 정책상 남의 이메일과 비밀번호를 절대 직접 바꿀 수 없습니다.
+        // 이것들을 전송하려 들면 oldPassword 누락 및 value_mismatch 에러가 터지므로 전송에서 제외합니다!
+        if (!isAdmin) {
+          data.remove('email');
+          if (data.containsKey('password')) {
+            data.remove('password');
+            data.remove('passwordConfirm');
+            debugPrint('⚠️ 일반 권한이므로 비밀번호 및 이메일 변경은 업데이트 항목에서 안전하게 제외되었습니다.');
+          }
+        }
+
         record = await _pb.collection(_collectionName).update(p.id, body: data, files: files);
 
-        // 메모리 상의 리스트를 찾아 즉시 교체합니다.
         int index = _list.indexWhere((item) => item.id == p.id);
         if (index != -1) {
           _list[index] = UserModel.fromRecord(record);
@@ -212,8 +234,17 @@ class UserProvider extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (e) {
-      debugPrint("저장 중 에러 발생: $e");
-      return false;
+      // 🚨 [핵심 디버깅] 포켓베이스가 저장을 거부한 "진짜 이유"를 낱낱이 출력합니다.
+      if (e is ClientException) {
+        debugPrint("\n===================================================");
+        debugPrint("❌ PocketBase DB 저장 거부 (ClientException) ❌");
+        debugPrint("상태 코드: ${e.statusCode}");
+        debugPrint("응답 내용: ${e.response}");
+        debugPrint("===================================================\n");
+      } else {
+        debugPrint("❌ 저장 중 알 수 없는 에러 발생: $e");
+      }
+      return false; // 저장이 실패했음을 UI에 알림
     } finally {
       if (!_isDisposed) {
         _isSaving = false;
@@ -223,8 +254,7 @@ class UserProvider extends ChangeNotifier {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [엑셀 일괄 임포트]
-  /// 대량의 인원 정보를 한 번에 등록합니다.
+  /// [엑셀 일괄 임포트] - 이메일 중심 로직으로 변경
   /// ---------------------------------------------------------------------------
   Future<int> batchImportFromExcel() async {
     try {
@@ -245,7 +275,6 @@ class UserProvider extends ChangeNotifier {
         bytes = await File(result.files.single.path!).readAsBytes();
       }
 
-      // 무거운 파싱 작업은 Isolate 스레드로 위임합니다.
       final parsedData = await compute(_parseExcelIsolate, bytes);
 
       if (parsedData == null || parsedData['details'] == null) {
@@ -266,22 +295,26 @@ class UserProvider extends ChangeNotifier {
           String name = _getExcelValue(row, ['성명', '이름', 'Name', 'name']);
           if (name.isEmpty) continue;
 
-          String code = _getExcelValue(row, ['사원번호', '사번', '코드', 'Code', 'code']);
+          String code = _getExcelValue(row, ['사원번호', '사번', '코드', 'Code', 'code']).trim();
           if (code.isEmpty) {
             code = "T-${DateTime.now().millisecondsSinceEpoch % 100000}";
           }
 
-          // 포켓베이스 username 정책(영문/숫자/3자리이상)을 충족하도록 가공합니다.
-          String safeUsername = code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
-          if (safeUsername.length < 3) {
-            safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 100000}';
+          // 🔥 엑셀 데이터에서 '이메일' 항목을 가장 먼저 찾습니다.
+          String email = _getExcelValue(row, ['이메일', 'e-mail', 'email', '메일']);
+          if (email.isEmpty) {
+            // 이메일이 없다면 사번을 기반으로 가상의 이메일을 자동 부여합니다.
+            String safePrefix = code.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+            email = '$safePrefix@plug4rfid.local';
           }
 
           final body = {
-            'username': safeUsername,
-            'email': '$safeUsername@plug4rfid.local', // 가짜 이메일 주소 주입 (필수값 충족)
-            'password': 'password123',
-            'passwordConfirm': 'password123',
+            // username 항목은 아예 전송하지 않습니다. (포켓베이스가 알아서 랜덤 생성합니다)
+            'email': email,
+            'password': '12345678',
+            'passwordConfirm': '12345678',
+            // 'verified': true, // 🔥 삭제 완료! (에러 원인 제거)
+            'emailVisibility': true,
             'name': name,
             'code': code,
             'department': _getExcelValue(row, ['담당부서', '부서', '소속', 'Dept']),
@@ -302,7 +335,7 @@ class UserProvider extends ChangeNotifier {
       }
 
       _isSaving = false;
-      await fetchData(); // 임포트 완료 후 전체 리시트 리프레시
+      await fetchData();
       return successCount;
     } catch (e) {
       _isParsing = false;
@@ -319,7 +352,6 @@ class UserProvider extends ChangeNotifier {
         return row[rowDataKey(row, key)].toString().trim();
       }
     }
-    // 대소문자 무시 검색 (fallback)
     for (var entry in row.entries) {
       if (possibleKeys.any((pk) => pk.toLowerCase() == entry.key.toLowerCase())) {
         return entry.value.toString().trim();
@@ -328,7 +360,6 @@ class UserProvider extends ChangeNotifier {
     return "";
   }
 
-  // 엑셀 맵에서 실제 키를 정확히 찾아주는 유틸리티
   String rowDataKey(Map<String, dynamic> row, String target) {
     return row.keys.firstWhere((k) => k == target, orElse: () => target);
   }
@@ -336,8 +367,6 @@ class UserProvider extends ChangeNotifier {
   /// ---------------------------------------------------------------------------
   /// [데이터 삭제 및 관리]
   /// ---------------------------------------------------------------------------
-
-  /// 단일 레코드 삭제
   Future<bool> deletePerson(String id) async {
     try {
       await _pb.collection(_collectionName).delete(id);
@@ -350,21 +379,17 @@ class UserProvider extends ChangeNotifier {
     }
   }
 
-  /// 전체 인원 및 설정 데이터 초기화 (신중하게 실행해야 합니다)
   Future<bool> resetAllPersons() async {
     if (_isDisposed) return false;
     _isSaving = true;
     notifyListeners();
 
     try {
-      // 1. 인원 목록 전체 삭제
       final records = await _pb.collection(_collectionName).getFullList(fields: 'id');
       if (records.isNotEmpty) {
-        // 비동기 병렬 삭제 처리
         await Future.wait(records.map((r) => _pb.collection(_collectionName).delete(r.id)));
       }
 
-      // 2. 동적 컬럼 설정값 삭제
       try {
         final config = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
         await _pb.collection(_configCollection).delete(config.id);
@@ -384,10 +409,7 @@ class UserProvider extends ChangeNotifier {
 
   /// ---------------------------------------------------------------------------
   /// [환경 설정 관리]
-  /// 서버에 저장된 사용자별(또는 공통) UI 설정값을 관리합니다.
   /// ---------------------------------------------------------------------------
-
-  /// 서버에서 리스트 뷰 컬럼 표시 설정을 불러옵니다.
   Future<void> fetchRemoteSettings() async {
     try {
       final record = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
@@ -398,7 +420,6 @@ class UserProvider extends ChangeNotifier {
       }
     } on ClientException catch (e) {
       if (e.statusCode == 404) {
-        // 설정이 없는 경우 기본값 세팅
         _selectedColumns = ['성명', '부서', '사번', '태그ID'];
         notifyListeners();
       }
@@ -407,7 +428,6 @@ class UserProvider extends ChangeNotifier {
     }
   }
 
-  /// 사용자가 변경한 컬럼 표시 설정을 서버에 영구 저장합니다.
   Future<void> saveRemoteSettings(List<String> columns) async {
     try {
       _selectedColumns = List.from(columns);
@@ -432,11 +452,10 @@ class UserProvider extends ChangeNotifier {
 
   /// ---------------------------------------------------------------------------
   /// [실시간 서버 동기화] - LiveQuery
-  /// 서버의 데이터가 변경(추가/수정/삭제)되면 즉시 감지하여 UI를 업데이트합니다.
   /// ---------------------------------------------------------------------------
   void _subscribe() {
     _pb.collection(_collectionName).subscribe('*', (e) {
-      if (_isDisposed || _isSaving) return; // 저장 중인 경우에는 중복 처리를 막습니다.
+      if (_isDisposed || _isSaving) return;
       if (e.record == null) return;
 
       if (e.action == 'create') {

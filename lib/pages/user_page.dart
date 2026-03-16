@@ -13,8 +13,8 @@ import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
-import '../models/device_model.dart';       // [추가] 실제 장비 모델 참조
-import '../providers/device_provider.dart'; // [추가] 실제 장비 상태 및 DB 연동 프로바이더 참조
+import '../models/device_model.dart';       // 실제 장비 모델 참조
+import '../providers/device_provider.dart'; // 실제 장비 상태 및 DB 연동 프로바이더 참조
 import '../theme/app_theme.dart';
 import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
 
@@ -87,6 +87,7 @@ class _UserPageState extends State<UserPage> {
   static const double _colActionWidth = 300.0;
 
   // UI에 노출되지 않아야 할 내부 시스템 키 목록
+  // 'grade'(등급) 필드를 기본 항목으로 승격시켰으므로 동적 메타데이터 화면에서 숨깁니다.
   static const Set<String> _excludedSystemKeys = {
     'import_source', 'original_row_data', 'id', 'created', 'updated',
     'collectionId', 'collectionName', 'last_access_type', 'last_access_time',
@@ -94,7 +95,8 @@ class _UserPageState extends State<UserPage> {
     'image', 'avatar', 'name', 'code', 'department', 'tag_id', 'is_active', 'remarks',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
     'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal', 'error_reason',
-    'email', 'username', 'password', 'passwordConfirm'
+    'email', 'username', 'password', 'passwordConfirm', 'app_login_id', 'app_login_email',
+    'grade' // 등급 필드 추가
   };
 
   @override
@@ -305,6 +307,7 @@ class _UserPageState extends State<UserPage> {
         String parsedName = "이름없음";
         String parsedCode = "";
         String parsedDept = "미지정";
+        String parsedGrade = "일반작업자"; // 🔥 등급 기본값을 3단계 중 가장 낮은 것으로 설정
         String parsedTagId = "";
 
         Map<String, dynamic> dynamicMetadata = {};
@@ -326,6 +329,10 @@ class _UserPageState extends State<UserPage> {
           else if (lowerKey.contains('dept') || lowerKey.contains('department') || lowerKey.contains('company') || lowerKey.contains('부서') || lowerKey.contains('소속')) {
             parsedDept = strValue;
           }
+          // 등급 정보 파싱
+          else if (lowerKey.contains('grade') || lowerKey.contains('등급') || lowerKey.contains('직급') || lowerKey.contains('level')) {
+            parsedGrade = strValue;
+          }
           else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
             parsedTagId = strValue;
           }
@@ -343,14 +350,17 @@ class _UserPageState extends State<UserPage> {
           parsedTagId = "TAG_$parsedCode";
         }
 
-        String safeUsername = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
-        if (safeUsername.isEmpty || safeUsername.length < 3) {
-          safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
+        // 메타데이터에 파싱된 등급을 넣습니다.
+        dynamicMetadata['grade'] = parsedGrade;
+
+        // ERP 연동 시에도 이메일 기반으로 처리되도록 변경
+        String safeEmailPrefix = parsedCode.toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
+        if (safeEmailPrefix.isEmpty || safeEmailPrefix.length < 3) {
+          safeEmailPrefix = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
         }
 
         return {
-          'username': safeUsername,
-          'email': '$safeUsername@plug4rfid.local',
+          'email': '$safeEmailPrefix@plug4rfid.local', // 사용자 정의 이메일이 없을 시 부여
           'password': 'password123',
           'passwordConfirm': 'password123',
           'name': '[ERP] $parsedName',
@@ -576,8 +586,6 @@ class _UserPageState extends State<UserPage> {
 
   /// ---------------------------------------------------------------------------
   /// 상단 헤더 영역
-  /// [업데이트] 이전 단계에서 상단에 존재했던 '단독 태그 발행' 버튼을 제거하고,
-  /// 다중 선택 바(Multi-select bar) 내부로 이동시켰습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
     return Container(
@@ -650,7 +658,7 @@ class _UserPageState extends State<UserPage> {
               });
             },
             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서 또는 추가 상세내용 검색...", context: context, prefixIcon: Icons.search),
+            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서, 등급 또는 추가 상세내용 검색...", context: context, prefixIcon: Icons.search),
           ),
         ],
       ),
@@ -710,7 +718,6 @@ class _UserPageState extends State<UserPage> {
                   ),
                   const SizedBox(width: 12),
 
-                  // [신규 이동 배치] 일괄 편집 좌측에 태그 일괄 발행 버튼을 배치합니다.
                   ElevatedButton.icon(
                     icon: const Icon(Icons.wifi_tethering, size: 18),
                     label: const Text("태그 일괄 발행", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -1169,8 +1176,15 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// 메타 값을 가져올 때 '등급' 필드도 기본 필드처럼 처리하여 즉시 반환합니다.
   String _getMetaValue(UserModel item, String key) {
-    final Map<String, String> baseFields = {'성명': item.name, '사번': item.code, '부서': item.department, '태그ID': item.tagId};
+    final Map<String, String> baseFields = {
+      '성명': item.name,
+      '사번': item.code,
+      '부서': item.department,
+      '등급': _safeStr(item.metadata['grade']), // 등급을 기본 필드처럼 매핑
+      '태그ID': item.tagId
+    };
 
     if (baseFields.containsKey(key)) {
       return baseFields[key]!;
@@ -1207,6 +1221,8 @@ class _UserPageState extends State<UserPage> {
 
     List<BulkEditField> fields = [
       BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
+      // 일괄 편집 창에도 '등급' 필드 추가
+      BulkEditField(key: 'grade', label: '새로운 등급/직급', type: BulkEditFieldType.text),
       BulkEditField(key: 'remarks', label: '새로운 공통 비고', type: BulkEditFieldType.text),
       BulkEditField(key: 'is_approved', label: '출입 승인 상태 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
     ];
@@ -1255,6 +1271,8 @@ class _UserPageState extends State<UserPage> {
           data['remarks'] = value;
         } else if (key == 'is_approved') {
           data['is_approved'] = value;
+        } else if (key == 'grade') {
+          updatedMeta['grade'] = value; // 등급은 메타데이터 공간에 저장
         } else {
           updatedMeta[key] = value;
         }
@@ -1384,7 +1402,8 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _showColumnSelectionDialog(UserProvider provider, ThemeData theme) {
-    final List<String> baseFields = ['성명', '사번', '부서', '태그ID'];
+    // 표시 항목 설정 다이얼로그에서도 '등급'을 기본 필수 항목 리스트에 합류시킵니다.
+    final List<String> baseFields = ['성명', '사번', '부서', '등급', '태그ID'];
 
     final Set<String> metaKeySet = {};
     for (final UserModel p in provider.list) {
@@ -1696,7 +1715,8 @@ class _UserPageState extends State<UserPage> {
       excel.rename(defaultSheet, '인원리스트');
       final excel_pkg.Sheet sheet = excel['인원리스트'];
 
-      final List<String> baseHeaders = ['성명', '사번', '부서', '태그ID'];
+      // 엑스포트 시에도 '등급'을 기본 열로 생성합니다.
+      final List<String> baseHeaders = ['성명', '사번', '부서', '등급', '태그ID'];
 
       final Set<String> metaKeySet = {};
       for (final UserModel p in dataList) {
@@ -1720,6 +1740,8 @@ class _UserPageState extends State<UserPage> {
           excel_pkg.TextCellValue(p.name),
           excel_pkg.TextCellValue(p.code),
           excel_pkg.TextCellValue(p.department),
+          // 데이터 기록 시 등급(grade) 값을 추출하여 입력합니다.
+          excel_pkg.TextCellValue(_safeStr(p.metadata['grade'])),
           excel_pkg.TextCellValue(p.tagId),
         ];
 
@@ -1835,11 +1857,45 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// ---------------------------------------------------------------------------
+  /// [신규 및 정보 수정 폼 다이얼로그]
+  /// '등급' 필드를 콤보박스(Dropdown)로 변경하여 규격화된 권한 체계를 유지합니다.
+  /// ---------------------------------------------------------------------------
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
-    final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
     final TextEditingController deptC = TextEditingController(text: p?.department ?? "");
+
+    // 🔥 [신규] 통상적인 3단계 등급(권한) 리스트를 정의합니다.
+    final List<String> gradeOptions = ['최고관리자 (Admin)', '현장관리자 (Manager)', '일반작업자 (Operator)'];
+
+    // 기본 선택값은 가장 낮은 '일반작업자'로 설정합니다.
+    String currentGrade = '일반작업자 (Operator)';
+
+    // 기존 데이터가 있다면 해당 값을 불러옵니다.
+    if (p != null) {
+      String savedGrade = _safeStr(p.metadata['grade']);
+      if (savedGrade.isNotEmpty) {
+        // 기존 데이터가 3단계 옵션 중에 있다면 그대로 적용합니다.
+        if (gradeOptions.contains(savedGrade)) {
+          currentGrade = savedGrade;
+        } else {
+          // 만약 엑셀 업로드 등으로 인해 리스트에 없는 값(예: '팀장')이 들어왔다면,
+          // 콤보박스 에러 방지를 위해 임시로 리스트에 추가해 줍니다. (Safe Lookup)
+          gradeOptions.add(savedGrade);
+          currentGrade = savedGrade;
+        }
+      }
+    }
+
+    String initialEmail = "";
+    if (p != null) {
+      initialEmail = _safeStr(p.metadata['app_login_email']);
+    }
+    final TextEditingController emailC = TextEditingController(text: initialEmail);
+
+    final TextEditingController pwdC = TextEditingController();
+    final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
     final TextEditingController remarksC = TextEditingController(text: p?.remarks ?? "");
     bool approved = p?.isApproved ?? true;
 
@@ -1871,6 +1927,10 @@ class _UserPageState extends State<UserPage> {
       final String initialValue = p != null ? _safeStr(p.metadata[key]) : "";
       metaC[key] = TextEditingController(text: initialValue);
     }
+
+    final String pwdLabel = p == null
+        ? "로그인 비밀번호 (미입력시 '12345678' 자동설정, 8자리 이상)"
+        : "새 비밀번호 (변경할 경우에만 입력, 미입력시 기존 유지)";
 
     showDialog(
         context: context,
@@ -1943,12 +2003,42 @@ class _UserPageState extends State<UserPage> {
                                                 children: [
                                                   _buildTextField(nameC, "성명 (필수)", theme),
                                                   const SizedBox(height: 16),
-                                                  _buildTextField(deptC, "담당부서/소속", theme),
-                                                  const SizedBox(height: 16),
-                                                  _buildTextField(codeC, "사번/ID", theme),
+
+                                                  // 부서와 등급(콤보박스)을 한 줄에 배치합니다.
+                                                  Row(
+                                                    children: [
+                                                      Expanded(child: _buildTextField(deptC, "담당부서/소속", theme)),
+                                                      const SizedBox(width: 16),
+                                                      // 🔥 [UI 교체] 텍스트 필드 대신 직접 제작한 드롭다운(콤보박스) 위젯을 사용합니다.
+                                                      Expanded(
+                                                        child: _buildDropdownField(
+                                                          value: currentGrade,
+                                                          label: "등급/권한",
+                                                          options: gradeOptions,
+                                                          theme: theme,
+                                                          onChanged: (String? newValue) {
+                                                            if (newValue != null) {
+                                                              // 화면을 다시 그려 콤보박스의 값을 변경합니다.
+                                                              setS(() {
+                                                                currentGrade = newValue;
+                                                              });
+                                                            }
+                                                          },
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
                                                   const SizedBox(height: 16),
 
-                                                  // [UI 개선] IntrinsicHeight와 stretch를 사용하여 버튼 높이를 텍스트 입력칸 높이에 완벽하게 맞춥니다.
+                                                  _buildTextField(codeC, "사번/코드", theme),
+                                                  const SizedBox(height: 16),
+
+                                                  _buildTextField(emailC, "로그인 이메일 (예: user01@plug4.com)", theme),
+                                                  const SizedBox(height: 16),
+
+                                                  _buildTextField(pwdC, pwdLabel, theme, isPassword: true),
+                                                  const SizedBox(height: 16),
+
                                                   IntrinsicHeight(
                                                     child: Row(
                                                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2024,22 +2114,34 @@ class _UserPageState extends State<UserPage> {
                         Navigator.pop(dialogCtx);
                       }),
                       AppTheme.actionButton(label: "통합 저장", onPressed: () async {
+                        String inputEmail = emailC.text.trim();
+                        if (inputEmail.isEmpty || !inputEmail.contains('@') || !inputEmail.contains('.')) {
+                          _showInfoDialog("이메일 입력 오류", "올바른 이메일 형식을 입력해 주세요.\n(예: user01@plug4.com)", theme);
+                          return;
+                        }
+
+                        final String inputPwd = pwdC.text.trim();
+                        String finalPwd = inputPwd;
+                        if (p == null && finalPwd.isEmpty) {
+                          finalPwd = '12345678';
+                        }
+
+                        if (finalPwd.isNotEmpty && finalPwd.length < 8) {
+                          _showInfoDialog("비밀번호 오류", "비밀번호는 최소 8자리 이상이어야 합니다.", theme);
+                          return;
+                        }
+
                         final Map<String, dynamic> meta = Map<String, dynamic>.from(p?.metadata ?? {});
                         metaC.forEach((String k, TextEditingController c) {
                           meta[k] = c.text.trim();
                         });
 
-                        String safeUsername = p != null && p.username.isNotEmpty
-                            ? p.username
-                            : codeC.text.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9_.-]'), '');
-                        if (safeUsername.isEmpty) {
-                          safeUsername = 'user_${DateTime.now().millisecondsSinceEpoch % 1000000}';
-                        }
-                        if (safeUsername.length < 3) {
-                          safeUsername += '_u';
-                        }
+                        meta['app_login_email'] = inputEmail;
+                        // 🔥 [신규] 콤보박스에서 선택된 등급(currentGrade) 데이터를 메타데이터 공간에 밀어넣습니다.
+                        meta['grade'] = currentGrade;
 
                         final Map<String, dynamic> data = {
+                          'email': inputEmail,
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),
                           'tag_id': tagC.text.trim(),
@@ -2050,11 +2152,9 @@ class _UserPageState extends State<UserPage> {
                           if (isImageDeleted) 'avatar': null,
                         };
 
-                        if (p == null) {
-                          data['username'] = safeUsername;
-                          data['email'] = '$safeUsername@plug4rfid.local';
-                          data['password'] = 'password123';
-                          data['passwordConfirm'] = 'password123';
+                        if (finalPwd.isNotEmpty) {
+                          data['password'] = finalPwd;
+                          data['passwordConfirm'] = finalPwd;
                         }
 
                         final bool ok = await provider.handleSave(p: p, data: data, imageXFile: file);
@@ -2064,6 +2164,8 @@ class _UserPageState extends State<UserPage> {
 
                         if (ok) {
                           Navigator.pop(dialogCtx);
+                        } else {
+                          _showInfoDialog("저장 실패", "데이터베이스 저장 중 오류가 발생했습니다.\n입력하신 이메일이 이미 사용 중일 수 있습니다.", theme);
                         }
                       })
                     ]
@@ -2074,11 +2176,47 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme) {
+  /// ---------------------------------------------------------------------------
+  /// [UI 조각] 범용 텍스트 필드 빌더
+  /// ---------------------------------------------------------------------------
+  Widget _buildTextField(TextEditingController ctrl, String label, ThemeData theme, {bool isPassword = false}) {
     return TextField(
         controller: ctrl,
+        obscureText: isPassword, // true일 경우 비밀번호 마스킹
         style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
         decoration: AppTheme.inputDecoration(label: label, context: context)
+    );
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [UI 조각] 드롭다운(콤보박스) 필드 빌더
+  /// 텍스트 필드와 완벽하게 동일한 테마(모서리 둥글기, 여백 등)를 공유합니다.
+  /// ---------------------------------------------------------------------------
+  Widget _buildDropdownField({
+    required String value,
+    required String label,
+    required List<String> options,
+    required ThemeData theme,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return DropdownButtonFormField<String>(
+      initialValue: value,
+      decoration: AppTheme.inputDecoration(label: label, context: context),
+      style: TextStyle(
+          fontFamily: AppTheme.fontPretendard,
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          color: AppTheme.dataColor(theme.brightness == Brightness.dark)
+      ),
+      dropdownColor: theme.cardTheme.color,
+      icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
+      items: options.map((String option) {
+        return DropdownMenuItem<String>(
+          value: option,
+          child: Text(option),
+        );
+      }).toList(),
+      onChanged: onChanged,
     );
   }
 
@@ -2111,7 +2249,7 @@ class _UserPageState extends State<UserPage> {
 }
 
 /// ---------------------------------------------------------------------------
-/// [신규 혁신 클래스] 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<UserModel> selectedUsers; // 1개 이상 여러 명의 대상을 받을 수 있습니다.
