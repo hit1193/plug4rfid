@@ -7,117 +7,86 @@ import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
 
 import '../models/product_model.dart';
-// [중요 수정] 기존의 개별 PBService 대신, DataModule 역할을 하는 전역 클라이언트를 임포트합니다.
 import '../core/pocketbase_client.dart';
 
 /// ---------------------------------------------------------------------------
-/// [엑셀 파싱 Isolate 함수]
-/// 메인 스레드(UI)가 멈추는 것을 방지하기 위해 백그라운드(Isolate)에서 실행됩니다.
-/// 엑셀 파일의 바이트 데이터를 받아 분석한 뒤, 각 행을 Map 형태로 변환하여 반환합니다.
-/// C++Builder의 별도 Worker Thread 작업과 동일한 개념입니다.
+/// [엑셀 파싱 전용 백그라운드 워커 (Isolate)]
+/// 메인 UI 스레드의 프리징을 방지하기 위해 엑셀 데이터를 독립된 메모리 공간에서 분석합니다.
 /// ---------------------------------------------------------------------------
 Map<String, dynamic>? _parseProductExcel(Uint8List bytes) {
   try {
-    // 1. 바이트 데이터로부터 엑셀 객체 생성
     var excel = Excel.decodeBytes(bytes);
-    if (excel.tables.isEmpty) return null;
+    if (excel.tables.isEmpty) {
+      return null;
+    }
 
-    // 2. 첫 번째 시트를 선택하여 데이터 추출
     String sheetName = excel.tables.keys.first;
     var table = excel.tables[sheetName]!;
+    if (table.maxRows < 1) {
+      return null;
+    }
 
-    // 데이터가 헤더(1줄)조차 없다면 처리할 수 없으므로 종료
-    if (table.maxRows < 1) return null;
-
-    // 3. 첫 번째 행을 헤더(컬럼명)로 사용
     List<String> headers = table.rows.first.map((cell) {
       return (cell?.value?.toString() ?? "").trim();
     }).toList();
 
     List<Map<String, dynamic>> rows = [];
-
-    // 4. 두 번째 행부터 실제 데이터로 읽어들이기
     for (int i = 1; i < table.maxRows; i++) {
       Map<String, dynamic> rowData = {};
-
       for (int j = 0; j < headers.length; j++) {
-        // 셀에 데이터가 존재하는 경우에만 Map에 담기
         if (j < table.rows[i].length) {
           rowData[headers[j]] = table.rows[i][j]?.value?.toString() ?? "";
         }
       }
-
-      // 행에 비어있지 않은 유효한 값이 하나라도 있다면 목록에 추가
-      if (rowData.values.any((value) => value.toString().isNotEmpty)) {
+      if (rowData.values.any((v) => v.toString().isNotEmpty)) {
         rows.add(rowData);
       }
     }
-
-    // 총 데이터 개수와 상세 데이터를 반환
-    return {
-      "count": rows.length,
-      "details": rows
-    };
-  } catch (error) {
-    // 엑셀 파싱 중 오류가 발생하면 null을 반환하여 앱이 죽지 않도록 보호
+    return {"data_count": rows.length, "details": rows};
+  } catch (e) {
+    debugPrint("엑셀 파싱 스레드 오류: $e");
     return null;
   }
 }
 
 /// ---------------------------------------------------------------------------
-/// [ProductProvider 클래스]
-/// 제품(Product)과 관련된 모든 상태(State)와 비즈니스 로직을 관리하는 Provider입니다.
-/// 화면(UI)에서는 이 Provider를 바라보며 데이터가 변경될 때마다 화면을 갱신합니다.
+/// [물품 관리 전역 상태 제공자 (ProductProvider)]
+/// 애플리케이션의 비즈니스 로직과 데이터 상태를 관장하는 핵심 모듈입니다.
 /// ---------------------------------------------------------------------------
 class ProductProvider extends ChangeNotifier {
-  // [중요 수정] 전역 pb 객체를 내부 변수로 매핑합니다.
-  // 이제 main.dart에서 획득한 '최고 관리자(Superuser) 권한'이 탑재된
-  // 신분증(토큰)을 그대로 이 프로바이더에서도 공유하여 사용하게 됩니다! (403 에러 원천 차단)
   final PocketBase _pb = pb;
 
-  // PocketBase 컬렉션 이름 정의
   final String _collectionName = 'products';
   final String _configCollection = 'app_configs';
   final String _columnConfigKey = 'product_list_columns';
 
-  // 내부 상태 변수들
   List<ProductModel> _items = [];
-  List<String> _selectedColumns = ['품명', '태그ID', '위치', '상태'];
+  List<String> _selectedColumns = [];
 
-  bool _isLoading = false;     // 데이터를 불러오는 중인지 여부
-  bool _isSaving = false;      // 데이터를 저장/삭제 중인지 여부
-  bool _isParsing = false;     // 엑셀을 분석 중인지 여부
-  bool _isDisposed = false;    // Provider가 소멸되었는지 여부
-  bool _isInitialized = false; // 초기화가 완료되었는지 여부
+  bool _isLoading = false;
+  bool _isSaving = false;
+  bool _isParsing = false;
+  bool _isDisposed = false;
+  bool _isInitialized = false;
 
-  // UI에서 접근할 수 있는 Getter 메서드들
   List<ProductModel> get items => _items;
   List<String> get selectedColumns => _selectedColumns;
   bool get isLoading => _isLoading;
   bool get isSaving => _isSaving;
   bool get isParsing => _isParsing;
 
-  // 물품의 상태값 기준 목록 (고정값)
-  static const List<String> allStatus = [
-    '정상', '구매입고', '회수/반납', '수기입고', '판매출고',
-    '수리출고', '대여출고', '폐기', '분실', '수기출고'
-  ];
-
-  /// 생성자: 객체가 생성될 때 초기화 함수를 자동으로 호출합니다.
   ProductProvider() {
     _initProvider();
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [초기화 및 실시간 구독 설정]
-  /// 서버 설정값과 초기 데이터를 불러온 후, 실시간 데이터 변경 감지를 시작합니다.
-  /// ---------------------------------------------------------------------------
   Future<void> _initProvider() async {
-    if (_isInitialized) return;
+    if (_isInitialized) {
+      return;
+    }
 
     await fetchRemoteSettings();
     await fetchData();
-    _subscribe(); // 서버의 데이터 변경을 실시간으로 감지
+    _subscribe();
 
     _isInitialized = true;
   }
@@ -125,259 +94,166 @@ class ProductProvider extends ChangeNotifier {
   @override
   void dispose() {
     _isDisposed = true;
-    _safeUnsubscribe(); // 앱 종료 또는 화면 이동 시 실시간 구독 해제
+    _safeUnsubscribe();
     super.dispose();
   }
 
-  /// 서버 실시간 구독 안전하게 해제
   Future<void> _safeUnsubscribe() async {
     try {
       await _pb.collection(_collectionName).unsubscribe('*');
-    } catch (error) {
-      // 구독 해제 중 발생하는 오류는 무시 (앱 동작에 영향 없음)
-    }
+    } catch (_) {}
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [서버 데이터 실시간 감지 (Subscribe)]
-  /// 누군가 데이터를 추가, 수정, 삭제하면 자동으로 감지하여 목록을 새로고침합니다.
-  /// ---------------------------------------------------------------------------
-  void _subscribe() {
-    _pb.collection(_collectionName).subscribe('*', (event) {
-      // 내가 직접 저장 중이거나 이미 종료된 화면이라면 무시
-      if (_isDisposed || _isSaving) return;
-
-      // 변경 이벤트가 발생하면 데이터를 다시 불러옴
-      fetchData();
-    });
-  }
-
-  /// ---------------------------------------------------------------------------
-  /// [데이터 목록 불러오기]
-  /// 서버에서 최근 수정된 순서대로 전체 제품 목록을 가져옵니다.
-  /// ---------------------------------------------------------------------------
   Future<void> fetchData() async {
-    if (_isDisposed) return;
+    if (_isDisposed) {
+      return;
+    }
 
     _isLoading = true;
-    notifyListeners(); // 화면에 로딩 스피너 표시 지시
+    notifyListeners();
 
     try {
-      // sort: '-updated' -> 최근 수정일 기준 내림차순 정렬
-      final records = await _pb.collection(_collectionName).getFullList(sort: '-updated');
+      final records = await _pb.collection(_collectionName).getFullList(
+        sort: '-created',
+      );
 
-      if (_isDisposed) return;
+      if (_isDisposed) {
+        return;
+      }
 
-      // 서버에서 받은 레코드를 ProductModel 객체 리스트로 변환
-      _items = records.map((record) {
-        return ProductModel.fromJson({
-          ...record.data,
-          'id': record.id,
-          'created': record.created,
-          'updated': record.updated
-        });
-      }).toList();
-
+      _items = records.map((r) => ProductModel.fromRecord(r)).toList();
+      debugPrint("물품 데이터 로드 성공: ${_items.length}건");
+    } catch (e) {
+      debugPrint("물품 데이터 로드 중 에러: $e");
     } finally {
       if (!_isDisposed) {
         _isLoading = false;
-        notifyListeners(); // 화면에 데이터 갱신 지시
-      }
-    }
-  }
-
-  /// ---------------------------------------------------------------------------
-  /// [원격 설정 가져오기]
-  /// 서버에 저장된 사용자의 컬럼(리스트 표출 항목) 설정값을 불러옵니다.
-  /// ---------------------------------------------------------------------------
-  Future<void> fetchRemoteSettings() async {
-    try {
-      final record = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
-      final dynamic value = record.data['value'];
-
-      if (value is List) {
-        _selectedColumns = value.map((element) => element.toString()).toList();
         notifyListeners();
       }
-    } catch (error) {
-      // 설정값이 없거나 가져오기 실패 시 기본값 유지
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [원격 설정 저장하기]
-  /// 사용자가 그리드/리스트에서 보길 원하는 컬럼 구성을 서버에 저장합니다.
-  /// ---------------------------------------------------------------------------
-  Future<void> saveRemoteSettings(List<String> columns) async {
-    try {
-      _selectedColumns = List.from(columns);
-      notifyListeners();
-
-      RecordModel? existingRecord;
-      try {
-        existingRecord = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
-      } catch (error) {
-        // 기존 설정이 없으면 null 상태 유지
-      }
-
-      final requestBody = {
-        'key': _columnConfigKey,
-        'value': _selectedColumns
-      };
-
-      if (existingRecord != null) {
-        // 기존 설정이 있으면 업데이트
-        await _pb.collection(_configCollection).update(existingRecord.id, body: requestBody);
-      } else {
-        // 기존 설정이 없으면 새로 생성
-        await _pb.collection(_configCollection).create(body: requestBody);
-      }
-    } catch (error) {
-      // 저장 실패 처리
+  Future<bool> handleSave({
+    required ProductModel? product,
+    required Map<String, dynamic> data,
+    XFile? imageXFile,
+  }) async {
+    if (_isDisposed) {
+      return false;
     }
-  }
 
-  /// ---------------------------------------------------------------------------
-  /// [단일 제품 데이터 저장/수정]
-  /// 이미지가 있는 경우 포함하여 서버에 데이터를 저장합니다.
-  /// ---------------------------------------------------------------------------
-  Future<bool> handleSave({required ProductModel? product, required Map<String, dynamic> data, XFile? imageXFile}) async {
     _isSaving = true;
     notifyListeners();
 
     try {
       List<http.MultipartFile> files = [];
-
-      // 이미지가 첨부된 경우 MultipartFile 형식으로 변환하여 추가
       if (imageXFile != null) {
         final bytes = await imageXFile.readAsBytes();
-        files.add(
-            http.MultipartFile.fromBytes('image', bytes, filename: imageXFile.name)
-        );
+        files.add(http.MultipartFile.fromBytes(
+            'image', // Product에서는 avatar대신 image 사용
+            bytes,
+            filename: imageXFile.name
+        ));
       }
+
+      RecordModel record;
 
       if (product == null) {
-        // 신규 등록
-        await _pb.collection(_collectionName).create(body: data, files: files);
+        record = await _pb.collection(_collectionName).create(body: data, files: files);
+        _items.insert(0, ProductModel.fromRecord(record));
       } else {
-        // 기존 데이터 수정
-        await _pb.collection(_collectionName).update(product.id, body: data, files: files);
+        record = await _pb.collection(_collectionName).update(product.id, body: data, files: files);
+        int index = _items.indexWhere((item) => item.id == product.id);
+        if (index != -1) {
+          _items[index] = ProductModel.fromRecord(record);
+        }
       }
+
+      notifyListeners();
       return true;
-    } catch (error) {
+
+    } catch (e) {
+      if (e is ClientException) {
+        debugPrint("\n===================================================");
+        debugPrint("❌ Product DB 저장 거부 (ClientException) ❌");
+        debugPrint("상태 코드: ${e.statusCode}");
+        debugPrint("응답 내용: ${e.response}");
+        debugPrint("===================================================\n");
+      } else {
+        debugPrint("❌ 물품 저장 중 알 수 없는 에러 발생: $e");
+      }
       return false;
     } finally {
-      _isSaving = false;
-      // 실시간 구독(Subscribe)이 작동하지만, 즉각적인 화면 반영을 위해 명시적으로 호출
-      await fetchData();
-    }
-  }
-
-  /// ---------------------------------------------------------------------------
-  /// [다중 선택 제품 삭제]
-  /// 체크박스로 선택된 여러 개의 제품을 일괄 삭제합니다.
-  /// ---------------------------------------------------------------------------
-  Future<void> deleteMultipleProducts(List<String> productIds) async {
-    _isSaving = true;
-    notifyListeners();
-
-    try {
-      for (var id in productIds) {
-        await _pb.collection(_collectionName).delete(id);
+      if (!_isDisposed) {
+        _isSaving = false;
+        notifyListeners();
       }
-    } finally {
-      _isSaving = false;
-      await fetchData();
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [전체 데이터 초기화]
-  /// 시스템 전체의 물품 데이터를 삭제합니다. (주의해서 사용)
-  /// ---------------------------------------------------------------------------
-  Future<void> resetAllProducts() async {
-    _isSaving = true;
-    notifyListeners();
-
+  Future<int> batchImportFromExcel() async {
     try {
-      // 전체 목록의 ID만 먼저 가져옵니다. (트래픽 절약)
-      final records = await _pb.collection(_collectionName).getFullList(fields: 'id');
-
-      for (var record in records) {
-        await _pb.collection(_collectionName).delete(record.id);
-      }
-      _items = []; // 로컬 리스트 비우기
-    } finally {
-      _isSaving = false;
-      notifyListeners();
-    }
-  }
-
-  /// ---------------------------------------------------------------------------
-  /// [엑셀 데이터 일괄 가져오기 (핵심 개선 영역)]
-  /// 선택된 엑셀 파일을 분석하여 서버에 연속으로 등록합니다.
-  /// 일부 데이터가 형식이 맞지 않거나 서버 저장에 실패해도 멈추지 않고,
-  /// 에러 건으로 분류하여 저장하므로 나중에 확인/수정이 가능합니다.
-  /// ---------------------------------------------------------------------------
-  Future<Map<String, int>> batchImportFromExcel() async {
-    try {
-      // 1. 엑셀 파일 선택창 띄우기 (.xlsx, .xls 확장자만 허용)
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: ['xlsx', 'xls']
+        type: FileType.custom,
+        allowedExtensions: ['xlsx', 'xls'],
       );
 
-      if (result == null) return {'success': 0, 'error': 0, 'total': 0};
+      if (result == null) {
+        return 0;
+      }
 
       _isParsing = true;
       notifyListeners();
 
-      // 2. 파일 바이트 데이터 추출 (웹과 데스크탑/모바일 환경 구분)
-      Uint8List bytes = kIsWeb
-          ? result.files.single.bytes!
-          : await File(result.files.single.path!).readAsBytes();
-
-      // 3. 백그라운드 스레드(Isolate)에서 엑셀 파싱 실행
-      final parsedData = await compute(_parseProductExcel, bytes);
-
-      _isParsing = false;
-
-      if (parsedData == null) {
-        notifyListeners();
-        return {'success': 0, 'error': 0, 'total': 0};
+      Uint8List bytes;
+      if (kIsWeb) {
+        bytes = result.files.single.bytes!;
+      } else {
+        bytes = await File(result.files.single.path!).readAsBytes();
       }
 
-      _isSaving = true;
-      notifyListeners();
+      final parsedData = await compute(_parseProductExcel, bytes);
 
-      // 파싱된 데이터 행 목록
+      if (parsedData == null || parsedData['details'] == null) {
+        _isParsing = false;
+        notifyListeners();
+        return 0;
+      }
+
       List<Map<String, dynamic>> rows = List<Map<String, dynamic>>.from(parsedData['details']);
-
       int successCount = 0;
       int errorCount = 0;
 
-      // 4. 추출된 각 행(Row) 데이터를 서버에 하나씩 업로드
+      _isParsing = false;
+      _isSaving = true;
+      notifyListeners();
+
       for (var row in rows) {
         try {
-          // 데이터 유연성 확보: 컬럼명이 약간 달라도 호환되도록 처리하고 앞뒤 공백 제거
-          String name = (row['품명'] ?? row['제품명'] ?? '').toString().trim();
-          String tagId = (row['태그ID'] ?? row['RFID'] ?? '').toString().trim();
-          String location = (row['위치'] ?? '').toString().trim();
+          String name = _getExcelValue(row, ['품명', '이름', 'Name', '제품명', '자산명']);
+          String tagId = _getExcelValue(row, ['태그', 'EPC', 'RFID', 'tag_id']);
+          String location = _getExcelValue(row, ['위치', '로케이션', '보관장소']);
+          String category = _getExcelValue(row, ['분류', '카테고리']);
+          String status = _getExcelValue(row, ['상태', 'status']);
 
           if (location.isEmpty) {
-            location = '미지정';
+            location = "미지정";
+          }
+          if (category.isEmpty) {
+            category = "미지정";
+          }
+          if (status.isEmpty) {
+            status = "보유중";
           }
 
-          // 유효성 검증: 제품명은 필수값이라고 가정
-          bool isFormatValid = name.isNotEmpty;
-
-          if (isFormatValid) {
-            // [정상 데이터]
+          if (name.isNotEmpty) {
             final body = {
               'name': name,
               'tag_id': tagId,
               'location': location,
-              'status': '정상',
+              'category': category,
+              'status': status,
+              'is_active': true,
               'metadata': {
                 'import_source': 'excel',
                 'original_row_data': row
@@ -402,31 +278,156 @@ class ProductProvider extends ChangeNotifier {
             errorCount++;
           }
         } catch (error) {
-          // 서버 통신 에러 (예: 태그ID 유니크 제약조건 위반 등)
-          // 반복문이 멈추지 않도록 catch 블록 안에서 카운트만 증가시킴
           if (kDebugMode) {
-            print('엑셀 단일 행 저장 실패: $error'); // 프로덕션 환경에서는 출력되지 않도록 보호
+            print('엑셀 단일 행 저장 실패: $error');
           }
           errorCount++;
         }
       }
 
       _isSaving = false;
-      await fetchData(); // 완료 후 화면 새로고침
-
-      // 결과 리포트를 UI로 전달 (성공 건수, 실패 건수, 전체 건수)
-      return {
-        'success': successCount,
-        'error': errorCount,
-        'total': rows.length
-      };
-
-    } catch (error) {
-      // 파일 읽기 자체에서 치명적 오류 발생 시 처리
+      await fetchData();
+      return successCount;
+    } catch (e) {
       _isParsing = false;
       _isSaving = false;
       notifyListeners();
-      return {'success': 0, 'error': 0, 'total': 0};
+      return 0;
     }
+  }
+
+  String _getExcelValue(Map<String, dynamic> row, List<String> possibleKeys) {
+    for (var key in possibleKeys) {
+      if (row.containsKey(key) && row[key] != null) {
+        return row[rowDataKey(row, key)].toString().trim();
+      }
+    }
+    for (var entry in row.entries) {
+      if (possibleKeys.any((pk) => pk.toLowerCase() == entry.key.toLowerCase())) {
+        return entry.value.toString().trim();
+      }
+    }
+    return "";
+  }
+
+  String rowDataKey(Map<String, dynamic> row, String target) {
+    return row.keys.firstWhere((k) => k == target, orElse: () => target);
+  }
+
+  Future<bool> deleteMultipleProducts(List<String> ids) async {
+    if (_isDisposed) {
+      return false;
+    }
+
+    try {
+      await Future.wait(ids.map((id) => _pb.collection(_collectionName).delete(id)));
+
+      _items.removeWhere((p) => ids.contains(p.id));
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("물품 다중 삭제 실패: $e");
+      return false;
+    }
+  }
+
+  Future<bool> resetAllProducts() async {
+    if (_isDisposed) {
+      return false;
+    }
+
+    _isSaving = true;
+    notifyListeners();
+
+    try {
+      final records = await _pb.collection(_collectionName).getFullList(fields: 'id');
+      if (records.isNotEmpty) {
+        await Future.wait(records.map((r) => _pb.collection(_collectionName).delete(r.id)));
+      }
+
+      try {
+        final config = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
+        await _pb.collection(_configCollection).delete(config.id);
+      } catch (_) {}
+
+      _items = [];
+      _selectedColumns = [];
+      return true;
+    } catch (e) {
+      debugPrint("물품 데이터 초기화 오류: $e");
+      return false;
+    } finally {
+      if (!_isDisposed) {
+        _isSaving = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> fetchRemoteSettings() async {
+    try {
+      final record = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
+      final dynamic val = record.data['value'];
+      if (val is List) {
+        _selectedColumns = val.map((e) => e.toString()).toList();
+        notifyListeners();
+      }
+    } on ClientException catch (e) {
+      if (e.statusCode == 404) {
+        _selectedColumns = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint("설정 로드 실패: $e");
+    }
+  }
+
+  Future<void> saveRemoteSettings(List<String> columns) async {
+    try {
+      _selectedColumns = List.from(columns);
+      notifyListeners();
+
+      RecordModel? existing;
+      try {
+        existing = await _pb.collection(_configCollection).getFirstListItem('key = "$_columnConfigKey"');
+      } catch (_) {}
+
+      final body = {'key': _columnConfigKey, 'value': _selectedColumns};
+
+      if (existing != null) {
+        await _pb.collection(_configCollection).update(existing.id, body: body);
+      } else {
+        await _pb.collection(_configCollection).create(body: body);
+      }
+    } catch (e) {
+      debugPrint("설정 저장 실패: $e");
+    }
+  }
+
+  void _subscribe() {
+    _pb.collection(_collectionName).subscribe('*', (e) {
+      if (_isDisposed || _isSaving) {
+        return;
+      }
+
+      if (e.record == null) {
+        return;
+      }
+
+      if (e.action == 'create') {
+        if (!_items.any((p) => p.id == e.record!.id)) {
+          _items.insert(0, ProductModel.fromRecord(e.record!));
+        }
+      } else if (e.action == 'update') {
+        int idx = _items.indexWhere((p) => p.id == e.record!.id);
+        if (idx != -1) {
+          _items[idx] = ProductModel.fromRecord(e.record!);
+        }
+      } else if (e.action == 'delete') {
+        _items.removeWhere((p) => p.id == e.record!.id);
+      }
+
+      notifyListeners();
+    });
   }
 }

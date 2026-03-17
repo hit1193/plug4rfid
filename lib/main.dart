@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+// 🔥 [에러 수정 완료] kIsWeb 상수를 사용하기 위해 foundation.dart를 다시 추가합니다.
+// (이전 경고는 ai_search_helper.dart 쪽이었습니다!)
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -55,38 +57,28 @@ void main() async {
     // 1. 윈도우 매니저 서비스를 초기화합니다.
     await windowManager.ensureInitialized();
 
-    // 2. 초기 창 옵션을 설정합니다.
+    // 🔥 [우하단 치우침 완벽 해결 1]
+    // center: true 옵션을 제거했습니다!
+    // 전체화면 상태와 중앙 정렬(center) 로직이 충돌하면,
+    // 윈도우 OS가 전체화면의 '좌측 상단 꼭지점'을 모니터의 '정중앙'에 맞춰버려서 우하단으로 처박히는 현상이 발생합니다.
     WindowOptions windowOptions = const WindowOptions(
       // 전체화면이 풀렸을 때(예: 다이얼로그 팝업 등)를 대비한 기본 해상도
       size: Size(1440, 760),
-      center: true, // 화면 중앙 배치
       titleBarStyle: TitleBarStyle.hidden, // 기본 타이틀바(최소화/최대화/닫기)를 숨깁니다.
-      // [핵심 추가 옵션] 윈도우 창 생성 옵션 자체에 전체화면을 강제합니다.
-      // 이 옵션이 있어야 윈도우 OS가 처음부터 이 앱을 독점적인 전체화면 앱으로 취급합니다.
-      fullScreen: true,
     );
 
     // 3. 윈도우 창이 화면에 렌더링될 준비가 완료되었을 때 실행되는 안정적인 콜백입니다.
     windowManager.waitUntilReadyToShow(windowOptions, () async {
-      // 창의 윈도우 기본 테두리(Frame)를 물리적으로 삭제하여 미니멀리즘 디자인을 확보합니다.
-      await windowManager.setAsFrameless();
-
-      // 창의 그림자 효과를 제거하여 더욱 깔끔하고 평면적인 느낌을 줍니다.
-      await windowManager.setHasShadow(false);
-
-      // [명령 순서 최적화] 윈도우 환경에서 가장 안정적으로 전체화면을 그리는 순서입니다.
-      // 1. 먼저 창을 화면에 표시합니다. (Windows가 창의 존재를 인식하게 함)
-      await windowManager.show();
-
-      // 2. 창이 표시된 직후, 다시 한번 전체화면 명령을 강제로 덮어씌웁니다.
+      // 🔥 [우하단 치우침 완벽 해결 2]
+      // Future.delayed 같은 인위적인 딜레이 꼼수를 완전히 제거했습니다.
+      // 창이 사용자 눈에 보이지 않는 백그라운드 상태에서 전체화면을 먼저 꽉 채우고,
+      // 그 다음 화면에 나타나게(show) 하면 마우스를 따라가거나 화면 밖으로 밀리는 현상 없이 단번에 자연스럽게 활성화됩니다.
       await windowManager.setFullScreen(true);
-
-      // 3. 앱으로 키보드와 마우스의 포커스를 가져옵니다.
+      await windowManager.show();
       await windowManager.focus();
     });
   }
 
-  // 🔥 [핵심 수정 부분]
   // 기존에는 ThemeProvider 단일 항목만 주입했지만, MultiProvider를 사용하여
   // 앱 전체에서 사용할 ThemeProvider와 AuthProvider를 동시에 메모리에 올립니다.
   // 이 부분이 수정되어야 로그인 페이지에서 프로바이더 참조 오류가 사라집니다.

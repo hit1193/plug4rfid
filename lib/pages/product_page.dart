@@ -5,47 +5,51 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert'; // 태그 데이터 UTF-8 -> Hex 변환용
 import 'package:excel/excel.dart' as excel_pkg;
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
+// 모델 및 프로바이더 임포트
 import '../models/product_model.dart';
 import '../models/user_model.dart';
 import '../providers/product_provider.dart';
-import '../providers/user_provider.dart';
+import '../providers/user_provider.dart'; // 수기 입출고 담당자 선택용
+import '../models/device_model.dart';     // 🔥 태그 발행 시 장비 연동용
+import '../providers/device_provider.dart'; // 🔥 태그 발행 시 장비 상태 연동용
 import '../theme/app_theme.dart';
-import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
+import '../core/erp_sync_helper.dart';
 
-// [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
+// AI 검색 모듈 임포트
+import '../core/ai_search_helper.dart';
+
+// 공용 팝업 위젯 임포트
 import '../widgets/column_selection_dialog.dart';
 import '../widgets/bulk_edit_dialog.dart';
 
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
-/// Null 값이나 빈 문자열, 혹은 "null"이라는 문자열을 안전하게 처리하여
-/// UI 렌더링 시 오류를 방지하고 기본값을 반환하는 유틸리티 함수입니다.
-/// 데이터베이스에서 넘어오는 null 값을 방어하는 최신 Dart의 널 세이프티(Null Safety) 대응 패턴입니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
     return defaultVal;
   }
+
   final String str = value.toString().trim();
+
   if (str.isEmpty || str == "null") {
     return defaultVal;
   }
+
   return str;
 }
 
 /// ---------------------------------------------------------------------------
 /// [물품 관리 페이지]
-/// 메인 화면의 우측 영역에 표출되는 물품 관리 통합 관제 화면입니다.
-/// 키오스크와 같이 직관적이고 미니멀한 디자인 철학을 바탕으로,
-/// 사용자가 넓은 화면에서 쾌적하게 데이터를 조회하고 편집할 수 있도록 구성했습니다.
 /// ---------------------------------------------------------------------------
 class ProductPage extends StatefulWidget {
   final String searchQuery;
-  final bool isMobile; // 화면 너비에 따라 전달받는 반응형 UI 전환 플래그입니다.
+  final bool isMobile;
   final String baseUrl;
 
   const ProductPage({
@@ -56,14 +60,12 @@ class ProductPage extends StatefulWidget {
   });
 
   @override
-  State<ProductPage> createState() => _ProductPageState();
+  State<ProductPage> createState() {
+    return _ProductPageState();
+  }
 }
 
 class _ProductPageState extends State<ProductPage> {
-  // ---------------------------------------------------------------------------
-  // [상태 변수 선언부]
-  // 화면의 상태(검색어, 필터링, 로딩 상태 등)를 관리하는 변수들입니다.
-  // ---------------------------------------------------------------------------
   final TextEditingController _searchController = TextEditingController();
   String _currentQuery = "";
   String _groupByMode = 'item';
@@ -71,43 +73,37 @@ class _ProductPageState extends State<ProductPage> {
   String _activeMetricFilter = "전체";
   final String _sortCriteria = 'name';
 
-  // [최적화] 사용자의 연속적인 입력을 최적화하기 위한 타이머
   Timer? _debounceTimer;
 
-  // 필터링된 데이터 캐싱용 변수 (성능 향상을 위해 결과를 저장)
   List<ProductModel> _filteredCache = [];
   List<ProductModel>? _lastRawItems;
   String _lastActiveFilter = "";
 
-  // 다중 선택 관리 (일괄 처리 기능을 위함)
   final Set<String> _selectedItemIds = {};
-
-  // 다중 선택 모드(동그라미 토글 보이기/숨기기) 활성화 플래그
   bool _isSelectionMode = false;
-
-  // 스크린 오버레이 제어 플래그 (엑셀 업로드 등 전체 화면 로딩 시 사용)
   bool _isFullScreenLoading = false;
 
-  // 레이아웃 고정 치수 (미니멀 디자인 규격)
+  // [AI 검색 관련 상태 변수]
+  List<String>? _aiFilteredIds;
+  bool _isAiSearching = false;
+
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 240.0;
 
-  // ---------------------------------------------------------------------------
-  // [공정 상태 집합]
-  // 자산의 흐름(입고, 공정, 출고, 예외)을 분류하여 상태별 색상 및 로직에 활용합니다.
-  // ---------------------------------------------------------------------------
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
   };
+
   static const Set<String> _processStatuses = {
     '정보등록', '공정투입', '생산중', '생산완료', '이송중', '피킹중', '패킹완료', '출하대기'
   };
+
   static const Set<String> _outboundStatuses = {
     '수동출고', '자동출고', '판매/배송출고', '대여출고', '수리출고', '현장투입'
   };
+
   static const Set<String> _exceptionStatuses = {'폐기', '분실'};
 
-  // 상태별 아이콘 매핑
   static final Map<String, IconData> _statusIcons = {
     '보유중': Icons.inventory, '수동입고': Icons.input, '자동입고': Icons.nfc,
     '생산입고': Icons.factory_outlined, '구매입고': Icons.shopping_cart,
@@ -122,7 +118,6 @@ class _ProductPageState extends State<ProductPage> {
     '폐기': Icons.delete_forever, '분실': Icons.search_off,
   };
 
-  // UI에 직접적으로 노출되지 않아야 할 시스템 내부 관리용 키 목록
   static const Set<String> _excludedSystemKeys = {
     'id', 'collectionId', 'collectionName', 'created', 'updated',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
@@ -144,14 +139,56 @@ class _ProductPageState extends State<ProductPage> {
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // [비즈니스 로직: 실시간 검색 및 필터링 엔진]
-  // ---------------------------------------------------------------------------
+  /// [AI 스마트 검색 실행 로직]
+  Future<void> _performAiSearch(List<ProductModel> allItems, ThemeData theme) async {
+    final String query = _searchController.text.trim();
+
+    if (query.isEmpty) {
+      _showInfoDialog("AI 검색 안내", "검색창에 찾고 싶은 조건을 자연어(문장)로 입력해 주세요.\n예: '입고 대기장에 있는 노트북 찾아줘'", theme);
+      return;
+    }
+
+    setState(() {
+      _isAiSearching = true;
+      _aiFilteredIds = null;
+    });
+
+    try {
+      final List<String> resultIds = await AiSearchHelper.searchProducts(query, allItems);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _aiFilteredIds = resultIds;
+      });
+
+      if (resultIds.isEmpty) {
+        _showInfoDialog("AI 검색 결과", "입력하신 조건과 일치하는 자산을 찾을 수 없습니다.", theme);
+      }
+
+      _syncFiltering(allItems);
+
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      _showInfoDialog("AI 검색 오류", e.toString(), theme);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAiSearching = false;
+        });
+      }
+    }
+  }
 
   void _onSearchChanged(String query) {
     if (_debounceTimer?.isActive ?? false) {
       _debounceTimer!.cancel();
     }
+
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       if (!mounted) {
         return;
@@ -168,28 +205,36 @@ class _ProductPageState extends State<ProductPage> {
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
     List<ProductModel> result = rawItems.where((ProductModel p) {
-      bool isMatch = true;
-      if (q.isNotEmpty) {
-        final String locStr = _safeStr(p.location).toLowerCase();
-        final String catStr = _safeStr(p.category).toLowerCase();
-        final String snStr = _safeStr(p.serialNumber).toLowerCase();
-        isMatch = p.name.toLowerCase().contains(q) ||
-            p.tagId.toLowerCase().contains(q) ||
-            locStr.contains(q) || catStr.contains(q) || snStr.contains(q);
+      if (_aiFilteredIds != null) {
+        if (!_aiFilteredIds!.contains(p.id)) {
+          return false;
+        }
+      } else {
+        bool isMatch = true;
+        if (q.isNotEmpty) {
+          final String locStr = _safeStr(p.location).toLowerCase();
+          final String catStr = _safeStr(p.category).toLowerCase();
+          final String snStr = _safeStr(p.serialNumber).toLowerCase();
 
-        if (!isMatch) {
-          for (final dynamic value in p.metadata.values) {
-            if (value != null && value.toString().toLowerCase().contains(q)) {
-              isMatch = true;
-              break;
+          isMatch = p.name.toLowerCase().contains(q) ||
+              p.tagId.toLowerCase().contains(q) ||
+              locStr.contains(q) || catStr.contains(q) || snStr.contains(q);
+
+          if (!isMatch) {
+            for (final dynamic value in p.metadata.values) {
+              if (value != null && value.toString().toLowerCase().contains(q)) {
+                isMatch = true;
+                break;
+              }
             }
+          }
+
+          if (!isMatch) {
+            return false;
           }
         }
       }
 
-      if (!isMatch) {
-        return false;
-      }
       if (_activeMetricFilter == "전체") {
         return true;
       }
@@ -217,6 +262,7 @@ class _ProductPageState extends State<ProductPage> {
       if (_activeMetricFilter == "현재 실재고") {
         return !isOut;
       }
+
       return true;
     }).toList();
 
@@ -261,23 +307,33 @@ class _ProductPageState extends State<ProductPage> {
           todayOut++;
         }
       }
+
       if (!isOut) {
         currentStock++;
       }
     }
+
     return {'in': todayIn, 'out': todayOut, 'stock': currentStock};
   }
 
   String _getAttributeValue(String label, ProductModel p) {
     switch (label) {
-      case '품명': return p.name;
-      case '태그ID': return p.tagId;
-      case '위치': return _safeStr(p.location, defaultVal: "-");
-      case '상태': return p.status;
-      case '규격': return _safeStr(p.spec, defaultVal: "-");
-      case '분류': return _safeStr(p.category, defaultVal: "-");
-      case 'S/N': return _safeStr(p.serialNumber, defaultVal: "-");
-      default: return _safeStr(p.metadata[label], defaultVal: "-");
+      case '품명':
+        return p.name;
+      case '태그ID':
+        return p.tagId;
+      case '위치':
+        return _safeStr(p.location, defaultVal: "-");
+      case '상태':
+        return p.status;
+      case '규격':
+        return _safeStr(p.spec, defaultVal: "-");
+      case '분류':
+        return _safeStr(p.category, defaultVal: "-");
+      case 'S/N':
+        return _safeStr(p.serialNumber, defaultVal: "-");
+      default:
+        return _safeStr(p.metadata[label], defaultVal: "-");
     }
   }
 
@@ -297,20 +353,13 @@ class _ProductPageState extends State<ProductPage> {
     return AppTheme.warning;
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [ERP 연동] 거래처 시스템에서 물품 데이터를 가져와 DB에 적용합니다.
-  /// 수신된 JSON의 키값을 분석하여 기본 필드는 매핑하고,
-  /// 나머지 비정형 데이터는 모조리 metadata에 쑤셔넣는 스키마리스 구조를 적용했습니다.
-  /// ---------------------------------------------------------------------------
   void _triggerErpSync(ThemeData theme) {
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
       moduleName: "물품 마스터 (REST API 동적 매핑)",
-      endpoint: 'posts?_limit=5', // 실제 연동하실 ERP의 엔드포인트로 변경하세요.
+      endpoint: 'posts?_limit=5',
       targetCollection: 'products',
-
-      // [핵심 로직] 엑셀 파싱과 동일하게 수신 데이터를 동적으로 분리합니다.
       dataMapper: (Map<String, dynamic> erpItem) {
         String parsedName = "이름없음";
         String parsedTagId = "TAG_${DateTime.now().millisecondsSinceEpoch}";
@@ -320,58 +369,48 @@ class _ProductPageState extends State<ProductPage> {
         String parsedSpec = "";
         String parsedSn = "";
 
-        // 나머지 비정형 데이터를 담을 마법의 주머니
         Map<String, dynamic> dynamicMetadata = {};
 
-        // JSON으로 날아온 모든 키-값 쌍을 순회합니다.
         erpItem.forEach((key, value) {
-          if (value == null) return; // Null 값 안전 처리
+          if (value == null) {
+            return;
+          }
 
           final String lowerKey = key.toLowerCase();
           final String strValue = value.toString().trim();
 
-          // 1. 시스템을 구동하기 위한 '기본 뼈대' 필드 매핑 규칙
           if (lowerKey.contains('name') || lowerKey.contains('title') || lowerKey == '품명') {
             parsedName = strValue;
-          }
-          else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
+          } else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
             parsedTagId = strValue;
-          }
-          else if (lowerKey.contains('loc') || lowerKey == '위치') {
+          } else if (lowerKey.contains('loc') || lowerKey == '위치') {
             parsedLocation = strValue;
-          }
-          else if (lowerKey.contains('status') || lowerKey == '상태') {
+          } else if (lowerKey.contains('status') || lowerKey == '상태') {
             parsedStatus = strValue;
-          }
-          else if (lowerKey.contains('category') || lowerKey == '분류') {
+          } else if (lowerKey.contains('category') || lowerKey == '분류') {
             parsedCategory = strValue;
-          }
-          else if (lowerKey.contains('spec') || lowerKey == '규격') {
+          } else if (lowerKey.contains('spec') || lowerKey == '규격') {
             parsedSpec = strValue;
-          }
-          else if (lowerKey.contains('serial') || lowerKey == 'sn' || lowerKey == '시리얼') {
+          } else if (lowerKey.contains('serial') || lowerKey == 'sn' || lowerKey == '시리얼') {
             parsedSn = strValue;
-          }
-          // 2. 기본 필드에 해당하지 않는 '나머지 모든 데이터'는 조건 없이 metadata 주머니로 쏙!
-          else {
+          } else {
             if (strValue.isNotEmpty && strValue != "null") {
               dynamicMetadata[key] = strValue;
             }
           }
         });
 
-        // 3. 완벽하게 파싱 및 분리된 데이터를 ProductModel 규격에 맞게 반환
         return {
-          'name': '[ERP] $parsedName', // ERP 출신임을 알 수 있도록 꼬리표를 답니다.
+          'name': '[ERP] $parsedName',
           'tag_id': parsedTagId,
           'location': parsedLocation,
           'status': parsedStatus,
           'category': parsedCategory,
           'spec': parsedSpec,
           'serial_number': parsedSn,
-          'safety_stock': 5, // 기본값 설정
+          'safety_stock': 5,
           'is_approved': true,
-          'metadata': dynamicMetadata, // <--- 무한한 확장성을 가진 비정형 데이터 저장소
+          'metadata': dynamicMetadata,
         };
       },
       onLoadingStart: () {
@@ -389,15 +428,10 @@ class _ProductPageState extends State<ProductPage> {
         }
       },
       onSuccess: () {
-        // ProductProvider가 최신 데이터를 다시 DB로부터 불러오게 합니다.
         context.read<ProductProvider>().fetchData();
       },
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // [메인 UI 렌더링 영역]
-  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -409,7 +443,7 @@ class _ProductPageState extends State<ProductPage> {
     }
 
     final Map<String, dynamic> metrics = _calculateMetrics(provider.items);
-    final Map<String, List<ProductModel>> groupedMap = _getGroupedData(_filteredCache);
+    final Map<String, List<ProductModel>> groupedMap = _getGroupedData(provider.items);
     final List<String> groupKeys = groupedMap.keys.toList()..sort();
 
     return Scaffold(
@@ -423,7 +457,6 @@ class _ProductPageState extends State<ProductPage> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (BuildContext ctx, BoxConstraints constraints) {
-                    // 화면 크기에 따라 데스크탑(Split) 뷰와 모바일(단일) 뷰를 자동 전환합니다.
                     if (constraints.maxWidth > 950 && !widget.isMobile) {
                       return _buildSplitLayout(provider, groupedMap, groupKeys, theme);
                     }
@@ -445,9 +478,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 상단 통계 대시보드 위젯
-  /// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // [UI 렌더링 파트 - 잘렸던 부분 전부 복구됨]
+  // ---------------------------------------------------------------------------
+
   Widget _buildDashboard(Map<String, dynamic> m, int totalCount, ThemeData theme) {
     if (widget.isMobile) {
       return Container(
@@ -495,6 +529,7 @@ class _ProductPageState extends State<ProductPage> {
   Widget _buildStatTile(String label, int val, IconData icon, Color color, ThemeData theme, {required String filterKey}) {
     final bool isSelected = _activeMetricFilter == filterKey;
     final bool isDark = theme.brightness == Brightness.dark;
+
     return InkWell(
       onTap: () {
         setState(() {
@@ -532,9 +567,23 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [데스크탑 전용] 분할 화면 뷰 (Split Layout)
-  /// ---------------------------------------------------------------------------
+  Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
+    final Map<String, List<ProductModel>> grouped = {};
+    for (final ProductModel i in _filteredCache) {
+      final String key = _groupByMode == 'item'
+          ? i.name
+          : (_groupByMode == 'location'
+          ? _safeStr(i.location, defaultVal: "미지정")
+          : _safeStr(i.category, defaultVal: "미정"));
+
+      if (!grouped.containsKey(key)) {
+        grouped[key] = [];
+      }
+      grouped[key]!.add(i);
+    }
+    return grouped;
+  }
+
   Widget _buildSplitLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -576,10 +625,82 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 헤더 및 기능 버튼 영역
-  /// 'ERP 연동' 버튼이 새롭게 추가되었습니다.
-  /// ---------------------------------------------------------------------------
+  Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
+    if (_selectedGroupKey != null) {
+      return Column(
+        children: [
+          _buildHeader(provider, theme),
+          Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 8),
+            child: TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _selectedGroupKey = null;
+                  _selectedItemIds.clear();
+                });
+              },
+              icon: const Icon(Icons.arrow_back_rounded, size: 20),
+              label: const Text("그룹 목록으로 돌아가기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
+              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+            ),
+          ),
+          Expanded(
+            child: _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? [], theme),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        _buildHeader(provider, theme),
+        _buildFilterBar(theme),
+        Expanded(
+          child: groupKeys.isEmpty
+              ? _buildEmptyState("검색 결과가 없습니다.")
+              : ListView.separated(
+              padding: const EdgeInsets.all(12),
+              itemCount: groupKeys.length,
+              separatorBuilder: (BuildContext ctx, int idx) => const SizedBox(height: 10),
+              itemBuilder: (BuildContext ctx, int idx) {
+                final String k = groupKeys[idx];
+                return _buildGroupTile(provider, k, groupedMap[k]!, false, theme);
+              }
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme, {String? customMessage}) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.1),
+      child: Center(
+        child: Card(
+          elevation: 10,
+          color: theme.cardTheme.color,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
+                const SizedBox(height: 25),
+                Text(
+                  customMessage ?? (provider.isParsing ? "데이터 분석 중..." : "데이터베이스 통신 중..."),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildHeader(ProductProvider provider, ThemeData theme) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
@@ -610,12 +731,9 @@ class _ProductPageState extends State<ProductPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
-
-                    // [신규 버튼] ERP 동기화 (수신) 버튼
                     _buildActionIconButton(Icons.sync_alt_rounded, "ERP 연동 (가져오기)", () {
                       _triggerErpSync(theme);
                     }, theme, color: Colors.teal),
-
                     _buildActionIconButton(FontAwesomeIcons.fileArrowUp, "엑셀 일괄 임포트", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -637,11 +755,34 @@ class _ProductPageState extends State<ProductPage> {
             ],
           ),
           const SizedBox(height: 16),
+
           TextField(
             controller: _searchController,
-            onChanged: _onSearchChanged,
+            onChanged: (String v) {
+              setState(() {
+                _aiFilteredIds = null;
+              });
+              _onSearchChanged(v);
+            },
             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "품명, 위치, 분류 또는 상세내용 검색...", context: context, prefixIcon: Icons.search),
+            decoration: AppTheme.inputDecoration(label: "품명, 위치 등 일반 검색 또는 문장 작성 후 AI 버튼 클릭...", context: context, prefixIcon: Icons.search).copyWith(
+                suffixIcon: _isAiSearching
+                    ? const Padding(
+                  padding: EdgeInsets.all(14.0),
+                  child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.deepPurpleAccent)
+                  ),
+                )
+                    : IconButton(
+                  icon: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent),
+                  tooltip: "AI 자연어 스마트 검색 (예: A창고에 있는 모니터 찾아줘)",
+                  onPressed: () {
+                    _performAiSearch(provider.items, theme);
+                  },
+                )
+            ),
           ),
         ],
       ),
@@ -655,7 +796,7 @@ class _ProductPageState extends State<ProductPage> {
       message: tip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(26), // 터치 영역을 완벽한 원형으로 설정
+        borderRadius: BorderRadius.circular(26),
         child: Container(
           width: 52,
           height: 52,
@@ -706,9 +847,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// 우측 (상세 보기 뷰) 렌더링 영역
-  /// ---------------------------------------------------------------------------
   Widget _buildDetailView(ProductProvider provider, String groupName, List<ProductModel> items, ThemeData theme) {
     final bool isAllSelected = items.isNotEmpty && items.every((ProductModel p) => _selectedItemIds.contains(p.id));
 
@@ -891,9 +1029,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 데스크탑용 리스트 아이템 레이아웃
-  /// ---------------------------------------------------------------------------
   Widget _buildDesktopListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
     return Row(
       children: [
@@ -970,14 +1105,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [반응형 UI 적용] 모바일용 리스트 아이템 레이아웃
-  /// ---------------------------------------------------------------------------
   Widget _buildMobileListItem(ProductModel p, ProductProvider provider, List<ProductModel> items, Color statusColor, ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 상단: 썸네일 및 기본 타이틀 렌더링
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1027,7 +1158,6 @@ class _ProductPageState extends State<ProductPage> {
           ],
         ),
         const SizedBox(height: 12),
-        // 중단: 상세 컬럼 데이터
         Wrap(
           spacing: 16, runSpacing: 8,
           children: provider.selectedColumns
@@ -1048,7 +1178,6 @@ class _ProductPageState extends State<ProductPage> {
         const SizedBox(height: 16),
         Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
         const SizedBox(height: 8),
-        // 하단: 가로 균등 분할된 모바일 전용 액션 버튼 그룹
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -1071,17 +1200,23 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   Future<void> _handleGroupImageUpdate(ProductProvider provider, List<ProductModel> groupItems, ThemeData theme) async {
-    if (groupItems.isEmpty) return;
+    if (groupItems.isEmpty) {
+      return;
+    }
 
     final String targetName = groupItems.first.name;
     final List<ProductModel> targetItems = provider.items.where((p) => p.name == targetName).toList();
 
-    if (targetItems.isEmpty) return;
+    if (targetItems.isEmpty) {
+      return;
+    }
 
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
 
-    if (!mounted || image == null) return;
+    if (!mounted || image == null) {
+      return;
+    }
 
     final bool? confirm = await showDialog<bool>(
         context: context,
@@ -1107,10 +1242,14 @@ class _ProductPageState extends State<ProductPage> {
         )
     );
 
-    if (confirm != true || !mounted) return;
+    if (confirm != true || !mounted) {
+      return;
+    }
 
     ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
-    setState(() { _isFullScreenLoading = true; });
+    setState(() {
+      _isFullScreenLoading = true;
+    });
 
     showDialog(
       context: context,
@@ -1200,12 +1339,16 @@ class _ProductPageState extends State<ProductPage> {
       }
     } finally {
       if (mounted) {
-        setState(() { _isFullScreenLoading = false; });
+        setState(() {
+          _isFullScreenLoading = false;
+        });
         Navigator.of(context).pop();
       }
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     _syncFiltering(provider.items);
     _showInfoDialog(
@@ -1314,9 +1457,436 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
+  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
+    return SizedBox(
+        width: 150,
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13)),
+              Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)
+            ]
+        )
+    );
+  }
+
+  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(25),
+            child: Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 24)
+            )
+        )
+    );
+  }
+
+  Widget _buildEmptyState(String msg) {
+    return Center(
+        child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.inventory_2_outlined, size: 48, color: Colors.black12),
+              const SizedBox(height: 16),
+              Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.black26, fontWeight: FontWeight.bold))
+            ]
+        )
+    );
+  }
+
+  void _showInfoDialog(String title, String msg, ThemeData theme) {
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle(title, Icons.info_outline),
+              content: Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "확인",
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
+    final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+    final Set<String> metaKeySet = {};
+
+    for (final ProductModel p in provider.items.take(100)) {
+      for (final String k in p.metadata.keys) {
+        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
+          metaKeySet.add(k);
+        }
+      }
+    }
+
+    final List<String> metaFields = metaKeySet.toList()..sort();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return ColumnSelectionDialog(
+          title: "표시 항목 설정 (물품)",
+          baseFields: baseFields,
+          metaFields: metaFields,
+          initialSelection: provider.selectedColumns,
+          onSave: (List<String> newColumns) async {
+            await provider.saveRemoteSettings(newColumns);
+          },
+        );
+      },
+    );
+  }
+
+  void _showResetDialog(ProductProvider provider, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger),
+              content: const Text("모든 정보를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "초기화 진행",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _isFullScreenLoading = true;
+                      });
+
+                      await provider.resetAllProducts();
+
+                      if (!mounted) {
+                        return;
+                      }
+
+                      setState(() {
+                        _isFullScreenLoading = false;
+                        _selectedGroupKey = null;
+                        _currentQuery = "";
+                        _selectedItemIds.clear();
+                      });
+
+                      _searchController.clear();
+                      _syncFiltering(provider.items);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('전체 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  void _confirmBulkDelete(ProductProvider provider, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("선택 항목 일괄 삭제", Icons.warning, color: AppTheme.danger),
+              content: Text("선택하신 ${_selectedItemIds.length}개의 자산을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "일괄 삭제",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _isFullScreenLoading = true;
+                      });
+
+                      await provider.deleteMultipleProducts(_selectedItemIds.toList());
+
+                      if (!mounted) {
+                        return;
+                      }
+
+                      setState(() {
+                        _selectedItemIds.clear();
+                        _isFullScreenLoading = false;
+                        _isSelectionMode = false;
+                      });
+
+                      _syncFiltering(provider.items);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 항목들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  void _confirmIndividualDelete(ProductProvider provider, ProductModel p, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("삭제 확인", Icons.delete),
+              content: Text("[${p.name}] 자산을 삭제하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "삭제",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+
+                      await provider.deleteMultipleProducts([p.id]);
+
+                      if (!mounted) {
+                        return;
+                      }
+
+                      setState(() {
+                        _selectedItemIds.remove(p.id);
+                      });
+
+                      _syncFiltering(provider.items);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  void _confirmGroupDelete(ProductProvider provider, String name, List<ProductModel> items, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("그룹 일괄 삭제", Icons.warning, color: AppTheme.danger),
+              content: Text("[$name] 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+              actions: [
+                AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                ),
+                AppTheme.actionButton(
+                    label: "일괄 삭제",
+                    color: AppTheme.danger,
+                    onPressed: () async {
+                      Navigator.pop(ctx);
+                      final List<String> ids = items.map((ProductModel e) => e.id).toList();
+
+                      await provider.deleteMultipleProducts(ids);
+
+                      if (!mounted) {
+                        return;
+                      }
+
+                      setState(() {
+                        if (_selectedGroupKey == name) {
+                          _selectedGroupKey = null;
+                          _selectedItemIds.clear();
+                        }
+                      });
+
+                      _syncFiltering(provider.items);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
+  Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
+    final userProvider = context.read<UserProvider>();
+
+    final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (BuildContext ctx) {
+          return _ManualInoutDialog(
+            type: type,
+            product: p,
+            statusIcons: _statusIcons,
+            userList: userProvider.list,
+          );
+        }
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (result != null) {
+      final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      List<dynamic> history = p.metadata['history'] is List ? List.from(p.metadata['history']) : [];
+
+      history.insert(0, {
+        'time': now,
+        'type': result['status'],
+        'location': result['location'],
+        'handler': result['handler'],
+        'reason': result['reason'],
+        'is_approved': result['is_approved']
+      });
+
+      final bool success = await provider.handleSave(product: p, data: {
+        'status': result['status'],
+        'location': result['location'],
+        'metadata': {
+          ...p.metadata,
+          'history': history,
+        }
+      });
+
+      if (!mounted) {
+        return;
+      }
+
+      if (success) {
+        _syncFiltering(provider.items);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('[${p.name}] 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+            backgroundColor: AppTheme.success,
+            elevation: 0,
+            duration: const Duration(seconds: 1)
+        ));
+      }
+    }
+  }
+
+  void _showHistoryDialog(ProductModel p, ThemeData theme) {
+    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    showDialog(
+        context: context,
+        builder: (BuildContext ctx) {
+          return AlertDialog(
+              title: AppTheme.dialogTitle("자산 상세 이력 추적", Icons.history),
+              content: SizedBox(
+                width: 550,
+                height: 600,
+                child: (p.metadata['history'] == null || (p.metadata['history'] as List).isEmpty)
+                    ? _buildEmptyState("이력이 없습니다.")
+                    : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  itemCount: (p.metadata['history'] as List).length,
+                  separatorBuilder: (BuildContext c, int i) => const Divider(height: 24),
+                  itemBuilder: (BuildContext context, int idx) {
+                    final dynamic log = (p.metadata['history'] as List)[idx];
+                    final String type = log['type'] ?? "-";
+                    final String time = log['time'] ?? "-";
+                    final bool approved = log['is_approved'] ?? true;
+                    final Color statusColor = approved ? _getStatusColor(type) : AppTheme.danger;
+
+                    return Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                          color: theme.cardTheme.color,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: statusColor.withValues(alpha: 0.15), width: 1.0)
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(time, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 14)),
+                                    Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                                        child: Text(type, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: statusColor, fontWeight: FontWeight.bold, fontSize: 12))
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                RichText(
+                                    text: TextSpan(
+                                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
+                                        children: [
+                                          TextSpan(text: '위치: ', style: AppTheme.itemLabelStyle(context)),
+                                          TextSpan(text: '${log['location'] ?? '-'}  ', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                          TextSpan(text: '담당: ', style: AppTheme.itemLabelStyle(context)),
+                                          TextSpan(
+                                              text: '${log['handler'] ?? '-'}',
+                                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.blueGrey)
+                                          ),
+                                        ]
+                                    )
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+              actions: [
+                AppTheme.actionButton(
+                    label: "닫기",
+                    color: Colors.transparent,
+                    textColor: cancelColor,
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    }
+                )
+              ]
+          );
+        }
+    );
+  }
+
   void _showBulkEditDialog(ProductProvider provider, List<ProductModel> visibleItems, ThemeData theme) async {
     final List<ProductModel> selectedProducts = visibleItems.where((ProductModel p) => _selectedItemIds.contains(p.id)).toList();
-    if (selectedProducts.isEmpty) return;
+    if (selectedProducts.isEmpty) {
+      return;
+    }
 
     List<BulkEditField> fields = [
       BulkEditField(key: 'location', label: '새로운 위치 (로케이션)', type: BulkEditFieldType.text),
@@ -1357,9 +1927,13 @@ class _ProductPageState extends State<ProductPage> {
         }
     );
 
-    if (resultValues == null || !mounted) return;
+    if (resultValues == null || !mounted) {
+      return;
+    }
 
-    setState(() { _isFullScreenLoading = true; });
+    setState(() {
+      _isFullScreenLoading = true;
+    });
 
     for (final ProductModel p in selectedProducts) {
       final Map<String, dynamic> data = {};
@@ -1386,7 +1960,9 @@ class _ProductPageState extends State<ProductPage> {
       await provider.handleSave(product: p, data: data);
     }
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       _isFullScreenLoading = false;
@@ -1622,7 +2198,9 @@ class _ProductPageState extends State<ProductPage> {
                             int bulkCount = 1;
                             if (p == null) {
                               bulkCount = int.tryParse(bulkCountC.text.trim()) ?? 1;
-                              if (bulkCount < 1) bulkCount = 1;
+                              if (bulkCount < 1) {
+                                bulkCount = 1;
+                              }
                             }
 
                             if (bulkCount <= 1) {
@@ -1637,21 +2215,26 @@ class _ProductPageState extends State<ProductPage> {
                                 'is_approved': isApproved,
                                 'metadata': meta,
                                 'status': p?.status ?? '보유중',
-                                if (isImageDeleted) 'image': '',
                               };
 
                               final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
-                              if (!mounted) return;
+                              if (!mounted) {
+                                return;
+                              }
                               if (ok) {
                                 _syncFiltering(provider.items);
-                                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                                if (dialogCtx.mounted) {
+                                  Navigator.pop(dialogCtx);
+                                }
                                 ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(content: Text("마스터 정보가 성공적으로 반영되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
                                 );
                               }
                             } else {
                               Navigator.pop(dialogCtx);
-                              setState(() { _isFullScreenLoading = true; });
+                              setState(() {
+                                _isFullScreenLoading = true;
+                              });
 
                               int successCount = 0;
 
@@ -1659,8 +2242,12 @@ class _ProductPageState extends State<ProductPage> {
                                 String currentTagId = tagC.text.trim();
                                 String currentSn = snC.text.trim();
 
-                                if (currentTagId.isNotEmpty) currentTagId = "${currentTagId}_${i + 1}";
-                                if (currentSn.isNotEmpty) currentSn = "${currentSn}_${i + 1}";
+                                if (currentTagId.isNotEmpty) {
+                                  currentTagId = "${currentTagId}_${i + 1}";
+                                }
+                                if (currentSn.isNotEmpty) {
+                                  currentSn = "${currentSn}_${i + 1}";
+                                }
 
                                 if (currentTagId.isEmpty) {
                                   currentTagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
@@ -1677,16 +2264,21 @@ class _ProductPageState extends State<ProductPage> {
                                   'is_approved': isApproved,
                                   'metadata': meta,
                                   'status': '보유중',
-                                  if (isImageDeleted) 'image': '',
                                 };
 
                                 bool ok = await provider.handleSave(product: null, data: data, imageXFile: file);
-                                if (ok) successCount++;
+                                if (ok) {
+                                  successCount++;
+                                }
                               }
 
-                              if (!mounted) return;
+                              if (!mounted) {
+                                return;
+                              }
 
-                              setState(() { _isFullScreenLoading = false; });
+                              setState(() {
+                                _isFullScreenLoading = false;
+                              });
                               _syncFiltering(provider.items);
 
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -1703,9 +2295,6 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [기능] 개선된 이미지 픽커 위젯 (선택, 미리보기, 삭제 기능 통합)
-  /// ---------------------------------------------------------------------------
   Widget _buildImagePickerBox(
       BuildContext context,
       ProductModel? p,
@@ -1716,9 +2305,6 @@ class _ProductPageState extends State<ProductPage> {
       ThemeData theme
       ) {
     final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '200x200') : '';
-
-    // [수정점] 사용하지 않는 isDark 변수를 린터 권장 사항에 따라 삭제했습니다.
-
     final bool hasImage = preview != null || (url.isNotEmpty && !isDeleted);
 
     return Stack(
@@ -1751,7 +2337,6 @@ class _ProductPageState extends State<ProductPage> {
           ),
         ),
 
-        // 이미지 삭제(X) 아이콘
         if (hasImage)
           Positioned(
             top: -10,
@@ -1818,494 +2403,13 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  Widget _buildGlobalLoadingOverlay(ProductProvider provider, ThemeData theme, {String? customMessage}) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.1),
-      child: Center(
-        child: Card(
-          elevation: 10,
-          color: theme.cardTheme.color,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
-                const SizedBox(height: 25),
-                Text(
-                  customMessage ?? (provider.isParsing ? "데이터 분석 중..." : "데이터베이스 통신 중..."),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// ---------------------------------------------------------------------------
-  /// [모바일 전용 레이아웃] 모바일에서는 그룹 리스트와 디테일 리스트를 분리 호출합니다.
+  /// [데이터 대량 일괄 업로드 처리]
   /// ---------------------------------------------------------------------------
-  Widget _buildMobileLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
-    if (_selectedGroupKey != null) {
-      return Column(
-        children: [
-          _buildHeader(provider, theme),
-          Container(
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.only(left: 8, top: 4, bottom: 8),
-            child: TextButton.icon(
-              onPressed: () => setState(() {
-                _selectedGroupKey = null;
-                _selectedItemIds.clear();
-              }),
-              icon: const Icon(Icons.arrow_back_rounded, size: 20),
-              label: const Text("그룹 목록으로 돌아가기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
-              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
-            ),
-          ),
-          Expanded(
-            child: _buildDetailView(provider, _selectedGroupKey!, groupedMap[_selectedGroupKey] ?? [], theme),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      children: [
-        _buildHeader(provider, theme),
-        _buildFilterBar(theme),
-        Expanded(
-          child: ListView.separated(
-              padding: const EdgeInsets.all(12),
-              itemCount: groupKeys.length,
-              separatorBuilder: (BuildContext ctx, int idx) => const SizedBox(height: 10),
-              itemBuilder: (BuildContext ctx, int idx) {
-                final String k = groupKeys[idx];
-                return _buildGroupTile(provider, k, groupedMap[k]!, false, theme);
-              }
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEmptyState(String msg) {
-    return Center(
-        child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.inventory_2_outlined, size: 48, color: Colors.black12),
-              const SizedBox(height: 16),
-              Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.black26, fontWeight: FontWeight.bold))
-            ]
-        )
-    );
-  }
-
-  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
-    return SizedBox(
-        width: 150,
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTheme.itemLabelStyle(ctx).copyWith(fontSize: 13)),
-              Text(value, style: AppTheme.itemValueStyle(ctx).copyWith(fontSize: 16, fontWeight: FontWeight.w700), overflow: TextOverflow.ellipsis)
-            ]
-        )
-    );
-  }
-
-  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
-    return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(25),
-            child: Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 24)
-            )
-        )
-    );
-  }
-
-  void _showInfoDialog(String title, String msg, ThemeData theme) {
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) => AlertDialog(
-            title: AppTheme.dialogTitle(title, Icons.info_outline),
-            content: Text(msg, style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-            actions: [
-              AppTheme.actionButton(label: "확인", onPressed: () => Navigator.pop(ctx))
-            ]
-        )
-    );
-  }
-
-  void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
-    final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
-    final Set<String> metaKeySet = {};
-
-    for (final ProductModel p in provider.items.take(100)) {
-      for (final String k in p.metadata.keys) {
-        if (!_excludedSystemKeys.contains(k) && !k.endsWith('_internal')) {
-          metaKeySet.add(k);
-        }
-      }
-    }
-
-    final List<String> metaFields = metaKeySet.toList()..sort();
-
-    showDialog(
-      context: context,
-      builder: (BuildContext ctx) {
-        return ColumnSelectionDialog(
-          title: "표시 항목 설정 (물품)",
-          baseFields: baseFields,
-          metaFields: metaFields,
-          initialSelection: provider.selectedColumns,
-          onSave: (List<String> newColumns) async {
-            await provider.saveRemoteSettings(newColumns);
-          },
-        );
-      },
-    );
-  }
-
-  void _showResetDialog(ProductProvider provider, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("전체 초기화", Icons.delete_forever, color: AppTheme.danger),
-              content: const Text("모든 정보를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "초기화 진행",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _isFullScreenLoading = true;
-                      });
-
-                      await provider.resetAllProducts();
-
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        _isFullScreenLoading = false;
-                        _selectedGroupKey = null;
-                        _currentQuery = "";
-                        _selectedItemIds.clear();
-                      });
-                      _searchController.clear();
-                      _syncFiltering(provider.items);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('전체 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
-                    }
-                )
-              ]
-          );
-        }
-    );
-  }
-
-  void _confirmBulkDelete(ProductProvider provider, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("선택 항목 일괄 삭제", Icons.warning, color: AppTheme.danger),
-              content: Text("선택하신 ${_selectedItemIds.length}개의 자산을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "일괄 삭제",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _isFullScreenLoading = true;
-                      });
-
-                      await provider.deleteMultipleProducts(_selectedItemIds.toList());
-
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        _selectedItemIds.clear();
-                        _isFullScreenLoading = false;
-                        _isSelectionMode = false;
-                      });
-                      _syncFiltering(provider.items);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 항목들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
-                    }
-                )
-              ]
-          );
-        }
-    );
-  }
-
-  void _confirmIndividualDelete(ProductProvider provider, ProductModel p, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("삭제 확인", Icons.delete),
-              content: Text("[${p.name}] 자산을 삭제하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "삭제",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-
-                      await provider.deleteMultipleProducts([p.id]);
-
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        _selectedItemIds.remove(p.id);
-                      });
-                      _syncFiltering(provider.items);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
-                    }
-                )
-              ]
-          );
-        }
-    );
-  }
-
-  void _confirmGroupDelete(ProductProvider provider, String name, List<ProductModel> items, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("그룹 일괄 삭제", Icons.warning, color: AppTheme.danger),
-              content: Text("[$name] 그룹의 모든 자산(${items.length}개)을 삭제하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "일괄 삭제",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      final List<String> ids = items.map((ProductModel e) => e.id).toList();
-
-                      await provider.deleteMultipleProducts(ids);
-
-                      if (!mounted) {
-                        return;
-                      }
-                      setState(() {
-                        if (_selectedGroupKey == name) {
-                          _selectedGroupKey = null;
-                          _selectedItemIds.clear();
-                        }
-                      });
-                      _syncFiltering(provider.items);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
-                    }
-                )
-              ]
-          );
-        }
-    );
-  }
-
-  Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
-    final userProvider = context.read<UserProvider>();
-
-    final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
-        context: context,
-        builder: (BuildContext ctx) {
-          return _ManualInoutDialog(
-            type: type,
-            product: p,
-            statusIcons: _statusIcons,
-            userList: userProvider.list,
-          );
-        }
-    );
-
-    if (!mounted) {
-      return;
-    }
-    if (result != null) {
-      final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-      List<dynamic> history = p.metadata['history'] is List ? List.from(p.metadata['history']) : [];
-      history.insert(0, {
-        'time': now,
-        'type': result['status'],
-        'location': result['location'],
-        'handler': result['handler'],
-        'reason': result['reason'],
-        'is_approved': result['is_approved']
-      });
-
-      final bool success = await provider.handleSave(product: p, data: {
-        'status': result['status'],
-        'location': result['location'],
-        'metadata': {
-          ...p.metadata,
-          'history': history,
-        }
-      });
-      if (!mounted) {
-        return;
-      }
-      if (success) {
-        _syncFiltering(provider.items);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('[${p.name}] 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-            backgroundColor: AppTheme.success,
-            elevation: 0,
-            duration: const Duration(seconds: 1)
-        ));
-      }
-    }
-  }
-
-  void _showHistoryDialog(ProductModel p, ThemeData theme) {
-    final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("자산 상세 이력 추적", Icons.history),
-              content: SizedBox(
-                width: 550,
-                height: 600,
-                child: (p.metadata['history'] == null || (p.metadata['history'] as List).isEmpty)
-                    ? _buildEmptyState("이력이 없습니다.")
-                    : ListView.separated(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  itemCount: (p.metadata['history'] as List).length,
-                  separatorBuilder: (BuildContext c, int i) => const Divider(height: 24),
-                  itemBuilder: (BuildContext context, int idx) {
-                    final dynamic log = (p.metadata['history'] as List)[idx];
-                    final String type = log['type'] ?? "-";
-                    final String time = log['time'] ?? "-";
-                    final bool approved = log['is_approved'] ?? true;
-                    final Color statusColor = approved ? _getStatusColor(type) : AppTheme.danger;
-
-                    return Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                          color: theme.cardTheme.color,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: statusColor.withValues(alpha: 0.15), width: 1.0)
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(time, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 14)),
-                                    Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
-                                        child: Text(type, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: statusColor, fontWeight: FontWeight.bold, fontSize: 12))
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                RichText(
-                                    text: TextSpan(
-                                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-                                        children: [
-                                          TextSpan(text: '위치: ', style: AppTheme.itemLabelStyle(context)),
-                                          TextSpan(text: '${log['location'] ?? '-'}  ', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                          TextSpan(text: '담당: ', style: AppTheme.itemLabelStyle(context)),
-                                          TextSpan(
-                                              text: '${log['handler'] ?? '-'}',
-                                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.blueGrey)
-                                          ),
-                                        ]
-                                    )
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              actions: [
-                AppTheme.actionButton(
-                    label: "닫기",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                )
-              ]
-          );
-        }
-    );
-  }
-
   Future<void> _handleBatchImport(ProductProvider provider, ThemeData theme) async {
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
-      if (!mounted) {
-        return;
-      }
-      if (result == null) {
+      if (!mounted || result == null) {
         return;
       }
 
@@ -2314,25 +2418,21 @@ class _ProductPageState extends State<ProductPage> {
         bytes = await File(result.files.single.path!).readAsBytes();
       }
 
-      if (!mounted) {
-        return;
-      }
-      if (bytes == null) {
-        _showInfoDialog("오류", "파일을 읽을 수 없습니다.", theme);
+      if (!mounted || bytes == null) {
         return;
       }
 
       final excel_pkg.Excel excel = excel_pkg.Excel.decodeBytes(bytes);
-      final String targetSheet = excel.tables.keys.first;
-      final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
-      if (sheet == null || sheet.maxRows <= 1) {
-        _showInfoDialog("알림", "데이터가 없거나 헤더만 존재합니다.", theme);
-        return;
+      String targetSheet = excel.tables.keys.first;
+
+      if (excel.tables.keys.contains('물품리스트')) {
+        targetSheet = '물품리스트';
       }
 
-      setState(() {
-        _isFullScreenLoading = true;
-      });
+      final excel_pkg.Sheet? sheet = excel.tables[targetSheet];
+      if (sheet == null || sheet.maxRows <= 1) {
+        return;
+      }
 
       final List<String> headers = [];
       if (sheet.rows.isNotEmpty) {
@@ -2341,8 +2441,63 @@ class _ProductPageState extends State<ProductPage> {
         }
       }
 
-      int successCount = 0;
-      int failCount = 0;
+      int actualValidRows = 0;
+      for (int i = 1; i < sheet.maxRows; i++) {
+        bool hasData = false;
+        for (final excel_pkg.Data? cell in sheet.row(i)) {
+          if (_extractString(cell).isNotEmpty) {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) {
+          actualValidRows++;
+        }
+      }
+
+      final ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
+      setState(() {
+        _isFullScreenLoading = true;
+      });
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext ctx) {
+          return PopScope(
+            canPop: false,
+            child: Center(
+              child: Card(
+                elevation: 10,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppTheme.cardRadius)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 40),
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: currentCountNotifier,
+                    builder: (BuildContext context, int currentCount, Widget? child) {
+                      final double progress = actualValidRows > 0 ? currentCount / actualValidRows : 0.0;
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              SizedBox(width: 80, height: 80, child: CircularProgressIndicator(value: progress, color: AppTheme.primary, strokeWidth: 8)),
+                              Text('${(progress * 100).toInt()}%', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 16)),
+                            ],
+                          ),
+                          const SizedBox(height: 25),
+                          const Text("물품 대량 전송 중...", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 18)),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
 
       for (int i = 1; i < sheet.maxRows; i++) {
         final List<excel_pkg.Data?> row = sheet.row(i);
@@ -2350,73 +2505,87 @@ class _ProductPageState extends State<ProductPage> {
           continue;
         }
 
-        String name = "";
-        String tagId = "";
-        String loc = "미지정";
+        String name = "", tagId = "", location = "", category = "", status = "";
         final Map<String, dynamic> metadata = {};
+        bool hasRowData = false;
 
         for (int colIdx = 0; colIdx < row.length; colIdx++) {
           if (colIdx >= headers.length) {
             break;
           }
-          // [수정점] 정규표현식(RegExp)에서 불필요한 이스케이프(\_, \(, \))를 제거하여 린터 경고를 해결했습니다.
-          final String cleanHeader = headers[colIdx].replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
+
+          final String rawHeader = headers[colIdx];
+          final String cleanHeader = rawHeader.replaceAll(RegExp(r'[\s_\-()]+'), '').toLowerCase();
           final String val = _extractString(row[colIdx]);
+
+          if (val.isNotEmpty) {
+            hasRowData = true;
+          }
 
           if (cleanHeader.contains('품명') || cleanHeader.contains('이름')) {
             name = val;
           } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
             tagId = val;
           } else if (cleanHeader.contains('위치')) {
-            loc = val;
-          } else if (headers[colIdx].isNotEmpty && val.isNotEmpty) {
-            metadata[headers[colIdx]] = val;
+            location = val;
+          } else if (cleanHeader.contains('분류')) {
+            category = val;
+          } else if (cleanHeader.contains('상태')) {
+            status = val;
+          } else if (rawHeader.isNotEmpty && val.isNotEmpty) {
+            metadata[rawHeader] = val;
           }
         }
 
-        if (name.isEmpty && tagId.isEmpty) {
+        if (!hasRowData) {
           continue;
         }
+
         if (name.isEmpty) {
-          name = "이름없음";
+          name = "형식에 맞지 않는 건";
         }
         if (tagId.isEmpty) {
           tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
+        }
+        if (location.isEmpty) {
+          location = "미지정";
+        }
+        if (category.isEmpty) {
+          category = "미지정";
+        }
+        if (status.isEmpty) {
+          status = "보유중";
         }
 
         final Map<String, dynamic> data = {
           'name': name,
           'tag_id': tagId,
-          'location': loc,
-          'status': '보유중',
+          'location': location,
+          'category': category,
+          'status': status,
+          'is_active': true,
           'metadata': metadata
         };
 
-        bool ok = await provider.handleSave(product: null, data: data);
-        if (ok) {
-          successCount++;
-        } else {
-          failCount++;
-        }
+        await provider.handleSave(product: null, data: data);
+        currentCountNotifier.value++;
       }
 
       if (!mounted) {
         return;
       }
+
       setState(() {
         _isFullScreenLoading = false;
       });
-      _syncFiltering(provider.items);
-      _showInfoDialog("엑셀 임포트 완료", "총 ${successCount + failCount}건의 데이터 처리가 종료되었습니다.\n\n✅ 성공: $successCount건\n❌ 실패: $failCount건", theme);
+      Navigator.of(context).pop();
 
     } catch (e) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _isFullScreenLoading = false;
+        });
       }
-      setState(() {
-        _isFullScreenLoading = false;
-      });
-      _showInfoDialog("오류", "엑셀 파싱 중 오류가 발생했습니다.", theme);
     }
   }
 
@@ -2436,7 +2605,9 @@ class _ProductPageState extends State<ProductPage> {
   Future<void> _exportToExcel(List<ProductModel> list) async {
     try {
       final excel_pkg.Excel excel = excel_pkg.Excel.createExcel();
-      final excel_pkg.Sheet sheet = excel['Inventory'];
+      final String defaultSheet = excel.tables.keys.first;
+      excel.rename(defaultSheet, '물품리스트');
+      final excel_pkg.Sheet sheet = excel['물품리스트'];
 
       // 기본 헤더
       final List<String> baseHeaders = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
@@ -2450,8 +2621,8 @@ class _ProductPageState extends State<ProductPage> {
           }
         }
       }
-      final List<String> metaHeaders = metaKeySet.toList()..sort();
-      final List<String> allHeaders = [...baseHeaders, ...metaHeaders];
+      final List<String> metaFields = metaKeySet.toList()..sort();
+      final List<String> allHeaders = [...baseHeaders, ...metaFields];
 
       sheet.appendRow(allHeaders.map((h) => excel_pkg.TextCellValue(h)).toList());
 
@@ -2466,7 +2637,7 @@ class _ProductPageState extends State<ProductPage> {
           excel_pkg.TextCellValue(_safeStr(i.serialNumber)),
         ];
 
-        for (final String metaKey in metaHeaders) {
+        for (final String metaKey in metaFields) {
           rowData.add(excel_pkg.TextCellValue(_safeStr(i.metadata[metaKey])));
         }
 
@@ -2495,24 +2666,369 @@ class _ProductPageState extends State<ProductPage> {
       }
     }
   }
+}
 
-  // ---------------------------------------------------------------------------
-  // [데이터 그룹화 (Grouping)]
-  // ---------------------------------------------------------------------------
-  Map<String, List<ProductModel>> _getGroupedData(List<ProductModel> items) {
-    final Map<String, List<ProductModel>> grouped = {};
-    for (final ProductModel i in items) {
-      final String key = _groupByMode == 'item'
-          ? i.name
-          : (_groupByMode == 'location'
-          ? _safeStr(i.location, defaultVal: "미지정")
-          : _safeStr(i.category, defaultVal: "미정"));
-      if (!grouped.containsKey(key)) {
-        grouped[key] = [];
-      }
-      grouped[key]!.add(i);
+/// ---------------------------------------------------------------------------
+/// 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// ---------------------------------------------------------------------------
+class _BulkTagIssueDialog extends StatefulWidget {
+  final List<ProductModel> selectedProducts;
+  final ProductProvider provider;
+  final ThemeData theme;
+  final Function(String)? onWriteComplete;
+
+  const _BulkTagIssueDialog({
+    required this.selectedProducts,
+    required this.provider,
+    required this.theme,
+    this.onWriteComplete,
+  });
+
+  @override
+  State<_BulkTagIssueDialog> createState() => _BulkTagIssueDialogState();
+}
+
+class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
+  List<String> _readerOptions = [];
+  String? _selectedReader;
+  bool _isLoadingReaders = true;
+
+  int _issueCount = 1;
+  bool _isProcessing = false;
+  bool _isCompleted = false;
+  double _progressValue = 0.0;
+  String _progressText = "";
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.selectedProducts.isEmpty) {
+      _progressText = '대상을 알 수 없는 신규 단일 건입니다.\n데이터를 자동으로 생성하여 기록합니다.';
+    } else {
+      _progressText = '선택된 총 ${widget.selectedProducts.length}건에 대한 정보를 발급합니다.\n리더기와 발급 횟수를 설정하고 [발행 시작]을 눌러주세요.';
     }
-    return grouped;
+    _fetchRegisteredReaders();
+  }
+
+  Future<void> _fetchRegisteredReaders() async {
+    try {
+      final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
+
+      if (deviceProvider.list.isEmpty) {
+        await deviceProvider.fetchData();
+      } else {
+        await Future.delayed(const Duration(milliseconds: 300));
+      }
+
+      if (mounted) {
+        setState(() {
+          final availableDevices = deviceProvider.list.where((DeviceModel d) {
+            return d.isActive == true && d.isAutoConnect == false;
+          }).toList();
+
+          if (availableDevices.isEmpty) {
+            _readerOptions = ['가용한 리더기 없음 (모두 동작 중이거나 미등록)'];
+          } else {
+            _readerOptions = availableDevices.map((DeviceModel d) {
+              return '${d.name} (${d.model} - ${d.ipAddress})';
+            }).toList();
+          }
+
+          if (_readerOptions.isNotEmpty) {
+            _selectedReader = _readerOptions.first;
+          }
+          _isLoadingReaders = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _readerOptions = ['오류: 장비 로딩 실패'];
+          _selectedReader = _readerOptions.first;
+          _isLoadingReaders = false;
+        });
+      }
+    }
+  }
+
+  String _formatDataToTargetSize(String inputData, int targetByteSize) {
+    List<int> utf8Bytes = utf8.encode(inputData);
+    StringBuffer hexBuffer = StringBuffer();
+
+    for (int i = 0; i < utf8Bytes.length; i++) {
+      hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+    }
+
+    String hexString = hexBuffer.toString();
+    int targetHexLength = targetByteSize * 2;
+
+    if (hexString.length < targetHexLength) {
+      return hexString.padRight(targetHexLength, '0');
+    } else if (hexString.length > targetHexLength) {
+      return hexString.substring(0, targetHexLength);
+    } else {
+      return hexString;
+    }
+  }
+
+  Future<void> _startBulkIssue() async {
+    if (_selectedReader == null || _selectedReader!.contains('오류') || _selectedReader!.contains('없음')) {
+      setState(() {
+        _progressText = '❌ 가용 리더기가 없습니다. 장치 관리에서 수동 가동 리더기를 등록해주세요.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isProcessing = true;
+      _progressValue = 0.0;
+    });
+
+    try {
+      if (widget.selectedProducts.isEmpty) {
+        String randomTag = "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+        int memorySize = 12;
+
+        for (int j = 0; j < _issueCount; j++) {
+          setState(() {
+            _progressValue = (j + 1) / _issueCount;
+            _progressText = "신규 자동 태그의 ${j + 1}장째를 기록하고 있습니다...";
+          });
+
+          String hexData = _formatDataToTargetSize(randomTag, memorySize);
+          await Future.delayed(const Duration(milliseconds: 600));
+
+          if (widget.onWriteComplete != null && j == _issueCount - 1) {
+            widget.onWriteComplete!(hexData);
+          }
+        }
+      } else {
+        int totalProducts = widget.selectedProducts.length;
+        int currentOperationCount = 0;
+        int totalOperations = totalProducts * _issueCount;
+        int memorySize = 12;
+
+        for (int i = 0; i < totalProducts; i++) {
+          ProductModel product = widget.selectedProducts[i];
+          // null-safety 방어
+          String tagData = product.tagId.isNotEmpty ? product.tagId : (product.serialNumber ?? "");
+          if (tagData.isEmpty) {
+            tagData = product.name;
+          }
+
+          for (int j = 0; j < _issueCount; j++) {
+            currentOperationCount++;
+
+            setState(() {
+              _progressValue = currentOperationCount / totalOperations;
+              _progressText = "발급대상 $totalProducts건 중 ${i + 1}번째 항목([${product.name}])의 ${j + 1}장째를 기록하고 있습니다...";
+            });
+
+            String hexData = _formatDataToTargetSize(tagData, memorySize);
+            await Future.delayed(const Duration(milliseconds: 600));
+
+            if (j == _issueCount - 1) {
+              await widget.provider.handleSave(product: product, data: {'tag_id': hexData});
+              if (widget.onWriteComplete != null && totalProducts == 1) {
+                widget.onWriteComplete!(hexData);
+              }
+            }
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _isCompleted = true;
+          _progressValue = 1.0;
+          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 성공적으로 완료되었습니다.';
+        });
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _progressText = '❌ 기록 중 오류 발생: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: AppTheme.dialogTitle('RFID 태그 일괄 발급 설정', Icons.wifi_tethering, color: Colors.indigo),
+      content: SizedBox(
+        width: 500,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('1. 발급 대상 리더기 (현재 가용 장비)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(10),
+                color: widget.theme.cardTheme.color,
+              ),
+              child: _isLoadingReaders
+                  ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12.0),
+                child: Center(
+                    child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
+                    )
+                ),
+              )
+                  : DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _selectedReader,
+                  icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
+                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
+                  onChanged: _isProcessing ? null : (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedReader = newValue;
+                      });
+                    }
+                  },
+                  items: _readerOptions.map<DropdownMenuItem<String>>((String value) {
+                    return DropdownMenuItem<String>(
+                      value: value,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.router, size: 20, color: Colors.grey),
+                          const SizedBox(width: 12),
+                          Text(value),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                borderRadius: BorderRadius.circular(10),
+                color: widget.theme.cardTheme.color,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
+                    onPressed: _isProcessing ? null : () {
+                      if (_issueCount > 1) {
+                        setState(() { _issueCount--; });
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 20),
+                  Container(
+                    width: 80,
+                    alignment: Alignment.center,
+                    child: Text(
+                        '$_issueCount',
+                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
+                    onPressed: _isProcessing ? null : () {
+                      if (_issueCount < 99) {
+                        setState(() { _issueCount++; });
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            Container(
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
+                borderRadius: BorderRadius.circular(10.0),
+                border: Border.all(color: _isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _progressText,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontPretendard,
+                      fontSize: 15.0,
+                      height: 1.5,
+                      color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (_isProcessing || _isCompleted) ...[
+                    const SizedBox(height: 16),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: LinearProgressIndicator(
+                        value: _progressValue,
+                        minHeight: 12,
+                        backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                        color: _isCompleted ? AppTheme.success : Colors.indigo,
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        AppTheme.actionButton(
+            label: "돌아가기 (취소)",
+            color: Colors.transparent,
+            textColor: widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            onPressed: () {
+              if (!_isProcessing || _isCompleted) {
+                Navigator.pop(context);
+              }
+            }
+        ),
+        SizedBox(
+          height: 48,
+          child: ElevatedButton.icon(
+            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders) ? null : _startBulkIssue,
+            icon: const Icon(Icons.play_circle_fill, size: 20),
+            label: const Text('발행 시작', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigo,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -2577,7 +3093,17 @@ class _ManualInoutDialogState extends State<_ManualInoutDialog> {
                     initialValue: _selS,
                     decoration: AppTheme.inputDecoration(label: "작업 상세 선택", context: context),
                     items: (isIn ? ['보유중', '수동입고', '회수/반납', '생산입고', '구매입고'] : ['수동출고', '판매/배송출고', '대여출고', '수리출고', '폐기', '분실']).map((String v) {
-                      return DropdownMenuItem<String>(value: v, child: Text(v, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)));
+                      return DropdownMenuItem<String>(
+                          value: v,
+                          // 🔥 상태 아이콘(_statusIcons)을 콤보박스 아이템에 시각적으로 예쁘게 연결합니다.
+                          child: Row(
+                            children: [
+                              Icon(widget.statusIcons[v] ?? Icons.help_outline, size: 18, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
+                              const SizedBox(width: 8),
+                              Text(v, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                            ],
+                          )
+                      );
                     }).toList(),
                     onChanged: (String? v) {
                       setState(() {

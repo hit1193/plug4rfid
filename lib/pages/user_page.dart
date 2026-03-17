@@ -13,10 +13,14 @@ import 'package:intl/intl.dart';
 import '../models/user_model.dart';
 import '../utils/hangul_utils.dart';
 import '../providers/user_provider.dart';
-import '../models/device_model.dart';       // 실제 장비 모델 참조
-import '../providers/device_provider.dart'; // 실제 장비 상태 및 DB 연동 프로바이더 참조
+import '../providers/auth_provider.dart';
+import '../models/device_model.dart';
+import '../providers/device_provider.dart';
 import '../theme/app_theme.dart';
-import '../core/erp_sync_helper.dart'; // 공용 ERP 연동 헬퍼
+import '../core/erp_sync_helper.dart';
+
+// 🔥 [신규 추가] AI 자연어 스마트 검색 헬퍼 임포트
+import '../core/ai_search_helper.dart';
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
@@ -74,6 +78,10 @@ class _UserPageState extends State<UserPage> {
   bool _isSelectionMode = false;
   bool _isFullScreenLoading = false;
 
+  // 🔥 [AI 검색 관련 상태 변수]
+  List<String>? _aiFilteredIds; // AI가 골라준 ID 목록. null이면 일반 검색 모드
+  bool _isAiSearching = false;  // AI API 통신 중 스피너 표시용 플래그
+
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 300.0;
 
@@ -84,7 +92,7 @@ class _UserPageState extends State<UserPage> {
     'image', 'avatar', 'name', 'code', 'department', 'tag_id', 'is_active', 'remarks',
     'excel_row', 'import_date', 'import_data', 'is_auto_tag', 'is_auto_atg',
     'excel_row_internal', 'import_data_internal', 'is_auto_tag_internal', 'error_reason',
-    'email', 'username', 'password', 'passwordConfirm', 'app_login_id',
+    'email', 'username', 'password', 'passwordConfirm', 'app_login_id', 'app_login_email',
     'role'
   };
 
@@ -102,7 +110,62 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
-  /// 🔥 [추가] DB의 영문 role 값을 UI용 한글 문자열로 변환합니다.
+  /// 🔥 [AI 스마트 검색 실행 로직]
+  /// 사용자가 입력한 검색어와 메모리의 사용자 목록을 AI에게 던집니다.
+  Future<void> _performAiSearch(List<UserModel> allUsers, ThemeData theme) async {
+    final String query = _searchController.text.trim();
+
+    if (query.isEmpty) {
+      _showInfoDialog("AI 검색 안내", "검색창에 찾고 싶은 조건을 자연어(문장)로 입력해 주세요.\n예: '영업팀이면서 권한이 관리자인 사람 찾아줘'", theme);
+      return;
+    }
+
+    setState(() {
+      _isAiSearching = true;
+      _aiFilteredIds = null; // 검색 시작 전 상태 초기화
+    });
+
+    try {
+      // 헬퍼 모듈을 통해 API 통신
+      final List<String> resultIds = await AiSearchHelper.searchUsers(query, allUsers);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _aiFilteredIds = resultIds; // 결과 ID 매핑 완료
+      });
+
+      if (resultIds.isEmpty) {
+        _showInfoDialog("AI 검색 결과", "입력하신 조건과 일치하는 인원을 찾을 수 없습니다.", theme);
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      _showInfoDialog("AI 검색 오류", e.toString(), theme);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAiSearching = false;
+        });
+      }
+    }
+  }
+
+  /// [보안 계급장 판별 로직] DB의 권한 문자열을 바탕으로 1~3의 계급장 점수를 반환합니다.
+  int _getRoleRank(String role) {
+    final String r = role.toLowerCase();
+    if (r.contains('admin') || r.contains('최고')) {
+      return 3;
+    }
+    if (r.contains('manager') || r.contains('현장')) {
+      return 2;
+    }
+    return 1; // Operator
+  }
+
   String _getDisplayRole(String dbRole) {
     if (dbRole == 'Admin') {
       return '최고관리자 (Admin)';
@@ -114,7 +177,6 @@ class _UserPageState extends State<UserPage> {
     return dbRole.isNotEmpty ? dbRole : '일반작업자 (Operator)';
   }
 
-  /// 🔥 [추가] UI용 한글 문자열을 DB에 저장할 영문 role 값으로 변환합니다.
   String _getDbRole(String displayRole) {
     if (displayRole.contains('최고관리자') || displayRole.toLowerCase().contains('admin')) {
       return 'Admin';
@@ -123,7 +185,7 @@ class _UserPageState extends State<UserPage> {
     } else if (displayRole.contains('일반작업자') || displayRole.toLowerCase().contains('operator')) {
       return 'Operator';
     }
-    return displayRole; // 매칭되지 않으면 원본 리턴
+    return displayRole;
   }
 
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
@@ -151,6 +213,16 @@ class _UserPageState extends State<UserPage> {
   }
 
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
+    final authProvider = context.read<AuthProvider>();
+    bool isSelf = p.id == authProvider.currentUserId;
+    int myRank = _getRoleRank(authProvider.role);
+    int targetRank = _getRoleRank(p.role);
+
+    if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+      _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 출입 기록은 조작할 수 없습니다.", Theme.of(context));
+      return;
+    }
+
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext ctx) {
@@ -221,6 +293,16 @@ class _UserPageState extends State<UserPage> {
   }
 
   Future<void> _handleSingleUserImageUpdate(UserProvider provider, UserModel user, ThemeData theme) async {
+    final authProvider = context.read<AuthProvider>();
+    bool isSelf = user.id == authProvider.currentUserId;
+    int myRank = _getRoleRank(authProvider.role);
+    int targetRank = _getRoleRank(user.role);
+
+    if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+      _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 사진은 변경할 수 없습니다.", theme);
+      return;
+    }
+
     final ImagePicker picker = ImagePicker();
     final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
 
@@ -301,6 +383,12 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _triggerErpSync(ThemeData theme) {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isAdmin && _getRoleRank(authProvider.role) < 2) {
+      _showInfoDialog("권한 없음", "데이터 일괄 연동 작업은 현장관리자(Manager) 이상만 가능합니다.", theme);
+      return;
+    }
+
     ErpSyncHelper.fetchAndSync(
       context: context,
       theme: theme,
@@ -311,7 +399,7 @@ class _UserPageState extends State<UserPage> {
         String parsedName = "이름없음";
         String parsedCode = "";
         String parsedDept = "미지정";
-        String parsedRole = "Operator"; // 🔥 DB 규격인 영문으로 초기화
+        String parsedRole = "Operator";
         String parsedTagId = "";
 
         Map<String, dynamic> dynamicMetadata = {};
@@ -331,7 +419,6 @@ class _UserPageState extends State<UserPage> {
           } else if (lowerKey.contains('dept') || lowerKey.contains('department') || lowerKey.contains('company') || lowerKey.contains('부서') || lowerKey.contains('소속')) {
             parsedDept = strValue;
           } else if (lowerKey.contains('role') || lowerKey.contains('등급') || lowerKey.contains('직급') || lowerKey.contains('level')) {
-            // 🔥 ERP 연동 시에도 DB 허용 값으로 자동 변환
             parsedRole = _getDbRole(strValue);
           } else if (lowerKey.contains('tag') || lowerKey.contains('rfid') || lowerKey.contains('epc')) {
             parsedTagId = strValue;
@@ -394,37 +481,51 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
+    // -------------------------------------------------------------------------
+    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
+    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
-      final bool matchesFilter = _currentFilter == '전체' ||
-          (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
 
-      bool matchesSearch = false;
-      final String q = _currentSearchQuery.trim().toLowerCase();
+      // 🔥 1. AI 스마트 검색이 활성화되어 결과가 존재할 경우, 해당 ID 목록만 필터링합니다.
+      if (_aiFilteredIds != null) {
+        if (!_aiFilteredIds!.contains(p.id)) {
+          return false;
+        }
+      }
+      // 2. 일반 텍스트 검색일 경우 기존 로직 수행
+      else {
+        final bool matchesFilter = _currentFilter == '전체' ||
+            (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
 
-      if (q.isEmpty) {
-        matchesSearch = true;
-      } else {
-        matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
-            p.code.toLowerCase().contains(q) ||
-            p.department.toLowerCase().contains(q) ||
-            p.role.toLowerCase().contains(q) ||
-            _getDisplayRole(p.role).toLowerCase().contains(q) || // 🔥 한글 등급명으로도 검색되게 지원
-            p.tagId.toLowerCase().contains(q);
+        bool matchesSearch = false;
+        final String q = _currentSearchQuery.trim().toLowerCase();
 
-        if (!matchesSearch) {
-          for (final dynamic value in p.metadata.values) {
-            if (value != null && value.toString().toLowerCase().contains(q)) {
-              matchesSearch = true;
-              break;
+        if (q.isEmpty) {
+          matchesSearch = true;
+        } else {
+          matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
+              p.code.toLowerCase().contains(q) ||
+              p.department.toLowerCase().contains(q) ||
+              p.role.toLowerCase().contains(q) ||
+              _getDisplayRole(p.role).toLowerCase().contains(q) ||
+              p.tagId.toLowerCase().contains(q);
+
+          if (!matchesSearch) {
+            for (final dynamic value in p.metadata.values) {
+              if (value != null && value.toString().toLowerCase().contains(q)) {
+                matchesSearch = true;
+                break;
+              }
             }
           }
         }
+
+        if (!matchesFilter || !matchesSearch) {
+          return false;
+        }
       }
 
-      if (!matchesFilter || !matchesSearch) {
-        return false;
-      }
-
+      // 3. 대시보드의 상태 필터(입장, 퇴장 등)는 AI/일반 검색에 공통 적용됩니다.
       if (_activeMetricFilter == "전체") {
         return true;
       }
@@ -612,9 +713,11 @@ class _UserPageState extends State<UserPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
+
                     _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () {
                       _triggerErpSync(theme);
                     }, theme, color: Colors.teal),
+
                     _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
                       _handleBatchImport(provider, theme);
                     }, theme, color: Colors.indigo),
@@ -627,24 +730,50 @@ class _UserPageState extends State<UserPage> {
                     _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
-                    _buildActionIcon(Icons.person_add_alt_1, "신규 인원 등록", () {
-                      _showForm(provider, null, theme);
-                    }, theme, color: theme.colorScheme.primary),
+                    _buildActionIcon(
+                      Icons.person_add_alt_1,
+                      "신규 인원 등록",
+                          () {
+                        _showForm(provider, null, theme);
+                      },
+                      theme,
+                      color: theme.colorScheme.primary,
+                    ),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
+
+          // 🔥 [AI 검색 추가] 검색바 우측에 AI(Gemini) 자연어 검색 버튼 탑재
           TextField(
             controller: _searchController,
             onChanged: (String v) {
               setState(() {
                 _currentSearchQuery = v;
+                _aiFilteredIds = null; // 사용자가 일반 타이핑을 시작하면 AI 검색 필터를 초기화합니다.
               });
             },
             style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "성명, 사번, 부서, 권한 또는 검색...", context: context, prefixIcon: Icons.search),
+            decoration: AppTheme.inputDecoration(label: "일반 검색 또는 문장으로 작성 후 우측 AI 버튼 클릭...", context: context, prefixIcon: Icons.search).copyWith(
+                suffixIcon: _isAiSearching
+                    ? const Padding(
+                  padding: EdgeInsets.all(14.0),
+                  child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.deepPurpleAccent)
+                  ),
+                )
+                    : IconButton(
+                  icon: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent),
+                  tooltip: "AI 자연어 스마트 검색 (예: 영업팀 김씨 찾아줘)",
+                  onPressed: () {
+                    _performAiSearch(provider.list, theme);
+                  },
+                )
+            ),
           ),
         ],
       ),
@@ -653,6 +782,7 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildActionIcon(IconData icon, String tip, VoidCallback onTap, ThemeData theme, {Color? color, bool isLarge = false}) {
     final Color iconColor = color ?? theme.iconTheme.color ?? Colors.grey.shade600;
+
     return Tooltip(
       message: tip,
       child: InkWell(
@@ -700,6 +830,7 @@ class _UserPageState extends State<UserPage> {
                     child: Text('${_selectedUserIds.length}명 선택됨', style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: AppTheme.primary)),
                   ),
                   const SizedBox(width: 12),
+
                   ElevatedButton.icon(
                     icon: const Icon(Icons.wifi_tethering, size: 18),
                     label: const Text("태그 일괄 발행", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -709,17 +840,37 @@ class _UserPageState extends State<UserPage> {
                         _showInfoDialog("알림", "태그발행 대상건을 선정하지 않았습니다!", theme);
                         return;
                       }
+
+                      final authProvider = context.read<AuthProvider>();
+                      int myRank = _getRoleRank(authProvider.role);
                       final List<UserModel> selectedUsers = list.where((UserModel u) => _selectedUserIds.contains(u.id)).toList();
+
+                      bool hasUnauthorized = selectedUsers.any((u) {
+                        bool isSelf = u.id == authProvider.currentUserId;
+                        int targetRank = _getRoleRank(u.role);
+                        return !authProvider.isAdmin && !isSelf && (myRank <= targetRank);
+                      });
+
+                      if (hasUnauthorized) {
+                        _showInfoDialog("권한 없음", "선택된 항목 중 태그 발행 권한이 없는 사용자(동일/상위 등급)가 포함되어 있습니다.", theme);
+                        return;
+                      }
+
                       showDialog(
                           context: context,
                           barrierDismissible: false,
-                          builder: (ctx) {
-                            return _BulkTagIssueDialog(selectedUsers: selectedUsers, provider: provider, theme: theme);
+                          builder: (BuildContext ctx) {
+                            return _BulkTagIssueDialog(
+                              selectedUsers: selectedUsers,
+                              provider: provider,
+                              theme: theme,
+                            );
                           }
                       );
                     },
                   ),
                   const SizedBox(width: 8),
+
                   ElevatedButton.icon(
                     icon: const Icon(Icons.edit_note, size: 18),
                     label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
@@ -769,16 +920,17 @@ class _UserPageState extends State<UserPage> {
             child: Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
           ),
         ),
+
         Expanded(
           child: Container(
             margin: const EdgeInsets.only(bottom: 20.0),
             child: ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
               itemCount: list.length,
-              separatorBuilder: (context, index) {
+              separatorBuilder: (BuildContext context, int index) {
                 return const SizedBox(height: 12);
               },
-              itemBuilder: (ctx, idx) {
+              itemBuilder: (BuildContext ctx, int idx) {
                 final UserModel item = list[idx];
                 final bool isSelected = _selectedUserIds.contains(item.id);
                 final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
@@ -811,11 +963,18 @@ class _UserPageState extends State<UserPage> {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: isSelected ? AppTheme.primary : Colors.transparent,
-                                border: Border.all(color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5), width: 2),
+                                border: Border.all(
+                                  color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                                  width: 2,
+                                ),
                               ),
                               child: Padding(
                                 padding: const EdgeInsets.all(4.0),
-                                child: Icon(Icons.check, size: 16, color: isSelected ? Colors.white : Colors.transparent),
+                                child: Icon(
+                                  Icons.check,
+                                  size: 16,
+                                  color: isSelected ? Colors.white : Colors.transparent,
+                                ),
                               ),
                             ),
                           ),
@@ -823,6 +982,7 @@ class _UserPageState extends State<UserPage> {
                       )
                           : const SizedBox.shrink(),
                     ),
+
                     Expanded(
                       child: InkWell(
                         onTap: () {
@@ -923,11 +1083,25 @@ class _UserPageState extends State<UserPage> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+                final authProvider = context.read<AuthProvider>();
+                bool isSelf = item.id == authProvider.currentUserId;
+                int myRank = _getRoleRank(authProvider.role);
+                int targetRank = _getRoleRank(item.role);
+
+                if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+                  _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 태그는 발행할 수 없습니다.", theme);
+                  return;
+                }
+
                 showDialog(
                     context: context,
                     barrierDismissible: false,
-                    builder: (ctx) {
-                      return _BulkTagIssueDialog(selectedUsers: [item], provider: provider, theme: theme);
+                    builder: (BuildContext ctx) {
+                      return _BulkTagIssueDialog(
+                        selectedUsers: [item],
+                        provider: provider,
+                        theme: theme,
+                      );
                     }
                 );
               }),
@@ -989,7 +1163,10 @@ class _UserPageState extends State<UserPage> {
                   Row(
                     children: [
                       Flexible(
-                        child: Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null), overflow: TextOverflow.ellipsis),
+                        child: Text(item.name,
+                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       _buildStatusBadge(status),
@@ -1028,11 +1205,25 @@ class _UserPageState extends State<UserPage> {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+              final authProvider = context.read<AuthProvider>();
+              bool isSelf = item.id == authProvider.currentUserId;
+              int myRank = _getRoleRank(authProvider.role);
+              int targetRank = _getRoleRank(item.role);
+
+              if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+                _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 태그는 발행할 수 없습니다.", theme);
+                return;
+              }
+
               showDialog(
                   context: context,
                   barrierDismissible: false,
-                  builder: (ctx) {
-                    return _BulkTagIssueDialog(selectedUsers: [item], provider: provider, theme: theme);
+                  builder: (BuildContext ctx) {
+                    return _BulkTagIssueDialog(
+                      selectedUsers: [item],
+                      provider: provider,
+                      theme: theme,
+                    );
                   }
               );
             }),
@@ -1129,13 +1320,12 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
-  /// 🔥 [수정] 메타 값을 가져올 때 'role' 필드를 UI용 한글로 변환하여 출력합니다.
   String _getMetaValue(UserModel item, String key) {
     final Map<String, String> baseFields = {
       '성명': item.name,
       '사번': item.code,
       '부서': item.department,
-      '권한/등급': _getDisplayRole(item.role), // 영문 DB값을 한글로 매핑
+      '권한/등급': _getDisplayRole(item.role),
       '태그ID': item.tagId
     };
 
@@ -1164,9 +1354,22 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _showBulkEditDialog(UserProvider provider, List<UserModel> visibleItems, ThemeData theme) async {
+    final authProvider = context.read<AuthProvider>();
+    int myRank = _getRoleRank(authProvider.role);
+
     final List<UserModel> selectedUsers = visibleItems.where((UserModel p) {
       return _selectedUserIds.contains(p.id);
     }).toList();
+
+    bool hasUnauthorized = selectedUsers.any((u) {
+      int targetRank = _getRoleRank(u.role);
+      return !authProvider.isAdmin && (myRank <= targetRank);
+    });
+
+    if (hasUnauthorized) {
+      _showInfoDialog("권한 없음", "선택된 항목 중 편집 권한이 없는 사용자(본인/동일/상위 등급)가 포함되어 있습니다.\n하위 등급의 작업자만 선택하여 일괄 편집해 주세요.", theme);
+      return;
+    }
 
     if (selectedUsers.isEmpty) {
       return;
@@ -1174,7 +1377,6 @@ class _UserPageState extends State<UserPage> {
 
     List<BulkEditField> fields = [
       BulkEditField(key: 'department', label: '새로운 담당부서/소속', type: BulkEditFieldType.text),
-      // 일괄 편집 창에서도 'role' 필드를 수정할 수 있도록 유지
       BulkEditField(key: 'role', label: '새로운 권한/등급', type: BulkEditFieldType.text),
       BulkEditField(key: 'remarks', label: '새로운 공통 비고', type: BulkEditFieldType.text),
       BulkEditField(key: 'is_approved', label: '출입 승인 상태 일괄 변경', type: BulkEditFieldType.toggle, initialValue: true),
@@ -1222,7 +1424,6 @@ class _UserPageState extends State<UserPage> {
         } else if (key == 'is_approved') {
           data['is_approved'] = value;
         } else if (key == 'role') {
-          // 🔥 일괄 편집 시 입력된 텍스트도 영문 DB값으로 변환 시도
           data['role'] = _getDbRole(value.toString());
         } else {
           updatedMeta[key] = value;
@@ -1245,6 +1446,24 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _confirmBulkDelete(UserProvider provider, ThemeData theme) {
+    final authProvider = context.read<AuthProvider>();
+    int myRank = _getRoleRank(authProvider.role);
+
+    final List<UserModel> selectedUsers = provider.list.where((UserModel p) {
+      return _selectedUserIds.contains(p.id);
+    }).toList();
+
+    bool hasUnauthorized = selectedUsers.any((u) {
+      bool isSelf = u.id == authProvider.currentUserId;
+      int targetRank = _getRoleRank(u.role);
+      return isSelf || (!authProvider.isAdmin && (myRank <= targetRank));
+    });
+
+    if (hasUnauthorized) {
+      _showInfoDialog("권한 없음", "선택된 항목 중 삭제 권한이 없는 사용자(본인, 동일 등급, 상위 등급)가 포함되어 있습니다.\n하위 등급의 작업자만 선택하여 일괄 삭제해 주세요.", theme);
+      return;
+    }
+
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
         context: context,
@@ -1377,6 +1596,12 @@ class _UserPageState extends State<UserPage> {
   }
 
   Future<void> _showResetConfirmationDialog(UserProvider provider, ThemeData theme) async {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isAdmin && _getRoleRank(authProvider.role) < 3) {
+      _showInfoDialog("권한 없음", "데이터 전체 초기화 작업은 최고관리자(Admin)만 수행할 수 있습니다.", theme);
+      return;
+    }
+
     final bool? confirm = await showDialog<bool>(
         context: context,
         builder: (BuildContext ctx) {
@@ -1448,6 +1673,12 @@ class _UserPageState extends State<UserPage> {
   }
 
   Future<void> _handleBatchImport(UserProvider provider, ThemeData theme) async {
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isAdmin && _getRoleRank(authProvider.role) < 2) {
+      _showInfoDialog("권한 없음", "데이터 일괄 엑셀 업로드 작업은 현장관리자(Manager) 이상만 가능합니다.", theme);
+      return;
+    }
+
     try {
       final FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls'], withData: true);
 
@@ -1571,7 +1802,6 @@ class _UserPageState extends State<UserPage> {
           } else if (cleanHeader.contains('부서')) {
             dept = val;
           } else if (cleanHeader.contains('권한/등급') || cleanHeader.contains('role')) {
-            // 🔥 엑셀에서 받아온 문자열도 DB용 영문으로 변환해서 담습니다.
             role = _getDbRole(val);
           } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
             tagId = val;
@@ -1605,7 +1835,7 @@ class _UserPageState extends State<UserPage> {
           'code': code,
           'tag_id': tagId,
           'department': dept,
-          'role': role.isEmpty ? 'Operator' : role, // 비어있으면 기본값 Operator
+          'role': role.isEmpty ? 'Operator' : role,
           'is_approved': name != "형식에 맞지 않는 건",
           'metadata': metadata
         };
@@ -1673,7 +1903,6 @@ class _UserPageState extends State<UserPage> {
           }
         }
       }
-
       final List<String> metaFields = metaKeySet.toList()..sort();
       final List<String> allHeaders = [...baseHeaders, ...metaFields];
 
@@ -1687,7 +1916,6 @@ class _UserPageState extends State<UserPage> {
           excel_pkg.TextCellValue(p.name),
           excel_pkg.TextCellValue(p.code),
           excel_pkg.TextCellValue(p.department),
-          // 🔥 [수정] 엑스포트 시, 영문 role값을 다시 친절한 한글로 변환하여 출력합니다.
           excel_pkg.TextCellValue(_getDisplayRole(p.role)),
           excel_pkg.TextCellValue(p.tagId),
         ];
@@ -1798,23 +2026,46 @@ class _UserPageState extends State<UserPage> {
   }
 
   Future<void> _showForm(UserProvider provider, UserModel? p, ThemeData theme) async {
+    final authProvider = context.read<AuthProvider>();
+    int myRank = _getRoleRank(authProvider.role);
+
+    if (p != null) {
+      bool isSelf = p.id == authProvider.currentUserId;
+      int targetRank = _getRoleRank(p.role);
+
+      if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+        _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 정보는 수정할 수 없습니다.", theme);
+        return;
+      }
+    } else {
+      if (!authProvider.isAdmin && myRank < 2) {
+        _showInfoDialog("권한 없음", "신규 인원 등록은 현장관리자(Manager) 이상만 가능합니다.", theme);
+        return;
+      }
+    }
+
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController codeC = TextEditingController(text: p?.code ?? "");
     final TextEditingController deptC = TextEditingController(text: p?.department ?? "");
 
-    // 화면(UI)에 띄울 한글 옵션들
-    final List<String> roleOptions = ['최고관리자 (Admin)', '현장관리자 (Manager)', '일반작업자 (Operator)'];
     String currentDisplayRole = '일반작업자 (Operator)';
-
     if (p != null && p.role.isNotEmpty) {
-      // 🔥 [수정] DB의 영문 값을 UI용 한글로 변환해서 매칭
-      String mappedRole = _getDisplayRole(p.role);
-      if (roleOptions.contains(mappedRole)) {
-        currentDisplayRole = mappedRole;
-      } else {
-        roleOptions.add(mappedRole);
-        currentDisplayRole = mappedRole;
-      }
+      currentDisplayRole = _getDisplayRole(p.role);
+    }
+
+    bool canEditRole = authProvider.isAdmin || myRank >= 2;
+    List<String> roleOptions = [];
+
+    if (authProvider.isAdmin || myRank == 3) {
+      roleOptions = ['최고관리자 (Admin)', '현장관리자 (Manager)', '일반작업자 (Operator)'];
+    } else if (myRank == 2) {
+      roleOptions = ['현장관리자 (Manager)', '일반작업자 (Operator)'];
+    } else {
+      roleOptions = [currentDisplayRole];
+    }
+
+    if (!roleOptions.contains(currentDisplayRole)) {
+      roleOptions.add(currentDisplayRole);
     }
 
     String initialEmail = "";
@@ -1940,16 +2191,16 @@ class _UserPageState extends State<UserPage> {
                                                       Expanded(
                                                         child: _buildDropdownField(
                                                           value: currentDisplayRole,
-                                                          label: "권한/등급",
+                                                          label: canEditRole ? "권한/등급 (수정 가능)" : "권한/등급 (권한 부족)",
                                                           options: roleOptions,
                                                           theme: theme,
-                                                          onChanged: (String? newValue) {
+                                                          onChanged: canEditRole ? (String? newValue) {
                                                             if (newValue != null) {
                                                               setS(() {
                                                                 currentDisplayRole = newValue;
                                                               });
                                                             }
-                                                          },
+                                                          } : null,
                                                         ),
                                                       ),
                                                     ],
@@ -2070,7 +2321,6 @@ class _UserPageState extends State<UserPage> {
                           'code': codeC.text.trim(),
                           'tag_id': tagC.text.trim(),
                           'department': deptC.text.trim(),
-                          // 🔥 [수정] 화면의 한글 문자열을 DB 전용 영문 키값으로 완벽 변환 후 전송!
                           'role': _getDbRole(currentDisplayRole),
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
@@ -2116,7 +2366,7 @@ class _UserPageState extends State<UserPage> {
     required String label,
     required List<String> options,
     required ThemeData theme,
-    required ValueChanged<String?> onChanged,
+    required ValueChanged<String?>? onChanged,
   }) {
     return DropdownButtonFormField<String>(
       initialValue: value,
@@ -2140,6 +2390,21 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _confirmDelete(UserProvider provider, UserModel p, ThemeData theme) {
+    final authProvider = context.read<AuthProvider>();
+    bool isSelf = p.id == authProvider.currentUserId;
+    int myRank = _getRoleRank(authProvider.role);
+    int targetRank = _getRoleRank(p.role);
+
+    if (isSelf) {
+      _showInfoDialog("삭제 불가", "본인의 계정은 직접 삭제할 수 없습니다.", theme);
+      return;
+    }
+
+    if (!authProvider.isAdmin && myRank <= targetRank) {
+      _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자는 삭제할 수 없습니다.", theme);
+      return;
+    }
+
     showDialog(
         context: context,
         builder: (BuildContext c) {

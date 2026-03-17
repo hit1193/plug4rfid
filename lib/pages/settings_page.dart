@@ -17,7 +17,8 @@ import '../providers/theme_provider.dart';
 /// ---------------------------------------------------------------------------
 /// [환경설정 페이지]
 /// 데이터베이스(PocketBase) 서버 IP, ERP 연동 주소, 자동 동기화 주기 등
-/// 상단 타이틀 영역을 제거하고 글로벌 바(Global Bar)에 맞춰 컴팩트하게 구성했습니다.
+/// 앱 구동에 필요한 핵심 로컬 설정값들을 관리하는 화면입니다.
+/// 키오스크 환경(장갑을 낀 상태 등)을 고려하여 큼직하고 직관적인 UI로 구성되었습니다.
 /// ---------------------------------------------------------------------------
 class SettingsPage extends StatefulWidget {
   final bool isMobile;
@@ -45,7 +46,6 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _dbUrlController = TextEditingController();
 
   // [2] ERP 연동 설정 (송수신 분리 적용)
-  // 수신(데이터 가져오기)과 송신(데이터 보내기) API 주소를 분리하여 관리합니다.
   final TextEditingController _erpReceiveUrlController = TextEditingController();
   final TextEditingController _erpSendUrlController = TextEditingController();
 
@@ -73,7 +73,10 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _bgImagePathController = TextEditingController();
 
   // [5] RFID 발급 옵션 설정
-  String _tagBitOption = '96bit'; // 기본값은 96bit로 설정
+  String _tagBitOption = '96bit';
+
+  // 🔥 [6] AI (Gemini) API Key 입력용 컨트롤러 추가
+  final TextEditingController _geminiApiKeyController = TextEditingController();
 
   @override
   void initState() {
@@ -89,6 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _erpReceiveUrlController.dispose();
     _erpSendUrlController.dispose();
     _bgImagePathController.dispose();
+    _geminiApiKeyController.dispose(); // 🔥 해제 추가
     super.dispose();
   }
 
@@ -143,6 +147,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
           _bgImagePathController.text = prefs.getString('pref_bg_image_path') ?? '';
           _tagBitOption = prefs.getString('pref_tag_bit_option') ?? '96bit';
+
+          // 🔥 저장된 API 키 불러오기
+          _geminiApiKeyController.text = prefs.getString('pref_gemini_api_key') ?? '';
 
           _isLoading = false;
         });
@@ -203,6 +210,9 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setString('pref_bg_image_path', _bgImagePathController.text.trim());
       await prefs.setString('pref_tag_bit_option', _tagBitOption);
 
+      // 🔥 AI (Gemini) API Key 저장
+      await prefs.setString('pref_gemini_api_key', _geminiApiKeyController.text.trim());
+
       if (_selectedDisplayId != null) {
         await prefs.setString('pref_display_id', _selectedDisplayId!);
       }
@@ -222,7 +232,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('✅ 환경설정이 성공적으로 저장되었습니다. (네트워크 설정은 앱 재시작 후 완벽히 반영됩니다)', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+          content: Text('✅ 환경설정이 성공적으로 저장되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
           elevation: 0,
         ));
       }
@@ -246,7 +256,9 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 데이터베이스 서버와의 연결 상태를 점검하는 테스트 함수입니다.
   Future<void> _testDbConnection() async {
     final String targetUrl = _dbUrlController.text.trim();
-    if (targetUrl.isEmpty) return;
+    if (targetUrl.isEmpty) {
+      return;
+    }
 
     showDialog(
         context: context,
@@ -266,7 +278,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
     await Future.delayed(const Duration(seconds: 1));
 
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
+
     Navigator.pop(context);
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -283,6 +298,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
+
+    // 동적 테마 연동: 사용자가 선택한 테마의 주요 색상을 가져옵니다.
     final Color dynamicPrimary = theme.colorScheme.primary;
 
     if (_isLoading) {
@@ -297,13 +314,14 @@ class _SettingsPageState extends State<SettingsPage> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 🔥 [업데이트] 불필요한 타이틀 제거하고 액션 버튼을 우측으로 정렬했습니다.
-          _buildTopHeader(theme, dynamicPrimary),
+          _buildTopHeader(theme, isDark, dynamicPrimary),
+          Divider(height: 1, color: theme.dividerTheme.color),
 
           Expanded(
             child: SingleChildScrollView(
               padding: EdgeInsets.only(
                 left: widget.isMobile ? 16.0 : 32.0,
+                top: widget.isMobile ? 16.0 : 32.0,
                 right: widget.isMobile ? 16.0 : 32.0,
                 bottom: (widget.isMobile ? 16.0 : 32.0) + 20.0, // 하단 여백 추가
               ),
@@ -330,7 +348,6 @@ class _SettingsPageState extends State<SettingsPage> {
                             ),
                             const SizedBox(height: 20),
 
-                            // [핵심 추가] 오프라인(로컬망) 동작 모드 활성화 스위치
                             Container(
                               decoration: AppTheme.listItemDecoration(context, isSelected: _isOfflineMode, statusColor: dynamicPrimary),
                               child: SwitchListTile(
@@ -347,7 +364,6 @@ class _SettingsPageState extends State<SettingsPage> {
                               ),
                             ),
 
-                            // 오프라인 모드가 켜졌을 때만 나타나는 '회사코드' 입력란 (미래 데이터 통합을 위한 태깅용)
                             AnimatedSize(
                               duration: const Duration(milliseconds: 300),
                               child: _isOfflineMode
@@ -738,6 +754,45 @@ class _SettingsPageState extends State<SettingsPage> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 24),
+
+                      // 🔥 ----------------------------------------------------------------
+                      // 섹션 6: AI 스마트 검색 (Gemini API) 설정
+                      // ----------------------------------------------------------------
+                      _buildSectionCard(
+                        title: "6. AI 스마트 검색 (Gemini API) 설정",
+                        icon: Icons.auto_awesome_rounded,
+                        theme: theme,
+                        primaryColor: Colors.deepPurpleAccent, // AI 기능 특화 컬러 적용
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "물품 및 인원 관리 화면에서 자연어로 검색할 수 있도록 구글 Gemini API 키를 등록합니다.\n각 거래처(클라이언트)별로 발급받은 고유 키를 직접 입력하여 과금을 분리하고 보안을 유지합니다.",
+                              style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
+                            ),
+                            const SizedBox(height: 20),
+                            TextField(
+                              controller: _geminiApiKeyController,
+                              obscureText: true, // 보안을 위해 키를 마스킹 처리합니다.
+                              style: AppTheme.itemValueStyle(context).copyWith(fontSize: 18),
+                              decoration: AppTheme.inputDecoration(
+                                  label: "Google Gemini API Key (AIzaSy...)",
+                                  context: context,
+                                  prefixIcon: Icons.vpn_key_rounded
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 4.0),
+                              child: Text(
+                                "💡 무료 API 키 발급처: https://aistudio.google.com/app/apikey",
+                                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.blueGrey, height: 1.4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
 
                       const SizedBox(height: 60),
                     ],
@@ -751,8 +806,8 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// [UI 조각] 상단 타이틀 영역 (중복 타이틀 제거 및 액션 버튼 우측 정렬)
-  Widget _buildTopHeader(ThemeData theme, Color dynamicPrimary) {
+  /// [UI 조각] 상단 타이틀 영역
+  Widget _buildTopHeader(ThemeData theme, bool isDark, Color dynamicPrimary) {
     return Container(
       padding: EdgeInsets.all(widget.isMobile ? 16.0 : 24.0),
       child: Row(
