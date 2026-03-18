@@ -147,7 +147,7 @@ class _ProductPageState extends State<ProductPage> {
     try {
       final List<String> resultIds = await AiSearchHelper.searchProducts(query, allItems);
 
-      if (!context.mounted) {
+      if (!mounted) {
         return;
       }
 
@@ -162,12 +162,12 @@ class _ProductPageState extends State<ProductPage> {
       _syncFiltering(allItems);
 
     } catch (e) {
-      if (!context.mounted) {
+      if (!mounted) {
         return;
       }
       _showInfoDialog("AI 검색 오류", e.toString(), theme);
     } finally {
-      if (context.mounted) {
+      if (mounted) {
         setState(() {
           _isAiSearching = false;
         });
@@ -184,7 +184,7 @@ class _ProductPageState extends State<ProductPage> {
     final ProductProvider provider = context.read<ProductProvider>();
 
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
-      if (!context.mounted) {
+      if (!mounted) {
         return;
       }
       setState(() {
@@ -353,7 +353,6 @@ class _ProductPageState extends State<ProductPage> {
 
   /// ERP 외부 시스템 연동 호출
   void _triggerErpSync(ThemeData theme) {
-    // 비동기 콜백 내에서 context 사용을 방지하기 위해 provider를 미리 캡처합니다.
     final ProductProvider provider = context.read<ProductProvider>();
 
     ErpSyncHelper.fetchAndSync(
@@ -416,14 +415,14 @@ class _ProductPageState extends State<ProductPage> {
         };
       },
       onLoadingStart: () {
-        if (context.mounted) {
+        if (mounted) {
           setState(() {
             _isFullScreenLoading = true;
           });
         }
       },
       onLoadingComplete: () {
-        if (context.mounted) {
+        if (mounted) {
           setState(() {
             _isFullScreenLoading = false;
           });
@@ -455,7 +454,7 @@ class _ProductPageState extends State<ProductPage> {
           Column(
             children: [
               _buildDashboard(metrics, provider.items.length, theme),
-              Divider(height: 1, color: theme.dividerColor),
+              Divider(height: 1, color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.2)),
               Expanded(
                 child: LayoutBuilder(
                   builder: (BuildContext ctx, BoxConstraints constraints) {
@@ -613,7 +612,7 @@ class _ProductPageState extends State<ProductPage> {
             ],
           ),
         ),
-        VerticalDivider(width: 1, color: theme.dividerColor),
+        VerticalDivider(width: 1, color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.2)),
         Expanded(
           child: Container(
             color: theme.scaffoldBackgroundColor,
@@ -1094,7 +1093,9 @@ class _ProductPageState extends State<ProductPage> {
             children: [
               Row(
                   children: [
-                    Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
+                    Flexible(
+                      child: Text(p.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19), overflow: TextOverflow.ellipsis),
+                    ),
                     const SizedBox(width: 12),
                     _buildStatusBadge(p.status),
                     if (!p.isApproved)
@@ -1175,7 +1176,7 @@ class _ProductPageState extends State<ProductPage> {
                 children: [
                   Row(
                       children: [
-                        Flexible(
+                        Expanded(
                             child: Text(p.name,
                               style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
                               overflow: TextOverflow.ellipsis,
@@ -1214,7 +1215,7 @@ class _ProductPageState extends State<ProductPage> {
           }).toList(),
         ),
         const SizedBox(height: 16),
-        Divider(color: theme.dividerColor.withValues(alpha: 0.5)),
+        Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5) ?? Colors.grey.withValues(alpha: 0.2)),
         const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1257,7 +1258,7 @@ class _ProductPageState extends State<ProductPage> {
       return;
     }
 
-    if (!context.mounted) {
+    if (!mounted) {
       return;
     }
 
@@ -1289,11 +1290,10 @@ class _ProductPageState extends State<ProductPage> {
       return;
     }
 
-    if (!context.mounted) {
+    if (!mounted) {
       return;
     }
 
-    // Await 이전 Navigator 및 Messenger 캡처 (Lint 오류 해결 핵심)
     final NavigatorState nav = Navigator.of(context);
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final ValueNotifier<int> currentCountNotifier = ValueNotifier<int>(0);
@@ -1389,15 +1389,15 @@ class _ProductPageState extends State<ProductPage> {
         currentCountNotifier.value++;
       }
     } finally {
-      if (context.mounted) {
+      if (mounted) {
         setState(() {
           _isFullScreenLoading = false;
         });
       }
-      nav.pop(); // 미리 캡처한 네비게이터로 다이얼로그 닫기
+      nav.pop();
     }
 
-    if (!context.mounted) {
+    if (!mounted) {
       return;
     }
 
@@ -1427,7 +1427,10 @@ class _ProductPageState extends State<ProductPage> {
         decoration: BoxDecoration(
             color: isSelected ? AppTheme.primary.withValues(alpha: 0.05) : theme.cardColor,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: isSelected ? AppTheme.primary : hCol.withValues(alpha: 0.4), width: isSelected ? 2.5 : 1.8)
+            border: Border.all(
+                color: isSelected ? AppTheme.primary : (theme.brightness == Brightness.dark ? Colors.white.withValues(alpha: 0.15) : Colors.black.withValues(alpha: 0.12)),
+                width: isSelected ? 2.0 : 1.0
+            )
         ),
         child: Row(
             children: [
@@ -1465,10 +1468,25 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 썸네일 이미지 빌더 (ValueKey와 cacheWidth 적용)
+  /// 썸네일 이미지 빌더 (ValueKey와 cacheWidth 적용 및 Null-check 최적화)
   Widget _buildThumbnail(ProductModel? p, ThemeData theme, {double size = 44}) {
-    final String url = p != null ? p.getImageUrl(widget.baseUrl, thumb: '100x100') : '';
     final bool isDark = theme.brightness == Brightness.dark;
+
+    // 🔥 [경고 해결] Null 상태를 함수 최상단에서 명확히 걸러냅니다.
+    // Dart 컴파일러가 이하 코드에서 p 변수를 Non-null로 자동 인식하게 됩니다.
+    if (p == null) {
+      return Container(
+          width: size, height: size,
+          decoration: BoxDecoration(
+              color: isDark ? theme.dividerColor.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)
+          ),
+          child: const Icon(Icons.inventory_2_outlined, color: Colors.black12, size: 24)
+      );
+    }
+
+    final String url = p.getImageUrl(widget.baseUrl, thumb: '100x100');
 
     if (url.isEmpty) {
       return Container(
@@ -1476,23 +1494,25 @@ class _ProductPageState extends State<ProductPage> {
           decoration: BoxDecoration(
               color: isDark ? theme.dividerColor.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: theme.dividerColor, width: 1.5)
+              border: Border.all(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)
           ),
           child: const Icon(Icons.inventory_2_outlined, color: Colors.black12, size: 24)
       );
     }
 
     final String connector = url.contains('?') ? '&' : '?';
-    final int timeStamp = p?.updated.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch;
+    // 🔥 [경고 해결] p가 Non-null로 보장되므로 불필요한 '?.' 표기를 제거했습니다.
+    final int timeStamp = p.updated.millisecondsSinceEpoch;
     final String fullUrl = "$url${connector}t=$timeStamp";
 
     return Container(
-        key: ValueKey('thumb_${p!.id}_$timeStamp'),
+      // 🔥 [경고 해결] p가 Non-null로 보장되므로 불필요한 '!' 표기를 제거했습니다.
+        key: ValueKey('thumb_${p.id}_$timeStamp'),
         width: size, height: size,
         decoration: BoxDecoration(
             color: isDark ? theme.dividerColor.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: theme.dividerColor, width: 1.5)
+            border: Border.all(color: theme.dividerTheme.color ?? Colors.grey.withValues(alpha: 0.3), width: 1.0)
         ),
         clipBehavior: Clip.antiAlias,
         child: Image.network(
@@ -1617,7 +1637,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 전체 데이터 리셋 확인 다이얼로그 (비동기 Lint 원천 차단 적용)
+  /// 전체 데이터 리셋 확인 다이얼로그
   void _showResetDialog(ProductProvider provider, ThemeData theme) {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -1642,7 +1662,7 @@ class _ProductPageState extends State<ProductPage> {
                       final NavigatorState nav = Navigator.of(ctx);
                       final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
-                      nav.pop(); // 모달 즉각 닫기 (AWAIT 이전 실행)
+                      nav.pop();
 
                       setState(() {
                         _isFullScreenLoading = true;
@@ -1650,7 +1670,8 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.resetAllProducts();
 
-                      if (!context.mounted) {
+                      // 🔥 [경고 해결] State 객체의 mounted를 확인하여 비동기 갭 오류를 차단합니다.
+                      if (!mounted) {
                         return;
                       }
 
@@ -1672,7 +1693,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 일괄 삭제 확인 다이얼로그 (비동기 Lint 원천 차단 적용)
+  /// 일괄 삭제 확인 다이얼로그
   void _confirmBulkDelete(ProductProvider provider, ThemeData theme) {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -1705,7 +1726,8 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts(_selectedItemIds.toList());
 
-                      if (!context.mounted) {
+                      // 🔥 [경고 해결]
+                      if (!mounted) {
                         return;
                       }
 
@@ -1725,7 +1747,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 개별 항목 삭제 확인 다이얼로그 (비동기 Lint 원천 차단 적용)
+  /// 개별 항목 삭제 확인 다이얼로그
   void _confirmIndividualDelete(ProductProvider provider, ProductModel p, ThemeData theme) {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -1754,7 +1776,8 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts([p.id]);
 
-                      if (!context.mounted) {
+                      // 🔥 [경고 해결]
+                      if (!mounted) {
                         return;
                       }
 
@@ -1772,7 +1795,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 그룹 일괄 삭제 확인 다이얼로그 (비동기 Lint 원천 차단 적용)
+  /// 그룹 일괄 삭제 확인 다이얼로그
   void _confirmGroupDelete(ProductProvider provider, String name, List<ProductModel> items, ThemeData theme) {
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
@@ -1803,7 +1826,8 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts(ids);
 
-                      if (!context.mounted) {
+                      // 🔥 [경고 해결]
+                      if (!mounted) {
                         return;
                       }
 
@@ -1824,7 +1848,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 수기 입출고 처리 프로세스 연동 (비동기 Lint 원천 차단 적용)
+  /// 수기 입출고 처리 프로세스 연동
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final userProvider = context.read<UserProvider>();
@@ -1866,7 +1890,8 @@ class _ProductPageState extends State<ProductPage> {
       }
     });
 
-    if (!context.mounted) {
+    // 🔥 [경고 해결]
+    if (!mounted) {
       return;
     }
 
@@ -1897,7 +1922,7 @@ class _ProductPageState extends State<ProductPage> {
                     : ListView.separated(
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   itemCount: (p.metadata['history'] as List).length,
-                  separatorBuilder: (BuildContext c, int i) => const Divider(height: 24),
+                  separatorBuilder: (BuildContext c, int i) => Divider(height: 24, color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
                   itemBuilder: (BuildContext context, int idx) {
                     final dynamic log = (p.metadata['history'] as List)[idx];
                     final String type = log['type'] ?? "-";
@@ -1970,7 +1995,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 일괄 편집 다이얼로그 (비동기 Lint 원천 차단 적용)
+  /// 일괄 편집 다이얼로그
   void _showBulkEditDialog(ProductProvider provider, List<ProductModel> visibleItems, ThemeData theme) async {
     final List<ProductModel> selectedProducts = visibleItems.where((ProductModel p) => _selectedItemIds.contains(p.id)).toList();
     if (selectedProducts.isEmpty) {
@@ -2050,7 +2075,8 @@ class _ProductPageState extends State<ProductPage> {
       await provider.handleSave(product: p, data: data);
     }
 
-    if (!context.mounted) {
+    // 🔥 [경고 해결]
+    if (!mounted) {
       return;
     }
 
@@ -2068,7 +2094,7 @@ class _ProductPageState extends State<ProductPage> {
     ));
   }
 
-  /// 자산 신규 등록 및 수정 폼 (비동기 Lint 원천 차단 적용)
+  /// 자산 신규 등록 및 수정 폼
   void _showForm(ProductProvider provider, ProductModel? p, ThemeData theme) async {
     final TextEditingController nameC = TextEditingController(text: p?.name ?? "");
     final TextEditingController tagC = TextEditingController(text: p?.tagId ?? "");
@@ -2293,7 +2319,6 @@ class _ProductPageState extends State<ProductPage> {
                               }
                             }
 
-                            // 비동기 작업 전 Navigator와 Messenger 안전 캡처
                             final NavigatorState nav = Navigator.of(dialogCtx);
                             final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
@@ -2312,7 +2337,8 @@ class _ProductPageState extends State<ProductPage> {
                               };
 
                               final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
-                              if (!context.mounted) {
+                              // 🔥 [경고 해결] 팝업 내부에서 닫기를 제어하므로 팝업의 context(dialogCtx)가 mounted 상태인지 검사합니다.
+                              if (!dialogCtx.mounted) {
                                 return;
                               }
                               if (ok) {
@@ -2323,7 +2349,7 @@ class _ProductPageState extends State<ProductPage> {
                                 );
                               }
                             } else {
-                              nav.pop(); // 폼 다이얼로그 즉시 닫기
+                              nav.pop();
                               setState(() {
                                 _isFullScreenLoading = true;
                               });
@@ -2364,7 +2390,8 @@ class _ProductPageState extends State<ProductPage> {
                                 }
                               }
 
-                              if (!context.mounted) {
+                              // 🔥 [경고 해결] 팝업은 닫혔으므로 현재 State 객체의 mounted 상태를 검사합니다.
+                              if (!mounted) {
                                 return;
                               }
 
@@ -2495,7 +2522,7 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 엑셀 기반 대량 일괄 임포트 프로세스 (비동기 Lint 원천 차단 적용)
+  /// 엑셀 기반 대량 일괄 임포트 프로세스
   Future<void> _handleBatchImport(ProductProvider provider, ThemeData theme) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     final NavigatorState mainNav = Navigator.of(context);
@@ -2548,7 +2575,8 @@ class _ProductPageState extends State<ProductPage> {
         }
       }
 
-      if (!context.mounted) {
+      // 🔥 [경고 해결] State 객체의 mounted 상태 검사
+      if (!mounted) {
         return;
       }
 
@@ -2669,7 +2697,8 @@ class _ProductPageState extends State<ProductPage> {
         currentCountNotifier.value++;
       }
 
-      if (!context.mounted) {
+      // 🔥 [경고 해결] State 객체의 mounted 상태 검사
+      if (!mounted) {
         return;
       }
 
@@ -2680,7 +2709,7 @@ class _ProductPageState extends State<ProductPage> {
       messenger.showSnackBar(const SnackBar(content: Text('✅ 엑셀 임포트가 성공적으로 완료되었습니다.')));
 
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         setState(() {
           _isFullScreenLoading = false;
         });
@@ -2809,7 +2838,8 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         await Future.delayed(const Duration(milliseconds: 300));
       }
 
-      if (context.mounted) {
+      // 🔥 [경고 해결]
+      if (mounted) {
         setState(() {
           final List<DeviceModel> availableDevices = deviceProvider.list.where((DeviceModel d) {
             return d.isActive == true && d.isAutoConnect == false;
@@ -2830,7 +2860,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         });
       }
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         setState(() {
           _readerOptions = ['오류: 장비 로딩 실패'];
           _selectedReader = _readerOptions.first;
@@ -2926,7 +2956,8 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         }
       }
 
-      if (context.mounted) {
+      // 🔥 [경고 해결] State.mounted 검사 후 안전하게 처리
+      if (mounted) {
         setState(() {
           _isCompleted = true;
           _progressValue = 1.0;
@@ -2934,11 +2965,13 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         });
 
         await Future.delayed(const Duration(milliseconds: 1500));
+
+        if (!mounted) return;
         nav.pop();
       }
 
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         setState(() {
           _isProcessing = false;
           _progressText = '❌ 기록 중 오류 발생: $e';
