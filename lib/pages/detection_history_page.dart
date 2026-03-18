@@ -240,7 +240,6 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 🔥 [업데이트] 중복된 타이틀 영역을 삭제하고 필터 패널만 바로 호출합니다.
         _buildTopControlPanel(theme, isDark),
 
         // 메인 리스트 뷰 영역
@@ -280,20 +279,28 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
   }
 
   /// [UI 조각] 데스크톱/태블릿용 가로형 필터 레이아웃
+  /// 🔥 데스크탑 창을 좁게 줄일 때 검색창이 삐져나오지 않도록 SingleChildScrollView로 보호합니다.
   Widget _buildDesktopFilterLayout(bool isDark) {
     return Row(
       children: [
-        // 달력 범위 선택 버튼
-        _buildDatePickerButton(isDark),
+        // 왼쪽 필터 버튼 영역 (창을 줄여도 안 삐져나오게 감쌈)
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildDatePickerButton(isDark),
+                const SizedBox(width: 16),
+                _buildQuickDateSegmentedButton(isDark),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(width: 16),
 
-        _buildQuickDateSegmentedButton(isDark),
-
-        const Spacer(), // 남는 공간을 모두 차지하여 오른쪽으로 밀어냄
-
-        // 검색어 입력창
+        // 오른쪽 검색창과 버튼
         SizedBox(
-          width: 280,
+          width: 250,
           child: TextField(
             controller: _searchController,
             onChanged: _filterLogs,
@@ -303,7 +310,6 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
               context: context,
               prefixIcon: Icons.search,
             ).copyWith(
-              // 검색창 높이를 약간 슬림하게 조정
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
           ),
@@ -467,7 +473,10 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [핵심 영역] 감지 이력 리스트뷰 (기존 디자인 유지 및 하단 여백 적용)
+  /// [핵심 영역] 감지 이력 리스트뷰
+  /// 🔥 232픽셀 Overflow 렌더링 에러 완벽 해결!
+  /// 화면 크기(Mobile vs Desktop)에 따라 가로 배치를 유연하게 꺾어주고,
+  /// 텍스트가 길어지면 줄임표(...)로 처리하여 에러를 원천 차단했습니다.
   /// ---------------------------------------------------------------------------
   Widget _buildHistoryList(bool isDark, ThemeData theme) {
     return Container(
@@ -496,47 +505,81 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
           final String dateStr = "${localTime.year}-${localTime.month.toString().padLeft(2, '0')}-${localTime.day.toString().padLeft(2, '0')}";
           final String timeStr = "${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}:${localTime.second.toString().padLeft(2, '0')}";
 
-          // 행(Row) 공통 레이아웃
-          Widget headerContent = Row(
-            children: [
-              _buildImage(log.imageUrl, size: 50, isCircle: true),
-              const SizedBox(width: 20),
-              Expanded(
-                flex: 3,
-                child: Column(
+          // 🔥 [에러 해결 코어] 화면 크기에 따른 유연한 반응형 레이아웃 분기
+          Widget headerContent;
+
+          if (widget.isMobile) {
+            // [모바일 좁은 화면] : 억지로 가로로 나열하지 않고 위아래로 깔끔하게 배치합니다.
+            headerContent = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      log.content,
-                      style: TextStyle(
-                        fontFamily: AppTheme.fontPretendard,
-                        fontSize: 20,
-                        fontWeight: AppTheme.weightMenu,
-                        color: AppTheme.dataColor(isDark),
+                    _buildImage(log.imageUrl, size: 40, isCircle: true),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            log.content,
+                            style: TextStyle(
+                              fontFamily: AppTheme.fontPretendard,
+                              fontSize: 18,
+                              fontWeight: AppTheme.weightMenu,
+                              color: AppTheme.dataColor(isDark),
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.location_on, size: 14, color: AppTheme.labelColor(isDark)),
+                              const SizedBox(width: 4),
+                              Expanded( // 🔥 텍스트가 삐져나오지 않도록 방어!
+                                child: Text(
+                                  log.spot,
+                                  style: TextStyle(
+                                    fontFamily: AppTheme.fontPretendard,
+                                    fontSize: 13,
+                                    color: AppTheme.labelColor(isDark),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on, size: 14, color: AppTheme.labelColor(isDark)),
-                        const SizedBox(width: 4),
-                        Text(
-                          log.spot,
-                          style: TextStyle(
-                            fontFamily: AppTheme.fontPretendard,
-                            fontSize: 14,
-                            color: AppTheme.labelColor(isDark),
-                          ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: statusColor, width: 1.5),
+                      ),
+                      child: Text(
+                        displayStatus,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-              Expanded(
-                flex: 2,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                const SizedBox(height: 12),
+                Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       dateStr,
@@ -550,34 +593,105 @@ class _DetectionHistoryPageState extends State<DetectionHistoryPage> {
                       timeStr,
                       style: TextStyle(
                         fontFamily: AppTheme.fontPretendard,
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                         color: AppTheme.dataColor(isDark),
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: 32),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: statusColor, width: 1.5),
-                ),
-                child: Text(
-                  displayStatus,
-                  style: TextStyle(
-                    fontFamily: AppTheme.fontPretendard,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: statusColor,
+              ],
+            );
+          } else {
+            // [데스크톱/태블릿 넓은 화면] : 기존 가로형 Row 레이아웃 유지 + 에러 방어(Expanded) 적용
+            headerContent = Row(
+              children: [
+                _buildImage(log.imageUrl, size: 50, isCircle: true),
+                const SizedBox(width: 20),
+                Expanded(
+                  flex: 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        log.content,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          fontSize: 20,
+                          fontWeight: AppTheme.weightMenu,
+                          color: AppTheme.dataColor(isDark),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis, // 🔥 긴 이름 방어
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(Icons.location_on, size: 14, color: AppTheme.labelColor(isDark)),
+                          const SizedBox(width: 4),
+                          Expanded( // 🔥 긴 장소명 방어 (이 부분이 기존 에러의 핵심 원인이었습니다)
+                            child: Text(
+                              log.spot,
+                              style: TextStyle(
+                                fontFamily: AppTheme.fontPretendard,
+                                fontSize: 14,
+                                color: AppTheme.labelColor(isDark),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          );
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        dateStr,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          fontSize: 14,
+                          color: AppTheme.labelColor(isDark),
+                        ),
+                      ),
+                      Text(
+                        timeStr,
+                        style: TextStyle(
+                          fontFamily: AppTheme.fontPretendard,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.dataColor(isDark),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 32),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: statusColor, width: 1.5),
+                  ),
+                  child: Text(
+                    displayStatus,
+                    style: TextStyle(
+                      fontFamily: AppTheme.fontPretendard,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
 
           Widget cardChild;
           if (isMatched && log.items.isNotEmpty) {

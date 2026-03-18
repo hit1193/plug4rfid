@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
+// 🔥 [크롬 컴파일 에러 완벽 해결] 시리얼 포트 직접 임포트를 삭제하고 래퍼로 교체합니다.
+import 'scanner/app_serial_port.dart';
 
 /// ---------------------------------------------------------------------------
 /// [상수 정의] 지원하는 구체적 장치 모델 리스트
@@ -55,7 +56,8 @@ abstract class BaseDeviceProtocol {
   Socket? _socket;
   StreamSubscription<Uint8List>? _socketSubscription;
 
-  SerialPort? _serialPort;
+  // 🔥 [수정] SerialPort 클래스 대신 우리가 만든 AppSerialPort 래퍼를 사용합니다.
+  AppSerialPort? _serialPort;
 
   bool _rxThreadRunning = false;
   bool _terminateRxThread = false;
@@ -127,7 +129,8 @@ abstract class BaseDeviceProtocol {
     emitData("🔌 [SYS] 시리얼 포트 연결 시도: $ipAddress (BaudRate: $port)");
 
     try {
-      _serialPort ??= SerialPort(ipAddress);
+      // 🔥 [수정] 래퍼 객체 생성으로 교체
+      _serialPort ??= AppSerialPort(ipAddress);
 
       if (!_serialPort!.openReadWrite()) {
         emitData("❌ [SYS] 시리얼 포트 개방 실패: $ipAddress");
@@ -135,12 +138,8 @@ abstract class BaseDeviceProtocol {
       }
 
       try {
-        SerialPortConfig config = _serialPort!.config;
-        config.baudRate = port;
-        config.bits = 8;
-        config.stopBits = 1;
-        config.parity = SerialPortParity.none;
-        _serialPort!.config = config;
+        // 🔥 [수정] 복잡했던 config 구성을 래퍼 내부에 캡슐화한 1줄짜리 메서드로 교체
+        _serialPort!.configure(baudRate: port);
       } catch (configErr) {
         emitData("⚠️ [SYS] 포트 설정(DCB) 예외 무시: $configErr");
       }
@@ -1031,7 +1030,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
   /// 🔥 [바이트 밀림(Misalignment) 완벽 패치판]
   /// 매뉴얼의 'EpcWord'라는 오역을 무시하고, EPC 길이를 '바이트(Bytes)' 단위로 정확하게 입력하여
-  /// 0xFD 파라미터 에러를 완벽하게 근절한 C++ DLL 'WriteCard_G2'의 최종 완성형입니다.
+  /// 0xFD 파라미터 에러를 완벽하게 근절한 C++ SDK의 WriteCard_G2와 100% 동일한 패킷 구조를 구현했습니다.
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {

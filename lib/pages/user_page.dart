@@ -19,18 +19,16 @@ import '../providers/device_provider.dart';
 import '../theme/app_theme.dart';
 import '../core/erp_sync_helper.dart';
 
-// 🔥 [신규 추가] AI 자연어 스마트 검색 헬퍼 임포트
+// AI 자연어 스마트 검색 헬퍼 임포트
 import '../core/ai_search_helper.dart';
 
 // [공용 위젯 임포트] 표시 항목 설정 및 일괄 편집 다이얼로그
 import '../widgets/column_selection_dialog.dart';
 import '../widgets/bulk_edit_dialog.dart';
 
-// 포켓베이스 다이렉트 접근을 위해 전역 클라이언트 임포트
-import '../core/pocketbase_client.dart';
-
 /// ---------------------------------------------------------------------------
 /// [안전한 문자열 변환 유틸리티]
+/// 데이터베이스의 null 값이나 빈 값을 UI에서 안전하게 처리합니다.
 /// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
@@ -64,7 +62,9 @@ class UserPage extends StatefulWidget {
   });
 
   @override
-  State<UserPage> createState() => _UserPageState();
+  State<UserPage> createState() {
+    return _UserPageState();
+  }
 }
 
 class _UserPageState extends State<UserPage> {
@@ -78,9 +78,8 @@ class _UserPageState extends State<UserPage> {
   bool _isSelectionMode = false;
   bool _isFullScreenLoading = false;
 
-  // 🔥 [AI 검색 관련 상태 변수]
-  List<String>? _aiFilteredIds; // AI가 골라준 ID 목록. null이면 일반 검색 모드
-  bool _isAiSearching = false;  // AI API 통신 중 스피너 표시용 플래그
+  List<String>? _aiFilteredIds;
+  bool _isAiSearching = false;
 
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 300.0;
@@ -99,7 +98,7 @@ class _UserPageState extends State<UserPage> {
   @override
   void initState() {
     super.initState();
-    _currentFilter = widget.filter == '정상 등록' ? '등록' : widget.filter;
+    _currentFilter = (widget.filter == '정상 등록') ? '등록' : widget.filter;
     _currentSearchQuery = widget.searchQuery;
     _searchController.text = widget.searchQuery;
   }
@@ -110,8 +109,15 @@ class _UserPageState extends State<UserPage> {
     super.dispose();
   }
 
-  /// 🔥 [AI 스마트 검색 실행 로직]
-  /// 사용자가 입력한 검색어와 메모리의 사용자 목록을 AI에게 던집니다.
+  /// [위치정보 파싱 헬퍼]
+  String _getLocationFullName(UserModel item) {
+    if (item.metadata['last_location_info'] is Map) {
+      final Map locMap = item.metadata['last_location_info'] as Map;
+      return _safeStr(locMap['full_name'], defaultVal: "위치 정보 없음");
+    }
+    return "위치 정보 없음";
+  }
+
   Future<void> _performAiSearch(List<UserModel> allUsers, ThemeData theme) async {
     final String query = _searchController.text.trim();
 
@@ -122,11 +128,10 @@ class _UserPageState extends State<UserPage> {
 
     setState(() {
       _isAiSearching = true;
-      _aiFilteredIds = null; // 검색 시작 전 상태 초기화
+      _aiFilteredIds = null;
     });
 
     try {
-      // 헬퍼 모듈을 통해 API 통신
       final List<String> resultIds = await AiSearchHelper.searchUsers(query, allUsers);
 
       if (!mounted) {
@@ -134,7 +139,7 @@ class _UserPageState extends State<UserPage> {
       }
 
       setState(() {
-        _aiFilteredIds = resultIds; // 결과 ID 매핑 완료
+        _aiFilteredIds = resultIds;
       });
 
       if (resultIds.isEmpty) {
@@ -154,7 +159,6 @@ class _UserPageState extends State<UserPage> {
     }
   }
 
-  /// [보안 계급장 판별 로직] DB의 권한 문자열을 바탕으로 1~3의 계급장 점수를 반환합니다.
   int _getRoleRank(String role) {
     final String r = role.toLowerCase();
     if (r.contains('admin') || r.contains('최고')) {
@@ -163,26 +167,33 @@ class _UserPageState extends State<UserPage> {
     if (r.contains('manager') || r.contains('현장')) {
       return 2;
     }
-    return 1; // Operator
+    return 1;
   }
 
   String _getDisplayRole(String dbRole) {
     if (dbRole == 'Admin') {
       return '최고관리자 (Admin)';
-    } else if (dbRole == 'Manager') {
+    }
+    if (dbRole == 'Manager') {
       return '현장관리자 (Manager)';
-    } else if (dbRole == 'Operator') {
+    }
+    if (dbRole == 'Operator') {
       return '일반작업자 (Operator)';
     }
-    return dbRole.isNotEmpty ? dbRole : '일반작업자 (Operator)';
+    if (dbRole.isNotEmpty) {
+      return dbRole;
+    }
+    return '일반작업자 (Operator)';
   }
 
   String _getDbRole(String displayRole) {
     if (displayRole.contains('최고관리자') || displayRole.toLowerCase().contains('admin')) {
       return 'Admin';
-    } else if (displayRole.contains('현장관리자') || displayRole.toLowerCase().contains('manager')) {
+    }
+    if (displayRole.contains('현장관리자') || displayRole.toLowerCase().contains('manager')) {
       return 'Manager';
-    } else if (displayRole.contains('일반작업자') || displayRole.toLowerCase().contains('operator')) {
+    }
+    if (displayRole.contains('일반작업자') || displayRole.toLowerCase().contains('operator')) {
       return 'Operator';
     }
     return displayRole;
@@ -205,10 +216,12 @@ class _UserPageState extends State<UserPage> {
           todayOut++;
         }
       }
+
       if (lastType == '입장') {
         currentRemained++;
       }
     }
+
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
@@ -236,7 +249,7 @@ class _UserPageState extends State<UserPage> {
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     final dynamic rawApprove = result['is_approved'];
-    final bool isApproved = rawApprove is bool ? rawApprove : true;
+    final bool isApproved = (rawApprove is bool) ? rawApprove : true;
 
     final Map<String, dynamic> updatedMeta = Map<String, dynamic>.from(p.metadata);
     updatedMeta['last_access_type'] = type;
@@ -248,7 +261,7 @@ class _UserPageState extends State<UserPage> {
       'full_name': "${_safeStr(result['building'])} - ${_safeStr(result['gate'])}"
     };
 
-    List<dynamic> history = updatedMeta['access_history'] is List ? List.from(updatedMeta['access_history']) : [];
+    List<dynamic> history = (updatedMeta['access_history'] is List) ? List.from(updatedMeta['access_history']) : [];
     history.insert(0, {
       'time': now,
       'type': type,
@@ -267,10 +280,7 @@ class _UserPageState extends State<UserPage> {
       'metadata': updatedMeta,
     };
 
-    final String saveResult = await provider.handleSave(
-      p: p,
-      data: updateData,
-    );
+    final String saveResult = await provider.handleSave(p: p, data: updateData);
 
     if (!mounted) {
       return;
@@ -315,26 +325,14 @@ class _UserPageState extends State<UserPage> {
         builder: (BuildContext ctx) {
           return AlertDialog(
               title: AppTheme.dialogTitle("프로필 사진 변경", Icons.photo_camera_front),
-              content: Text(
-                  "[${user.name}]님의 프로필 사진을 선택하신 이미지로 즉시 변경하시겠습니까?",
-                  style: const TextStyle(fontFamily: AppTheme.fontPretendard)
-              ),
+              content: Text("[${user.name}]님의 프로필 사진을 선택하신 이미지로 즉시 변경하시겠습니까?", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
               actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                    onPressed: () {
-                      Navigator.pop(ctx, false);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "사진 변경",
-                    color: AppTheme.primary,
-                    onPressed: () {
-                      Navigator.pop(ctx, true);
-                    }
-                ),
+                AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.6), onPressed: () {
+                  Navigator.pop(ctx, false);
+                }),
+                AppTheme.actionButton(label: "사진 변경", color: AppTheme.primary, onPressed: () {
+                  Navigator.pop(ctx, true);
+                }),
               ]
           );
         }
@@ -366,10 +364,7 @@ class _UserPageState extends State<UserPage> {
       }
 
       if (saveResult.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('✅ 사진이 성공적으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-          elevation: 0,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ 사진이 성공적으로 변경되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
       } else {
         _showInfoDialog("변경 실패", "사진 업데이트 중 오류가 발생했습니다.\n\n[상세 내용]\n$saveResult", theme);
       }
@@ -408,7 +403,6 @@ class _UserPageState extends State<UserPage> {
           if (value == null) {
             return;
           }
-
           final String lowerKey = key.toLowerCase();
           final String strValue = value.toString().trim();
 
@@ -457,16 +451,12 @@ class _UserPageState extends State<UserPage> {
       },
       onLoadingStart: () {
         if (mounted) {
-          setState(() {
-            _isFullScreenLoading = true;
-          });
+          setState(() { _isFullScreenLoading = true; });
         }
       },
       onLoadingComplete: () {
         if (mounted) {
-          setState(() {
-            _isFullScreenLoading = false;
-          });
+          setState(() { _isFullScreenLoading = false; });
         }
       },
       onSuccess: () {
@@ -481,21 +471,13 @@ class _UserPageState extends State<UserPage> {
     final ThemeData theme = Theme.of(context);
     final Map<String, dynamic> metrics = _calculateMetrics(provider.list);
 
-    // -------------------------------------------------------------------------
-    // [비즈니스 로직: 리스트 필터링 및 전방위 검색 엔진]
-    // -------------------------------------------------------------------------
     final List<UserModel> filteredList = provider.list.where((UserModel p) {
-
-      // 🔥 1. AI 스마트 검색이 활성화되어 결과가 존재할 경우, 해당 ID 목록만 필터링합니다.
       if (_aiFilteredIds != null) {
         if (!_aiFilteredIds!.contains(p.id)) {
           return false;
         }
-      }
-      // 2. 일반 텍스트 검색일 경우 기존 로직 수행
-      else {
-        final bool matchesFilter = _currentFilter == '전체' ||
-            (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
+      } else {
+        final bool matchesFilter = (_currentFilter == '전체') || (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
 
         bool matchesSearch = false;
         final String q = _currentSearchQuery.trim().toLowerCase();
@@ -525,7 +507,6 @@ class _UserPageState extends State<UserPage> {
         }
       }
 
-      // 3. 대시보드의 상태 필터(입장, 퇴장 등)는 AI/일반 검색에 공통 적용됩니다.
       if (_activeMetricFilter == "전체") {
         return true;
       }
@@ -541,7 +522,7 @@ class _UserPageState extends State<UserPage> {
         return (lastType == '퇴장' && lastTime.startsWith(todayStr));
       }
       if (_activeMetricFilter == "현재 잔류") {
-        return lastType == '입장';
+        return (lastType == '입장');
       }
 
       return true;
@@ -565,8 +546,7 @@ class _UserPageState extends State<UserPage> {
             ],
           ),
 
-          if (provider.isSaving || _isFullScreenLoading)
-            _buildGlobalLoadingOverlay(theme),
+          (provider.isSaving || _isFullScreenLoading) ? _buildGlobalLoadingOverlay(theme) : const SizedBox.shrink(),
         ],
       ),
     );
@@ -587,11 +567,7 @@ class _UserPageState extends State<UserPage> {
               children: [
                 CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 5),
                 SizedBox(height: 25),
-                Text(
-                  "데이터베이스 처리 중...",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15),
-                ),
+                Text("데이터베이스 처리 중...", textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w900, fontSize: 15)),
               ],
             ),
           ),
@@ -646,10 +622,12 @@ class _UserPageState extends State<UserPage> {
 
   Widget _buildStatTile(String label, int val, IconData icon, Color color, ThemeData theme, {required String filterKey}) {
     final bool isSelected = _activeMetricFilter == filterKey;
+    final bool isDark = theme.brightness == Brightness.dark;
+
     return InkWell(
       onTap: () {
         setState(() {
-          _activeMetricFilter = _activeMetricFilter == filterKey ? "전체" : filterKey;
+          _activeMetricFilter = (_activeMetricFilter == filterKey) ? "전체" : filterKey;
         });
       },
       borderRadius: BorderRadius.circular(12),
@@ -657,7 +635,7 @@ class _UserPageState extends State<UserPage> {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withValues(alpha: theme.brightness == Brightness.dark ? 0.15 : 0.08) : theme.cardTheme.color,
+          color: isSelected ? color.withValues(alpha: isDark ? 0.15 : 0.08) : theme.cardTheme.color,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: isSelected ? color : color.withValues(alpha: 0.4), width: isSelected ? 3.0 : 1.8),
         ),
@@ -682,6 +660,28 @@ class _UserPageState extends State<UserPage> {
   }
 
   Widget _buildHeader(UserProvider provider, List<UserModel> filtered, ThemeData theme) {
+    Widget searchSuffix;
+
+    if (_isAiSearching) {
+      searchSuffix = const Padding(
+        padding: EdgeInsets.all(14.0),
+        child: SizedBox(
+          width: 20, height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.deepPurpleAccent),
+        ),
+      );
+    } else {
+      searchSuffix = IconButton(
+        icon: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent),
+        tooltip: "AI 자연어 스마트 검색 (예: 영업팀 김씨 찾아줘)",
+        onPressed: () {
+          _performAiSearch(provider.list, theme);
+        },
+      );
+    }
+
+    final bool isDark = theme.brightness == Brightness.dark;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Column(
@@ -692,13 +692,10 @@ class _UserPageState extends State<UserPage> {
             children: [
               Expanded(
                 child: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
+                  spacing: 12, runSpacing: 12,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    _buildActionIcon(Icons.refresh, "새로고침", () {
-                      provider.fetchData();
-                    }, theme),
+                    _buildActionIcon(Icons.refresh, "새로고침", () { provider.fetchData(); }, theme),
                     _buildActionIcon(
                       _isSelectionMode ? Icons.close_fullscreen_rounded : Icons.checklist_rtl_rounded,
                       _isSelectionMode ? "다중 선택 끄기" : "다중 선택 켜기",
@@ -713,66 +710,33 @@ class _UserPageState extends State<UserPage> {
                       theme,
                       color: _isSelectionMode ? AppTheme.primary : null,
                     ),
-
-                    _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () {
-                      _triggerErpSync(theme);
-                    }, theme, color: Colors.teal),
-
-                    _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () {
-                      _handleBatchImport(provider, theme);
-                    }, theme, color: Colors.indigo),
-                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑스포트", () {
-                      _exportToExcel(filtered);
-                    }, theme, color: Colors.green),
-                    _buildActionIcon(Icons.settings_outlined, "표시 항목 설정", () {
-                      _showColumnSelectionDialog(provider, theme);
-                    }, theme),
-                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () {
-                      _showResetConfirmationDialog(provider, theme);
-                    }, theme, color: AppTheme.danger),
-                    _buildActionIcon(
-                      Icons.person_add_alt_1,
-                      "신규 인원 등록",
-                          () {
-                        _showForm(provider, null, theme);
-                      },
-                      theme,
-                      color: theme.colorScheme.primary,
-                    ),
+                    _buildActionIcon(Icons.sync_alt_rounded, "인사 시스템(ERP) 연동", () { _triggerErpSync(theme); }, theme, color: Colors.teal),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowUp, "엑셀 업로드", () { _handleBatchImport(provider, theme); }, theme, color: Colors.indigo),
+                    _buildActionIcon(FontAwesomeIcons.fileArrowDown, "엑스포트", () { _exportToExcel(filtered); }, theme, color: Colors.green),
+                    _buildActionIcon(Icons.settings_outlined, "표시 항목 설정", () { _showColumnSelectionDialog(provider, theme); }, theme),
+                    _buildActionIcon(Icons.delete_sweep_outlined, "초기화", () { _showResetConfirmationDialog(provider, theme); }, theme, color: AppTheme.danger),
+                    _buildActionIcon(Icons.person_add_alt_1, "신규 인원 등록", () { _showForm(provider, null, theme); }, theme, color: theme.colorScheme.primary),
                   ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-
-          // 🔥 [AI 검색 추가] 검색바 우측에 AI(Gemini) 자연어 검색 버튼 탑재
           TextField(
             controller: _searchController,
             onChanged: (String v) {
               setState(() {
                 _currentSearchQuery = v;
-                _aiFilteredIds = null; // 사용자가 일반 타이핑을 시작하면 AI 검색 필터를 초기화합니다.
+                _aiFilteredIds = null;
               });
             },
-            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-            decoration: AppTheme.inputDecoration(label: "일반 검색 또는 문장으로 작성 후 우측 AI 버튼 클릭...", context: context, prefixIcon: Icons.search).copyWith(
-                suffixIcon: _isAiSearching
-                    ? const Padding(
-                  padding: EdgeInsets.all(14.0),
-                  child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.deepPurpleAccent)
-                  ),
-                )
-                    : IconButton(
-                  icon: const Icon(Icons.auto_awesome_rounded, color: Colors.deepPurpleAccent),
-                  tooltip: "AI 자연어 스마트 검색 (예: 영업팀 김씨 찾아줘)",
-                  onPressed: () {
-                    _performAiSearch(provider.list, theme);
-                  },
-                )
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(isDark)),
+            decoration: AppTheme.inputDecoration(
+                label: "일반 검색 또는 문장으로 작성 후 우측 AI 버튼 클릭...",
+                context: context,
+                prefixIcon: Icons.search
+            ).copyWith(
+                suffixIcon: searchSuffix
             ),
           ),
         ],
@@ -789,8 +753,7 @@ class _UserPageState extends State<UserPage> {
         onTap: onTap,
         borderRadius: BorderRadius.circular(26),
         child: Container(
-          width: 52,
-          height: 52,
+          width: 52, height: 52,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
@@ -809,15 +772,12 @@ class _UserPageState extends State<UserPage> {
     }
 
     final bool isAllSelected = list.isNotEmpty && list.every((UserModel p) => _selectedUserIds.contains(p.id));
+    final bool isDark = theme.brightness == Brightness.dark;
 
     return Column(
       children: [
-        AnimatedSize(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeInOut,
-          alignment: Alignment.topCenter,
-          child: _isSelectionMode
-              ? Container(
+        _isSelectionMode ? Container(
+            width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             alignment: Alignment.centerLeft,
             child: SingleChildScrollView(
@@ -912,13 +872,11 @@ class _UserPageState extends State<UserPage> {
                   ),
                 ],
               ),
-            ),
-          )
-              : Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
-          ),
+            )
+        ) : Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          child: Text('총 ${list.length}명 조회됨', style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13)),
         ),
 
         Expanded(
@@ -934,77 +892,88 @@ class _UserPageState extends State<UserPage> {
                 final UserModel item = list[idx];
                 final bool isSelected = _selectedUserIds.contains(item.id);
                 final String status = _safeStr(item.metadata['last_access_type'], defaultVal: "미확인");
-                final Color statusColor = (status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : theme.dividerTheme.color ?? Colors.grey));
+
+                Color cardBgColor = theme.cardTheme.color ?? Colors.white;
+                if (isSelected) {
+                  cardBgColor = AppTheme.primary.withValues(alpha: 0.05);
+                }
+
+                Color cardBorderColor = Colors.black.withValues(alpha: 0.12);
+                if (isSelected) {
+                  cardBorderColor = AppTheme.primary;
+                } else if (isDark) {
+                  cardBorderColor = Colors.white.withValues(alpha: 0.15);
+                }
 
                 return Row(
                   children: [
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeInOut,
-                      alignment: Alignment.centerLeft,
-                      child: _isSelectionMode
-                          ? Padding(
-                        padding: const EdgeInsets.only(right: 8.0),
-                        child: InkWell(
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedUserIds.remove(item.id);
-                              } else {
-                                _selectedUserIds.add(item.id);
-                              }
-                            });
-                          },
-                          borderRadius: BorderRadius.circular(20),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isSelected ? AppTheme.primary : Colors.transparent,
-                                border: Border.all(
-                                  color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
-                                  width: 2,
-                                ),
+                    _isSelectionMode ? Padding(
+                      padding: const EdgeInsets.only(right: 12.0),
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedUserIds.remove(item.id);
+                            } else {
+                              _selectedUserIds.add(item.id);
+                            }
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isSelected ? AppTheme.primary : Colors.transparent,
+                              border: Border.all(
+                                color: isSelected ? AppTheme.primary : Colors.grey.withValues(alpha: 0.5),
+                                width: 2,
                               ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(4.0),
-                                child: Icon(
-                                  Icons.check,
-                                  size: 16,
-                                  color: isSelected ? Colors.white : Colors.transparent,
-                                ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.check,
+                                size: 16,
+                                color: isSelected ? Colors.white : Colors.transparent,
                               ),
                             ),
                           ),
                         ),
-                      )
-                          : const SizedBox.shrink(),
-                    ),
+                      ),
+                    ) : const SizedBox.shrink(),
 
                     Expanded(
-                      child: InkWell(
-                        onTap: () {
-                          if (_isSelectionMode) {
-                            setState(() {
-                              if (isSelected) {
-                                _selectedUserIds.remove(item.id);
-                              } else {
-                                _selectedUserIds.add(item.id);
-                              }
-                            });
-                          } else {
-                            _showForm(provider, item, theme);
-                          }
-                        },
-                        borderRadius: BorderRadius.circular(AppTheme.cardRadius),
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: AppTheme.listItemDecoration(context, isSelected: isSelected, statusColor: statusColor),
-                          child: widget.isMobile
-                              ? _buildMobileListItem(item, provider, columns, status, theme)
-                              : _buildDesktopListItem(item, provider, columns, status, theme),
+                      child: Card(
+                        margin: EdgeInsets.zero,
+                        elevation: 0,
+                        color: cardBgColor,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: cardBorderColor, width: isSelected ? 2.0 : 1.0),
+                        ),
+                        clipBehavior: Clip.hardEdge,
+                        child: InkWell(
+                          onTap: () {
+                            if (_isSelectionMode) {
+                              setState(() {
+                                if (isSelected) {
+                                  _selectedUserIds.remove(item.id);
+                                } else {
+                                  _selectedUserIds.add(item.id);
+                                }
+                              });
+                            } else {
+                              _showForm(provider, item, theme);
+                            }
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: widget.isMobile
+                                ? _buildMobileListItem(item, provider, columns, status, theme)
+                                : _buildDesktopListItem(item, provider, columns, status, theme),
+                          ),
                         ),
                       ),
                     ),
@@ -1019,6 +988,11 @@ class _UserPageState extends State<UserPage> {
   }
 
   Widget _buildDesktopListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
+    Color? nameColor;
+    if (item.name == '형식에 맞지 않는 건') {
+      nameColor = AppTheme.danger;
+    }
+
     return Row(
       children: [
         GestureDetector(
@@ -1031,11 +1005,7 @@ class _UserPageState extends State<UserPage> {
               _buildAvatar(item, theme, size: _colImgSize),
               Container(
                 padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
-                ),
+                decoration: BoxDecoration(color: AppTheme.primary, shape: BoxShape.circle, border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2)),
                 child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
               ),
             ],
@@ -1048,12 +1018,16 @@ class _UserPageState extends State<UserPage> {
             children: [
               Row(
                 children: [
-                  Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null)),
+                  Flexible(
+                    child: Text(
+                      item.name,
+                      style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: nameColor),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   const SizedBox(width: 12),
                   _buildStatusBadge(status),
-                  if (!item.isApproved) ...[
-                    const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
-                  ]
+                  (!item.isApproved) ? const Padding(padding: EdgeInsets.only(left: 8), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)) : const SizedBox.shrink(),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1065,63 +1039,62 @@ class _UserPageState extends State<UserPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(col, style: AppTheme.itemLabelStyle(context)),
-                        Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                        Text(col, style: AppTheme.itemLabelStyle(context), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ],
                     ),
                   );
                 }).toList(),
               ),
               const SizedBox(height: 8),
-              Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+              Text(
+                  _getLocationFullName(item),
+                  style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)
+              ),
             ],
           ),
         ),
         SizedBox(
           width: _colActionWidth,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
-                final authProvider = context.read<AuthProvider>();
-                bool isSelf = item.id == authProvider.currentUserId;
-                int myRank = _getRoleRank(authProvider.role);
-                int targetRank = _getRoleRank(item.role);
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            reverse: true,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+                  final authProvider = context.read<AuthProvider>();
+                  bool isSelf = item.id == authProvider.currentUserId;
+                  int myRank = _getRoleRank(authProvider.role);
+                  int targetRank = _getRoleRank(item.role);
 
-                if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
-                  _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 태그는 발행할 수 없습니다.", theme);
-                  return;
-                }
+                  if (!authProvider.isAdmin && !isSelf && myRank <= targetRank) {
+                    _showInfoDialog("권한 없음", "동일 등급이거나 상위 등급인 다른 사용자의 태그는 발행할 수 없습니다.", theme);
+                    return;
+                  }
 
-                showDialog(
-                    context: context,
-                    barrierDismissible: false,
-                    builder: (BuildContext ctx) {
-                      return _BulkTagIssueDialog(
-                        selectedUsers: [item],
-                        provider: provider,
-                        theme: theme,
-                      );
-                    }
-                );
-              }),
-              const SizedBox(width: 12),
-              _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () {
-                _showHistoryDialog(context, item, theme);
-              }),
-              const SizedBox(width: 12),
-              _buildCircleAction(Icons.login, AppTheme.success, "입장", () {
-                _processAccessWithLocation(provider, item, '입장');
-              }),
-              const SizedBox(width: 12),
-              _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () {
-                _processAccessWithLocation(provider, item, '퇴장');
-              }),
-              const SizedBox(width: 12),
-              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
-                _confirmDelete(provider, item, theme);
-              }),
-            ],
+                  showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (BuildContext ctx) {
+                        return _BulkTagIssueDialog(
+                          selectedUsers: [item],
+                          provider: provider,
+                          theme: theme,
+                        );
+                      }
+                  );
+                }),
+                const SizedBox(width: 12),
+                _buildCircleAction(Icons.history, Colors.blueGrey, "기록", () { _showHistoryDialog(context, item, theme); }),
+                const SizedBox(width: 12),
+                _buildCircleAction(Icons.login, AppTheme.success, "입장", () { _processAccessWithLocation(provider, item, '입장'); }),
+                const SizedBox(width: 12),
+                _buildCircleAction(Icons.logout, AppTheme.warning, "퇴장", () { _processAccessWithLocation(provider, item, '퇴장'); }),
+                const SizedBox(width: 12),
+                _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () { _confirmDelete(provider, item, theme); }),
+              ],
+            ),
           ),
         ),
       ],
@@ -1129,6 +1102,11 @@ class _UserPageState extends State<UserPage> {
   }
 
   Widget _buildMobileListItem(UserModel item, UserProvider provider, List<String> columns, String status, ThemeData theme) {
+    Color? nameColor;
+    if (item.name == '형식에 맞지 않는 건') {
+      nameColor = AppTheme.danger;
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1145,11 +1123,7 @@ class _UserPageState extends State<UserPage> {
                   _buildAvatar(item, theme, size: _colImgSize),
                   Container(
                     padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2),
-                    ),
+                    decoration: BoxDecoration(color: AppTheme.primary, shape: BoxShape.circle, border: Border.all(color: theme.cardTheme.color ?? Colors.white, width: 2)),
                     child: const Icon(Icons.camera_alt, size: 12, color: Colors.white),
                   ),
                 ],
@@ -1164,19 +1138,20 @@ class _UserPageState extends State<UserPage> {
                     children: [
                       Flexible(
                         child: Text(item.name,
-                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: item.name == '형식에 맞지 않는 건' ? AppTheme.danger : null),
+                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19, color: nameColor),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(width: 8),
                       _buildStatusBadge(status),
-                      if (!item.isApproved) ...[
-                        const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)),
-                      ]
+                      (!item.isApproved) ? const Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 18)) : const SizedBox.shrink(),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(_safeStr(item.metadata['last_location_info']?['full_name'], defaultVal: "위치 정보 없음"), style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)),
+                  Text(
+                      _getLocationFullName(item),
+                      style: AppTheme.itemLabelStyle(context).copyWith(fontSize: 13, fontWeight: FontWeight.w500)
+                  ),
                 ],
               ),
             ),
@@ -1191,8 +1166,8 @@ class _UserPageState extends State<UserPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(col, style: AppTheme.itemLabelStyle(context)),
-                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context)),
+                  Text(col, style: AppTheme.itemLabelStyle(context), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(_getMetaValue(item, col), style: AppTheme.itemValueStyle(context), maxLines: 1, overflow: TextOverflow.ellipsis),
                 ],
               ),
             );
@@ -1201,8 +1176,9 @@ class _UserPageState extends State<UserPage> {
         const SizedBox(height: 16),
         Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        Wrap(
+          spacing: 8, runSpacing: 12,
+          alignment: WrapAlignment.spaceEvenly,
           children: [
             _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
               final authProvider = context.read<AuthProvider>();
@@ -1264,11 +1240,16 @@ class _UserPageState extends State<UserPage> {
     final String? url = item.getImageUrl(widget.baseUrl, thumb: '100x100');
     final bool isDark = theme.brightness == Brightness.dark;
 
+    Color avatarBgColor = const Color(0xFFF1F3F5);
+    if (isDark && theme.dividerTheme.color != null) {
+      avatarBgColor = theme.dividerTheme.color!.withValues(alpha: 0.1);
+    }
+
     if (url == null || url.isEmpty) {
       return Container(
           width: size, height: size,
           decoration: BoxDecoration(
-              color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+              color: avatarBgColor,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
           ),
@@ -1283,7 +1264,7 @@ class _UserPageState extends State<UserPage> {
     return Container(
         width: size, height: size,
         decoration: BoxDecoration(
-            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+            color: avatarBgColor,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 1.5)
         ),
@@ -1291,6 +1272,7 @@ class _UserPageState extends State<UserPage> {
         child: Image.network(
             fullUrl,
             fit: BoxFit.cover,
+            gaplessPlayback: true,
             errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
               return const Icon(Icons.person, color: Colors.black12);
             }
@@ -1299,11 +1281,17 @@ class _UserPageState extends State<UserPage> {
   }
 
   Widget _buildStatusBadge(String status) {
-    final Color color = status == '입장' ? AppTheme.success : (status == '퇴장' ? AppTheme.warning : Colors.grey);
+    Color badgeColor = Colors.grey;
+    if (status == '입장') {
+      badgeColor = AppTheme.success;
+    } else if (status == '퇴장') {
+      badgeColor = AppTheme.warning;
+    }
+
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-        child: Text(status, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900))
+        decoration: BoxDecoration(color: badgeColor.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+        child: Text(status, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: badgeColor, fontSize: 12, fontWeight: FontWeight.w900))
     );
   }
 
@@ -1507,7 +1495,7 @@ class _UserPageState extends State<UserPage> {
   }
 
   void _showHistoryDialog(BuildContext context, UserModel p, ThemeData theme) {
-    final List<dynamic> history = p.metadata['access_history'] is List ? List.from(p.metadata['access_history']) : [];
+    final List<dynamic> history = (p.metadata['access_history'] is List) ? List.from(p.metadata['access_history']) : [];
     showDialog(
         context: context,
         builder: (BuildContext ctx) {
@@ -1528,8 +1516,24 @@ class _UserPageState extends State<UserPage> {
                       final String type = _safeStr(log['type'], defaultVal: "-");
                       final String timeStr = _safeStr(log['time'], defaultVal: "-");
                       final dynamic rawApprove = log['is_approved'];
-                      final bool approved = rawApprove is bool ? rawApprove : true;
-                      final Color col = approved ? (type == '입장' ? AppTheme.success : AppTheme.warning) : AppTheme.danger;
+                      final bool approved = (rawApprove is bool) ? rawApprove : true;
+
+                      Color col = AppTheme.danger;
+                      if (approved) {
+                        if (type == '입장') {
+                          col = AppTheme.success;
+                        } else {
+                          col = AppTheme.warning;
+                        }
+                      }
+
+                      String bldg = "미지정";
+                      String gate = "미정";
+                      if (log['location'] is Map) {
+                        final Map locMap = log['location'] as Map;
+                        bldg = _safeStr(locMap['building'], defaultVal: "미지정");
+                        gate = _safeStr(locMap['gate'], defaultVal: "미정");
+                      }
 
                       return Container(
                           padding: const EdgeInsets.all(16),
@@ -1538,14 +1542,26 @@ class _UserPageState extends State<UserPage> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Container(width: 10, height: 10, margin: const EdgeInsets.only(top: 6, right: 16), decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
-                                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                                    Text(timeStr, style: const TextStyle(fontFamily: 'monospace', fontSize: 15, fontWeight: FontWeight.bold)),
-                                    Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: col.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)), child: Text(type, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: col, fontWeight: FontWeight.bold, fontSize: 12))),
-                                  ]),
-                                  const SizedBox(height: 6),
-                                  Text('${_safeStr(log['location']?['building'], defaultVal: "미지정")} - ${_safeStr(log['location']?['gate'], defaultVal: "미정")}', style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.blueGrey, fontSize: 14, fontWeight: FontWeight.w600)),
-                                ])),
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Text(timeStr, style: const TextStyle(fontFamily: 'monospace', fontSize: 15, fontWeight: FontWeight.bold)),
+                                                Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                                    decoration: BoxDecoration(color: col.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
+                                                    child: Text(type, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: col, fontWeight: FontWeight.bold, fontSize: 12))
+                                                ),
+                                              ]
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text('$bldg - $gate', style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.blueGrey, fontSize: 14, fontWeight: FontWeight.w600)),
+                                        ]
+                                    )
+                                ),
                               ]
                           )
                       );
@@ -1817,6 +1833,7 @@ class _UserPageState extends State<UserPage> {
         if (name.isEmpty) {
           name = "형식에 맞지 않는 건";
         }
+
         if (tagId.isEmpty) {
           tagId = "TAG_${DateTime.now().millisecondsSinceEpoch}_$i";
         }
@@ -1958,7 +1975,28 @@ class _UserPageState extends State<UserPage> {
       ThemeData theme,
       ) {
     final String? url = p?.getImageUrl(widget.baseUrl, thumb: '200x200');
-    final bool hasImage = preview != null || (url != null && url.isNotEmpty && !isDeleted);
+    final bool hasImage = (preview != null) || (url != null && url.isNotEmpty && !isDeleted);
+
+    Widget avatarContent;
+    if (preview != null) {
+      avatarContent = ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.cover));
+    } else if (hasImage) {
+      final String connector = url!.contains('?') ? '&' : '?';
+      final String fullUrl = "$url${connector}t=${p!.hashCode}";
+
+      avatarContent = ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+              fullUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
+                return const Icon(Icons.broken_image);
+              }
+          )
+      );
+    } else {
+      avatarContent = const Icon(Icons.camera_alt, size: 50, color: Colors.grey);
+    }
 
     return Stack(
       clipBehavior: Clip.none,
@@ -1982,20 +2020,7 @@ class _UserPageState extends State<UserPage> {
                 border: Border.all(color: theme.dividerTheme.color ?? Colors.grey, width: 2)
             ),
             child: Center(
-              child: preview != null
-                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.cover))
-                  : (hasImage
-                  ? ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                      "${url!}${url.contains('?') ? '&' : '?'}t=${p!.hashCode}",
-                      fit: BoxFit.cover,
-                      errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
-                        return const Icon(Icons.broken_image);
-                      }
-                  )
-              )
-                  : const Icon(Icons.camera_alt, size: 50, color: Colors.grey)),
+              child: avatarContent,
             ),
           ),
         ),
@@ -2019,7 +2044,7 @@ class _UserPageState extends State<UserPage> {
                 ),
               ),
             ),
-          ),
+          )
         ]
       ],
     );
@@ -2108,7 +2133,7 @@ class _UserPageState extends State<UserPage> {
       metaC[key] = TextEditingController(text: initialValue);
     }
 
-    final String pwdLabel = p == null
+    final String pwdLabel = (p == null)
         ? "로그인 비밀번호 (미입력시 '12345678' 자동설정, 8자리 이상)"
         : "새 비밀번호 (변경할 경우에만 입력, 미입력시 기존 유지)";
 
@@ -2121,7 +2146,7 @@ class _UserPageState extends State<UserPage> {
 
                 Widget imagePickerWidget = _buildImagePickerBox(
                   context, p, preview, isImageDeleted,
-                      (pickedFile, pickedBytes) {
+                      (XFile pickedFile, Uint8List pickedBytes) {
                     setS(() {
                       file = pickedFile;
                       preview = pickedBytes;
@@ -2259,29 +2284,31 @@ class _UserPageState extends State<UserPage> {
                                         )
                                       ]
                                   ),
-                                  if (metaC.isNotEmpty) ...[
-                                    const SizedBox(height: 32),
-                                    const Divider(),
-                                    const SizedBox(height: 16),
-                                    Row(
+                                  (metaC.isNotEmpty) ? Column(
                                       children: [
-                                        Icon(Icons.post_add, color: theme.colorScheme.primary, size: 20),
-                                        const SizedBox(width: 8),
-                                        const Text(
-                                            "추가 항목 (사용자 정의 필드)",
-                                            style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blueGrey)
+                                        const SizedBox(height: 32),
+                                        const Divider(),
+                                        const SizedBox(height: 16),
+                                        Row(
+                                          children: [
+                                            Icon(Icons.post_add, color: theme.colorScheme.primary, size: 20),
+                                            const SizedBox(width: 8),
+                                            const Text(
+                                                "추가 항목 (사용자 정의 필드)",
+                                                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blueGrey)
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Wrap(
-                                        spacing: 16,
-                                        runSpacing: 16,
-                                        children: metaC.entries.map((MapEntry<String, TextEditingController> e) {
-                                          return SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme));
-                                        }).toList()
-                                    )
-                                  ]
+                                        const SizedBox(height: 16),
+                                        Wrap(
+                                            spacing: 16,
+                                            runSpacing: 16,
+                                            children: metaC.entries.map((MapEntry<String, TextEditingController> e) {
+                                              return SizedBox(width: 360, child: _buildTextField(e.value, e.key, theme));
+                                            }).toList()
+                                        )
+                                      ]
+                                  ) : const SizedBox.shrink()
                                 ]
                             )
                         )
@@ -2325,8 +2352,11 @@ class _UserPageState extends State<UserPage> {
                           'is_approved': approved,
                           'remarks': remarksC.text.trim(),
                           'metadata': meta,
-                          if (isImageDeleted) 'avatar': null,
                         };
+
+                        if (isImageDeleted) {
+                          data['avatar'] = null;
+                        }
 
                         if (finalPwd.isNotEmpty) {
                           data['password'] = finalPwd;
@@ -2743,18 +2773,20 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  if (_isProcessing || _isCompleted) ...[
-                    const SizedBox(height: 16),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: LinearProgressIndicator(
-                        value: _progressValue,
-                        minHeight: 12,
-                        backgroundColor: Colors.grey.withValues(alpha: 0.2),
-                        color: _isCompleted ? AppTheme.success : Colors.indigo,
-                      ),
-                    ),
-                  ]
+                  (_isProcessing || _isCompleted) ? Column(
+                      children: [
+                        const SizedBox(height: 16),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: LinearProgressIndicator(
+                            value: _progressValue,
+                            minHeight: 12,
+                            backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                            color: _isCompleted ? AppTheme.success : Colors.indigo,
+                          ),
+                        ),
+                      ]
+                  ) : const SizedBox.shrink()
                 ],
               ),
             ),
@@ -2846,6 +2878,9 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
 
+    Color colColor = _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05);
+    Color borderColor = _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2);
+
     return AlertDialog(
       title: AppTheme.dialogTitle('${widget.type}처리', widget.type == '입장' ? Icons.login : Icons.logout),
       content: SizedBox(
@@ -2859,9 +2894,9 @@ class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
-                        color: _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05),
+                        color: colColor,
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2))
+                        border: Border.all(color: borderColor)
                     ),
                     child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🔥 [추가] kIsWeb 및 defaultTargetPlatform 확인용
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
-import 'package:flutter_libserialport/flutter_libserialport.dart'; // 시리얼 포트 자동 스캔용 패키지
+
+// 🔥 [웹 컴파일 에러 해결] 시리얼 포트 직접 참조를 제거하고, 플랫폼 분기용 래퍼 클래스를 임포트합니다.
+import '../services/scanner/app_serial_port.dart';
 
 import '../models/device_model.dart';
 import '../providers/device_provider.dart'; // 통신 로직 전담 DataModule
@@ -134,7 +137,7 @@ class _DevicePageState extends State<DevicePage> {
       // 불필요한 특수문자 제거
       rawString = rawString.replaceAll(RegExp(r'^[ℹ️🔍🎯★<=\?\s]+'), '').trim();
 
-      // [핵심 변경] Provider가 만들어준 JSON 브릿지 문자열 해독 (태그 데이터)
+      // Provider가 만들어준 JSON 브릿지 문자열 해독 (태그 데이터)
       if (rawString.contains('JSON:{')) {
         type = 'TAG';
         final int jsonStart = rawString.indexOf('JSON:{') + 5;
@@ -188,6 +191,39 @@ class _DevicePageState extends State<DevicePage> {
 
   @override
   Widget build(BuildContext context) {
+    // 🔥 [에러 원천 차단] 웹 또는 모바일 환경일 경우 장치 관리 UI 렌더링을 완전히 차단합니다.
+    bool isUnsupported = false;
+    if (kIsWeb) {
+      isUnsupported = true;
+    } else if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) {
+      isUnsupported = true;
+    }
+
+    if (isUnsupported) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.desktop_windows_outlined, size: 80, color: Colors.grey.withValues(alpha: 0.5)),
+              const SizedBox(height: 24),
+              const Text(
+                "장치 관리 기능은 윈도우즈(PC) 전용입니다.",
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, fontWeight: FontWeight.bold, color: Colors.blueGrey),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "하드웨어 직접 제어 중 발생할 수 있는 오류를 원천 차단하기 위해\n웹 브라우저 및 모바일 환경에서는 접근이 제한됩니다.",
+                textAlign: TextAlign.center,
+                style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, color: Colors.grey, height: 1.5),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Provider를 통해 장치 목록 데이터를 가져옵니다. (DataModule 감시)
     final provider = Provider.of<DeviceProvider>(context);
     final theme = Theme.of(context);
@@ -639,9 +675,16 @@ class _DevicePageState extends State<DevicePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 🔥 이름 텍스트가 창 크기에 따라 삐져나오지 않게 Flexible로 방어합니다.
               Row(
                 children: [
-                  Text(item.name, style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19)),
+                  Flexible(
+                      child: Text(
+                          item.name,
+                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
+                          overflow: TextOverflow.ellipsis
+                      )
+                  ),
                   const SizedBox(width: 12),
                   _buildStatusBadge(item.status, statusColor),
                   if (!item.isActive) ...[
@@ -662,63 +705,67 @@ class _DevicePageState extends State<DevicePage> {
             ],
           ),
         ),
+        // 🔥 우측 액션 버튼들이 가로 공간을 넘어서면 자동으로 스크롤 되도록 감쌉니다.
         SizedBox(
           width: _colActionWidth,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              _buildCircleAction(Icons.terminal, Colors.teal, "실시간 로그 보기", () {
-                _showTerminalDialog(context, item.id, provider, item);
-              }),
-              const SizedBox(width: 12),
-
-              _buildCircleAction(Icons.science, Colors.deepPurpleAccent, "장치 동작 테스트 (읽기/쓰기)", () {
-                _showDeviceTestDialog(context, provider, item);
-              }),
-              const SizedBox(width: 12),
-
-              if (isOnline) ...[
-                _buildCircleAction(Icons.tune, Colors.blueAccent, "출력(파워) 제어", () {
-                  _showPowerControlDialog(context, provider, item);
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            reverse: true, // 우측 정렬을 유지하기 위해 역방향 활성화
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _buildCircleAction(Icons.terminal, Colors.teal, "실시간 로그 보기", () {
+                  _showTerminalDialog(context, item.id, provider, item);
                 }),
                 const SizedBox(width: 12),
-              ],
 
-              // 연결 / 연결해제 버튼
-              SizedBox(
-                width: 100,
-                child: isOnline
-                    ? OutlinedButton(
-                  onPressed: () async {
-                    // [OS 예외 방어 코드] 메인 리스트에서 통신을 끊을 때도 반드시 읽기 스레드를 중지하고 대기합니다.
-                    try { provider.stopDeviceRead(item.id); } catch(_) {}
-                    await Future.delayed(const Duration(milliseconds: 300));
-                    provider.disconnectDevice(item.id);
-                  },
-                  style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.danger,
-                      side: const BorderSide(color: AppTheme.danger),
-                      padding: const EdgeInsets.symmetric(vertical: 12)
+                _buildCircleAction(Icons.science, Colors.deepPurpleAccent, "장치 동작 테스트 (읽기/쓰기)", () {
+                  _showDeviceTestDialog(context, provider, item);
+                }),
+                const SizedBox(width: 12),
+
+                if (isOnline) ...[
+                  _buildCircleAction(Icons.tune, Colors.blueAccent, "출력(파워) 제어", () {
+                    _showPowerControlDialog(context, provider, item);
+                  }),
+                  const SizedBox(width: 12),
+                ],
+
+                // 연결 / 연결해제 버튼
+                SizedBox(
+                  width: 100,
+                  child: isOnline
+                      ? OutlinedButton(
+                    onPressed: () async {
+                      try { provider.stopDeviceRead(item.id); } catch(_) {}
+                      await Future.delayed(const Duration(milliseconds: 300));
+                      provider.disconnectDevice(item.id);
+                    },
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.danger,
+                        side: const BorderSide(color: AppTheme.danger),
+                        padding: const EdgeInsets.symmetric(vertical: 12)
+                    ),
+                    child: const Text("연결 해제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  )
+                      : ElevatedButton(
+                    onPressed: () {
+                      provider.connectDevice(item);
+                    },
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12)
+                    ),
+                    child: const Text("장치 연결", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                   ),
-                  child: const Text("연결 해제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                )
-                    : ElevatedButton(
-                  onPressed: () {
-                    provider.connectDevice(item);
-                  },
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.colorScheme.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12)
-                  ),
-                  child: const Text("장치 연결", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                 ),
-              ),
-              const SizedBox(width: 12),
-              _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
-                _confirmDelete(context, provider, item);
-              }),
-            ],
+                const SizedBox(width: 12),
+                _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
+                  _confirmDelete(context, provider, item);
+                }),
+              ],
+            ),
           ),
         ),
       ],
@@ -773,8 +820,11 @@ class _DevicePageState extends State<DevicePage> {
         const SizedBox(height: 16),
         Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        // 🔥 모바일 화면이 극단적으로 좁을 경우를 대비해 Wrap으로 교체합니다.
+        Wrap(
+          alignment: WrapAlignment.spaceEvenly,
+          spacing: 8,
+          runSpacing: 12,
           children: [
             _buildCircleAction(Icons.terminal, Colors.teal, "로그 보기", () {
               _showTerminalDialog(context, item.id, provider, item);
@@ -790,11 +840,11 @@ class _DevicePageState extends State<DevicePage> {
               }),
             ],
 
-            Expanded(
+            SizedBox(
+              width: 120, // 버튼 최소 넓이 보장
               child: isOnline
                   ? OutlinedButton(
                 onPressed: () async {
-                  // [OS 예외 방어 코드] 모바일 화면에서도 연결 해제 시 안전 장치를 가동합니다.
                   try { provider.stopDeviceRead(item.id); } catch(_) {}
                   await Future.delayed(const Duration(milliseconds: 300));
                   provider.disconnectDevice(item.id);
@@ -818,7 +868,7 @@ class _DevicePageState extends State<DevicePage> {
                 child: const Text("장치 연결", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
               ),
             ),
-            const SizedBox(width: 12),
+
             _buildCircleAction(Icons.delete_outline, AppTheme.danger, "삭제", () {
               _confirmDelete(context, provider, item);
             }),
@@ -831,24 +881,21 @@ class _DevicePageState extends State<DevicePage> {
   /// ===========================================================================
   /// [장치 테스트 다이얼로그]
   /// 읽기(Read)와 쓰기(Write)를 테스트하는 핵심 화면입니다.
-  /// 윈도우 OS 핸들 충돌 방지를 위해 읽기 스레드를 꼼꼼히 관리합니다.
   /// ===========================================================================
   void _showDeviceTestDialog(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
     final TextEditingController writeCtrl = TextEditingController();
     bool isWriting = false;
     bool isHexMode = false;
-    bool isReading = false; // [추가] 현재 읽기(스캔)가 진행 중인지 상태를 추적합니다.
+    bool isReading = false;
 
     showDialog(
         context: context,
         builder: (BuildContext ctx) {
-          // Provider의 변경사항을 다이얼로그 내부에서도 즉시 감지하기 위해 다시 주입
           return ChangeNotifierProvider<DeviceProvider>.value(
             value: provider,
             child: StatefulBuilder(
                 builder: (BuildContext context, StateSetter setDialogState) {
-                  // 최신 장치 상태 추적
                   DeviceModel currentDevice = provider.list.firstWhere((element) {
                     return element.id == d.id;
                   }, orElse: () {
@@ -875,33 +922,35 @@ class _DevicePageState extends State<DevicePage> {
                                     child: Row(
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          Row(
-                                              children: [
-                                                Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: isOnline ? AppTheme.success : AppTheme.danger),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                    isOnline ? "장치가 온라인 상태입니다 (명령 전송 가능)" : "장치가 오프라인입니다. 먼저 연결하세요.",
-                                                    style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: isOnline ? AppTheme.success : AppTheme.danger)
-                                                ),
-                                              ]
+                                          // 🔥 텍스트가 다이얼로그 밖으로 삐져나가는 것 방지
+                                          Flexible(
+                                            child: Row(
+                                                children: [
+                                                  Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: isOnline ? AppTheme.success : AppTheme.danger),
+                                                  const SizedBox(width: 8),
+                                                  Flexible(
+                                                    child: Text(
+                                                      isOnline ? "장치가 온라인 상태입니다 (명령 전송 가능)" : "장치가 오프라인입니다. 먼저 연결하세요.",
+                                                      style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: isOnline ? AppTheme.success : AppTheme.danger),
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ]
+                                            ),
                                           ),
                                           ElevatedButton(
                                             onPressed: () async {
                                               if (isOnline) {
-                                                // [OS 예외 방어 코드]
-                                                // 강제로 포트를 닫으면 C/C++ 네이티브 레벨에서 Access Violation이나 핸들 예외가 터지므로,
-                                                // 연결을 끊기 전에 읽기 스레드를 중단하고 OS 락이 풀릴 시간을 확보합니다.
                                                 if (isReading) {
                                                   setDialogState(() { isReading = false; });
                                                   try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
-                                                  await Future.delayed(const Duration(milliseconds: 300)); // OS 포트 락 해제 대기 (Sleep)
+                                                  await Future.delayed(const Duration(milliseconds: 300));
                                                 }
                                                 provider.disconnectDevice(currentDevice.id);
                                               } else {
                                                 provider.connectDevice(currentDevice);
                                               }
 
-                                              // 연결/해제 후 상태 업데이트를 위해 지연 갱신
                                               Future.delayed(const Duration(milliseconds: 1000), () {
                                                 if (ctx.mounted) {
                                                   setDialogState(() {});
@@ -920,7 +969,7 @@ class _DevicePageState extends State<DevicePage> {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    const Text("📝 데이터 기록 (Tag Write)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
+                                    Flexible(child: const Text("📝 데이터 기록 (Tag Write)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16), overflow: TextOverflow.ellipsis)),
                                     ToggleButtons(
                                       constraints: const BoxConstraints(minHeight: 32, minWidth: 100),
                                       borderRadius: BorderRadius.circular(8),
@@ -994,14 +1043,12 @@ class _DevicePageState extends State<DevicePage> {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    const Text("🔍 실시간 읽기 로그 (Mini Terminal)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
+                                    Flexible(child: const Text("🔍 실시간 읽기 로그 (Mini Terminal)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16), overflow: TextOverflow.ellipsis)),
                                     Row(
                                       children: [
-                                        // [핵심 변경] 단일 스캔 버튼을 '시작/중단' (Start/Stop) 토글 구조로 변경했습니다.
                                         ElevatedButton.icon(
                                           onPressed: !isOnline ? null : () async {
                                             if (isReading) {
-                                              // 스캔 중지
                                               setDialogState(() { isReading = false; });
                                               try {
                                                 provider.stopDeviceRead(currentDevice.id);
@@ -1009,7 +1056,6 @@ class _DevicePageState extends State<DevicePage> {
                                                 debugPrint("읽기 중단 에러: $e");
                                               }
                                             } else {
-                                              // 스캔 시작
                                               setDialogState(() { isReading = true; });
                                               try {
                                                 provider.triggerDeviceRead(currentDevice.id);
@@ -1021,7 +1067,6 @@ class _DevicePageState extends State<DevicePage> {
                                           icon: Icon(isReading ? Icons.stop_circle : Icons.sensors, size: 16),
                                           label: Text(isReading ? "읽기 중단 (Stop)" : "연속 읽기 (Scan)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                                           style: ElevatedButton.styleFrom(
-                                            // 동작 중일 때는 경고색(노란색)으로 바꾸어 사용자에게 중지해야 함을 인지시킵니다.
                                               backgroundColor: isReading ? AppTheme.warning : Colors.teal,
                                               foregroundColor: Colors.white,
                                               elevation: 0
@@ -1121,7 +1166,6 @@ class _DevicePageState extends State<DevicePage> {
                             color: Colors.transparent,
                             textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                             onPressed: () {
-                              // 폼을 닫을 때도 안전을 위해 스캔 중지 명령을 한번 더 날립니다.
                               if (isReading) {
                                 try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
                               }
@@ -1162,13 +1206,16 @@ class _DevicePageState extends State<DevicePage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          "실시간 수신 데이터 파싱 결과 (최대 100건)",
-                          style: TextStyle(
-                              fontFamily: AppTheme.fontPretendard,
-                              fontWeight: AppTheme.weightMenu,
-                              color: Colors.blueGrey,
-                              fontSize: 14
+                        const Flexible(
+                          child: Text(
+                            "실시간 수신 데이터 파싱 결과 (최대 100건)",
+                            style: TextStyle(
+                                fontFamily: AppTheme.fontPretendard,
+                                fontWeight: AppTheme.weightMenu,
+                                color: Colors.blueGrey,
+                                fontSize: 14
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         TextButton.icon(
@@ -1394,12 +1441,12 @@ class _DevicePageState extends State<DevicePage> {
   /// 키:값 텍스트 출력용 위젯
   Widget _buildKeyValue(String label, String value, BuildContext ctx) {
     return SizedBox(
-        width: 140,
+        width: 140, // 이 고정 크기 때문에 내부 텍스트가 길어지면 에러가 났습니다.
         child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: AppTheme.itemLabelStyle(ctx)),
-              Text(value, style: AppTheme.itemValueStyle(ctx)),
+              Text(label, style: AppTheme.itemLabelStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1),
+              Text(value, style: AppTheme.itemValueStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1), // 🔥 [안전 조치] 줄임표 적용
             ]
         )
     );
@@ -1559,7 +1606,6 @@ class _DevicePageState extends State<DevicePage> {
     Uint8List? imagePreview;
     bool isImageDeleted = false;
 
-    // 현재 장치의 연결 타입 (TCP, SERIAL, BLUETOOTH) 추론
     String connType = 'TCP';
     if (d != null) {
       String upperIp = d.ipAddress.toUpperCase();
@@ -1570,20 +1616,19 @@ class _DevicePageState extends State<DevicePage> {
       }
     }
 
-    // [윈도우/안드로이드] 시리얼 포트 자동 스캔 로직
     List<String> availablePorts = [];
     Map<String, String> portLabels = {};
     try {
-      availablePorts = SerialPort.availablePorts;
+      availablePorts = AppSerialPort.availablePorts;
       for (String port in availablePorts) {
-        final sp = SerialPort(port);
+        final sp = AppSerialPort(port);
         String label = "일반 시리얼 포트";
         try {
           String desc = sp.description ?? "";
           bool isBt = false;
 
           try {
-            if (sp.transport == SerialPortTransport.bluetooth) {
+            if (sp.isBluetooth) {
               isBt = true;
             }
           } catch (_) {}
@@ -1608,6 +1653,7 @@ class _DevicePageState extends State<DevicePage> {
         portLabels[port] = label;
       }
     } catch (e) {
+      // 이제 안전하게 예외처리되어 앱이 뻗지 않습니다!
       debugPrint("시리얼 포트 자동 스캔 에러: $e");
     }
 
@@ -1626,7 +1672,6 @@ class _DevicePageState extends State<DevicePage> {
             value: provider,
             child: StatefulBuilder(
               builder: (BuildContext context, StateSetter setDialogState) {
-                // 화면 너비에 따라 폼을 1단 또는 2단으로 반응형 렌더링
                 bool isWide = MediaQuery.of(context).size.width > 750;
 
                 Widget imagePickerWidget = _buildImagePickerBox(
@@ -1759,7 +1804,6 @@ class _DevicePageState extends State<DevicePage> {
                     AppTheme.actionButton(
                       label: d == null ? "등록하기" : "수정완료",
                       onPressed: provider.isSaving ? () {} : () async {
-                        // 유효성 검사
                         if (nameC.text.isEmpty || ipC.text.isEmpty) {
                           ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("장치 명칭과 주소(포트)는 필수입니다.")));
                           return;
@@ -1767,14 +1811,12 @@ class _DevicePageState extends State<DevicePage> {
 
                         final nav = Navigator.of(ctx);
 
-                        // [OS 예외 방어 코드] 수정 시 장치가 온라인이라면 먼저 통신을 끊습니다.
                         if (d != null && d.status.toLowerCase() == 'online') {
                           try { provider.stopDeviceRead(d.id); } catch(_) {}
                           await Future.delayed(const Duration(milliseconds: 300));
                           provider.disconnectDevice(d.id);
                         }
 
-                        // 저장할 데이터 맵 구성
                         final Map<String, dynamic> data = {
                           'name': nameC.text.trim(),
                           'model': modelV,
@@ -1792,7 +1834,6 @@ class _DevicePageState extends State<DevicePage> {
                           if (isImageDeleted) 'image': '',
                         };
 
-                        // Provider를 통한 백엔드 API 호출 (업데이트/삽입)
                         bool success = await provider.handleSave(d: d, data: data, imageXFile: imageFile);
 
                         if (success && ctx.mounted) {
@@ -1832,7 +1873,6 @@ class _DevicePageState extends State<DevicePage> {
       children: [
         GestureDetector(
           onTap: () async {
-            // 카메라가 아닌 갤러리에서만 이미지를 선택하도록 지정
             final ImagePicker picker = ImagePicker();
             final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
             if (img != null) {
@@ -1858,7 +1898,6 @@ class _DevicePageState extends State<DevicePage> {
           ),
         ),
 
-        // 사진 삭제(X) 버튼
         if (hasImage)
           Positioned(
             top: -10,
@@ -1904,7 +1943,6 @@ class _DevicePageState extends State<DevicePage> {
 
         const Text("통신 연결 방식", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey)),
         const SizedBox(height: 8),
-        // 통신 방식 세그먼트 버튼
         SizedBox(
           width: double.infinity,
           child: SegmentedButton<String>(
@@ -1927,7 +1965,6 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 16),
 
-        // 통신 방식에 따라 동적으로 IP/포트 입력창이 시리얼 포트 콤보박스 등으로 바뀜
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
           child: _buildConnectionFields(connTypeV, i, p, selectedComPortV, availablePortsV, portLabelsV, onC, theme, context),
@@ -1937,7 +1974,6 @@ class _DevicePageState extends State<DevicePage> {
         _buildDialogTextField("Client ID (Host Serial)", c, theme, icon: Icons.fingerprint),
         const SizedBox(height: 16),
 
-        // 프로토콜(모델) 선택 콤보박스
         DropdownButtonFormField<String>(
           initialValue: mV,
           decoration: AppTheme.inputDecoration(label: "제조사/물리적 모델 프로토콜", context: context),
@@ -1963,7 +1999,8 @@ class _DevicePageState extends State<DevicePage> {
                     children: [
                       Icon(mIcon, size: 18, color: theme.colorScheme.primary.withValues(alpha: 0.8)),
                       const SizedBox(width: 8),
-                      Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                      // 🔥 모바일/좁은 창에서 드롭다운 텍스트가 삐져나오지 않도록 조치
+                      Flexible(child: Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
                     ]
                 )
             );
@@ -1974,7 +2011,6 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 16),
 
-        // 장비 용도 선택 콤보박스
         DropdownButtonFormField<String>(
           initialValue: uRV,
           decoration: AppTheme.inputDecoration(label: "장비 운용 용도 (데이터 라우팅 기준)", context: context),
@@ -2007,7 +2043,6 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 24),
 
-        // 출입 방향 판별 로직 설정 박스
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -2029,12 +2064,13 @@ class _DevicePageState extends State<DevicePage> {
               DropdownButtonFormField<String>(
                 initialValue: dirModeV,
                 decoration: AppTheme.inputDecoration(label: "출입/방향 판별 모드", context: context),
+                isExpanded: true, // 🔥 [안전 조치] 드롭다운 내부 아이템이 가로 공간을 다 쓰도록 허용
                 items: [
-                  DropdownMenuItem(value: 'none', child: Row(children: [const Icon(Icons.compare_arrows_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('단순 교차 (일정 시간 후 재인식 시 상태 반전)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
-                  DropdownMenuItem(value: 'ant_fixed', child: Row(children: [const Icon(Icons.settings_input_antenna_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('안테나 고정 (홀수 번호=IN, 짝수 번호=OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
-                  DropdownMenuItem(value: 'reader_fixed', child: Row(children: [const Icon(Icons.push_pin_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('리더기 고정 (설정한 단일 방향으로 무조건 판별)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
-                  DropdownMenuItem(value: 'ant_seq', child: Row(children: [const Icon(Icons.format_list_numbered_rtl_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('안테나 시퀀스 (1번 ➔ 2번 순차 통과 시 IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
-                  DropdownMenuItem(value: 'reader_seq', child: Row(children: [const Icon(Icons.route_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), const Text('리더기 시퀀스 (리더기간 이동 이력 추적)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold))])),
+                  DropdownMenuItem(value: 'none', child: Row(children: [const Icon(Icons.compare_arrows_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), Flexible(child: const Text('단순 교차 (일정 시간 후 재인식 시 상태 반전)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis))])),
+                  DropdownMenuItem(value: 'ant_fixed', child: Row(children: [const Icon(Icons.settings_input_antenna_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), Flexible(child: const Text('안테나 고정 (홀수 번호=IN, 짝수 번호=OUT)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis))])),
+                  DropdownMenuItem(value: 'reader_fixed', child: Row(children: [const Icon(Icons.push_pin_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), Flexible(child: const Text('리더기 고정 (설정한 단일 방향으로 무조건 판별)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis))])),
+                  DropdownMenuItem(value: 'ant_seq', child: Row(children: [const Icon(Icons.format_list_numbered_rtl_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), Flexible(child: const Text('안테나 시퀀스 (1번 ➔ 2번 순차 통과 시 IN)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis))])),
+                  DropdownMenuItem(value: 'reader_seq', child: Row(children: [const Icon(Icons.route_rounded, size: 18, color: Colors.blueGrey), const SizedBox(width: 8), Flexible(child: const Text('리더기 시퀀스 (리더기간 이동 이력 추적)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis))])),
                 ],
                 onChanged: (String? v) {
                   onC(null, null, null, null, v, null, null, null);
@@ -2063,7 +2099,6 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 24),
 
-        // 신규 추가가 아닌 기존 장치 수정일 경우 나타나는 하단 액션 버튼들
         if (d != null) ...[
           SizedBox(
             width: double.infinity,
@@ -2116,7 +2151,6 @@ class _DevicePageState extends State<DevicePage> {
           const SizedBox(height: 16),
         ],
 
-        // 자동연결 활성화 스위치
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
@@ -2140,7 +2174,6 @@ class _DevicePageState extends State<DevicePage> {
           ),
         ),
         const SizedBox(height: 12),
-        // 장치 활성화/비활성화 스위치
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
@@ -2306,8 +2339,6 @@ class _DevicePageState extends State<DevicePage> {
             color: AppTheme.danger,
             onPressed: () async {
               final nav = Navigator.of(c);
-
-              // [OS 예외 방어 코드] 삭제 전에도 안전하게 포트를 닫기 위해 읽기 스레드를 중지합니다.
               try { provider.stopDeviceRead(d.id); } catch(_) {}
               await Future.delayed(const Duration(milliseconds: 300));
 
@@ -2330,13 +2361,11 @@ class _DevicePageState extends State<DevicePage> {
       return;
     }
 
-    // [OS 예외 방어 코드] 다중 선택 해제 시에도 윈도우 OS 에러 방지를 위해 수신 스레드를 모두 먼저 중지하고 OS 락 해제를 대기합니다.
     for (String id in _selectedItemIds) {
       try { provider.stopDeviceRead(id); } catch(_) {}
     }
     await Future.delayed(const Duration(milliseconds: 300));
 
-    // 대기 후 일괄 Close
     for (String id in _selectedItemIds) {
       provider.disconnectDevice(id);
     }
@@ -2382,13 +2411,11 @@ class _DevicePageState extends State<DevicePage> {
                         _isFullScreenLoading = true;
                       });
 
-                      // [OS 예외 방어 코드] 삭제 전 일괄 읽기 스레드 중지
                       for (String id in _selectedItemIds) {
                         try { provider.stopDeviceRead(id); } catch(_) {}
                       }
                       await Future.delayed(const Duration(milliseconds: 300));
 
-                      // 통신 끊기 및 삭제 진행
                       for (String id in _selectedItemIds) {
                         provider.disconnectDevice(id);
                         await provider.deleteDevice(id);
@@ -2442,7 +2469,6 @@ class _DevicePageState extends State<DevicePage> {
     });
 
     try {
-      // [OS 예외 방어 코드] 전체 삭제 시 모든 장치의 읽기 스레드 중지 및 대기
       for (var device in provider.list) {
         try { provider.stopDeviceRead(device.id); } catch(_) {}
       }
