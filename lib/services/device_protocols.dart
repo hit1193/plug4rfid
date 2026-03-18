@@ -169,7 +169,7 @@ abstract class BaseDeviceProtocol {
           }
         } catch (e) {
           debugPrint("[DEBUG] RX 스레드 읽기 중 예외: $e");
-          break;
+          break; // 🔥 여기서 RangeError 등으로 크래시 나면 스레드가 죽어버립니다.
         }
       } else {
         break;
@@ -396,7 +396,6 @@ abstract class PollingProtocol extends BaseDeviceProtocol {
 
 /// ===========================================================================
 /// [구현체] IDRO900F 전용 프로토콜
-/// 🔥 [완벽 복구 및 강화] IDRO900F 만의 파싱 규칙에 철저히 따르도록 캡슐화 완료!
 /// ===========================================================================
 class Idro900fProtocol extends AutoReportProtocol {
   Completer<bool>? _writeCompleter;
@@ -426,48 +425,36 @@ class Idro900fProtocol extends AutoReportProtocol {
     }
   }
 
-  /// 🔥 [IDRO 스마트 파서] 대표님께서 짚어주신 포맷을 완벽하게 해독합니다.
-  /// 포맷 규칙: >[안테나번호]T[메모리종류/PC(4자리)][EPC 데이터];[RSSI/기타]
-  /// 예시: >1T3000323530313039403030323630;RFE7B
   void _parseIdroPacket(String line) {
-    // line[0] == '>', line[1] == 안테나번호, line[2] == 'T' 인지 확인합니다.
     if (line.startsWith('>') && line.length >= 5 && line[2] == 'T') {
       try {
-        // 1. 안테나 번호 추출 (인덱스 1 위치)
         String antChar = line.substring(1, 2);
         int antNo = int.tryParse(antChar) ?? 1;
 
-        // 2. 'T'문자 이후의 전체 데이터 (인덱스 3부터 시작)
         String remainData = line.substring(3).trim();
         String epc = "";
         String rssi = "-";
         String tid = "-";
 
-        // 3. 세미콜론(;)을 기준으로 앞단(PC+EPC)과 뒷단(RSSI 등)을 분리합니다.
         if (remainData.contains(';')) {
           List<String> parts = remainData.split(';');
           String epcPart = parts[0];
 
           if (parts.length > 1) {
-            rssi = parts[1]; // 세미콜론 뒷부분은 RSSI로 처리 (예: RFE7B)
+            rssi = parts[1];
           }
 
-          // 4. epcPart에서 맨 앞 4자리는 메모리 종류(PC값, 예: 3000)이므로 제거하고 진짜 EPC만 취합니다.
           if (epcPart.length > 4) {
             epc = epcPart.substring(4);
           } else {
-            epc = epcPart; // 예외 상황 대비
+            epc = epcPart;
           }
-        }
-        // 5. CSV 등 혹시 모를 커스텀 포맷 설정에 대한 1차 방어 코드
-        else if (remainData.contains(',')) {
+        } else if (remainData.contains(',')) {
           List<String> parts = remainData.split(',');
           epc = parts[0];
           if (parts.length > 1) rssi = parts[1];
           if (parts.length > 2) tid = parts[2];
-        }
-        // 6. 세미콜론조차 없는 포맷일 경우
-        else {
+        } else {
           if (remainData.length > 4) {
             epc = remainData.substring(4);
           } else {
@@ -475,7 +462,6 @@ class Idro900fProtocol extends AutoReportProtocol {
           }
         }
 
-        // 정상적으로 파싱된 데이터를 UI로 쏴줍니다.
         if (epc.isNotEmpty) {
           String jsonPayload = 'JSON:{"epc":"$epc", "ant":$antNo, "rssi":"$rssi", "tid":"$tid"}';
           emitData(jsonPayload);
@@ -505,7 +491,7 @@ class Idro900fProtocol extends AutoReportProtocol {
 
   @override
   String parseTagId(String packet) {
-    return ""; // 개별 구현 대신 onDataReceived에서 JSON으로 직접 쏩니다.
+    return "";
   }
 
   @override
@@ -579,117 +565,231 @@ class Ats200Protocol extends AutoReportProtocol {
 }
 
 /// ===========================================================================
-/// [구현체] Hopeland 리더기
+/// [구현체] Hopeland M120 / HL7206 계열 리더기
+/// 🔥 [업그레이드] 프리징(얼어붙음) 에러 방지 및 '태그 쓰기(Write)' 코어 이식!
 /// ===========================================================================
 class HopelandProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
   Completer<bool>? _writeCompleter;
+  Timer? _pollingTimer;
 
   HopelandProtocol(String ip, int port) : super(ipAddress: ip, port: port);
 
   @override
-  void onConnected() {}
+  void onConnected() {
+    emitData("🚀 [SYS] Hopeland 장치 접속 성공: $ipAddress:$port");
+  }
+
+  /// M120 장비로 명령어를 패키징하여 발송하는 공통 유틸리티
+  void sendHopelandCommand(int cmdH, int cmdL, List<int> payload) {
+    int dataLength = 2 + 2 + payload.length; // NodeID(2) + Cmd(2) + Payload(N)
+    List<int> packet = [
+      0xAA, 0x00, // 헤더
+      (dataLength >> 8) & 0xFF, dataLength & 0xFF, // Length
+      0x00, 0x00, // Node ID
+      cmdH, cmdL  // Command
+    ];
+    packet.addAll(payload);
+
+    // 체크섬 연산: Length(인덱스 2)부터 패킷 끝까지 더하기
+    int checksum = 0;
+    for (int i = 2; i < packet.length; i++) {
+      checksum += packet[i];
+    }
+    packet.add(checksum & 0xFF); // Checksum 부착
+
+    sendCommandBytes(packet);
+  }
+
+  @override
+  Future<void> startInventory() async {
+    emitData("▶️ [명령] 연속 스캔(Inventory) 엔진 가동!");
+
+    if (_pollingTimer != null && _pollingTimer!.isActive) {
+      return;
+    }
+
+    // 250ms 간격으로 태그를 긁어오도록 지속적으로 찌릅니다 (Polling)
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
+      if (!isConnected || _isDisconnecting) {
+        timer.cancel();
+        return;
+      }
+      // 0x01 0x02 = 단일 태그 읽기 명령 (Hopeland M120 규격)
+      sendHopelandCommand(0x01, 0x02, []);
+    });
+  }
+
+  @override
+  Future<void> stopInventory() async {
+    if (_pollingTimer != null) {
+      _pollingTimer!.cancel();
+      _pollingTimer = null;
+      emitData("⏹️ [명령] 연속 스캔(Inventory) 중지 완료");
+    }
+  }
+
+  @override
+  Future<void> onDisconnecting() async {
+    await stopInventory();
+  }
 
   @override
   void onDataReceived(Uint8List data) {
+    // 디버깅/터미널 화면용 Raw 데이터 출력
+    String rawHex = data.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
+    emitData("<== [수신 RX] $rawHex");
+
     _byteBuffer.addAll(data);
 
+    // 프레임 분석: [0xAA] [0x00] [LenH] [LenL] [NodeH] [NodeL] [CmdH] [CmdL] [Payload...] [Checksum]
     while (_byteBuffer.isNotEmpty) {
+      // 1. 헤더(0xAA) 찾기 (노이즈는 과감하게 버림)
       if (_byteBuffer[0] != 0xAA) {
         _byteBuffer.removeAt(0);
         continue;
       }
 
       if (_byteBuffer.length < 5) {
-        break;
+        break; // 최소한 Length 바이트까지 수신 대기
       }
 
-      int dataLength = (_byteBuffer[3] << 8) | _byteBuffer[4];
-      int totalPacketSize = 5 + dataLength + 2;
+      int dataLength = (_byteBuffer[2] << 8) | _byteBuffer[3];
+      int totalPacketSize = 5 + dataLength;
+
+      // 🔥 [핵심 패치] 비정상적인 노이즈로 인해 길이가 너무 작거나 커서 인덱스 초과(RangeError)가 발생해
+      // 스레드가 얼어버리는(프리징) 현상을 원천 차단합니다!
+      if (totalPacketSize < 9 || totalPacketSize > 1024) {
+        emitData("⚠️ [Hopeland 보호막] 비정상 패킷 감지 (길이: $totalPacketSize). 노이즈 버림.");
+        _byteBuffer.removeAt(0); // 0xAA 헤더 하나만 버리고 다음 0xAA를 다시 찾습니다.
+        continue;
+      }
 
       if (_byteBuffer.length < totalPacketSize) {
-        break;
+        break; // 아직 전체 패킷이 도착하지 않았음
       }
 
-      List<int> completePacket = _byteBuffer.sublist(0, totalPacketSize);
-      _byteBuffer.removeRange(0, totalPacketSize);
+      List<int> packet = _byteBuffer.sublist(0, totalPacketSize);
+      _byteBuffer.removeRange(0, totalPacketSize); // 처리된 데이터는 버퍼에서 비움
 
-      int commandCode = (completePacket[1] << 8) | completePacket[2];
-
-      if (commandCode == 0x0102) {
-        List<int> epcBytes = completePacket.sublist(5, completePacket.length - 2);
-        String epcHex = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
-
-        if (epcHex.isNotEmpty) {
-          emitData('JSON:{"epc":"$epcHex", "ant":1, "rssi":"-", "tid":"-"}');
-        }
+      // 체크섬 무결성 검증
+      int checksum = 0;
+      for (int i = 2; i < totalPacketSize - 1; i++) {
+        checksum += packet[i];
       }
-      else if (commandCode == 0x0104) {
-        if (completePacket.length >= 6) {
-          int result = completePacket[5];
-          if (result == 0x00) {
-            emitData("✅ [장비 응답] 태그 데이터 기록 성공!");
-            if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
-              _writeCompleter!.complete(true);
-            }
-          } else {
-            emitData("❌ [장비 응답] 기록 실패 (에러코드: 0x${result.toRadixString(16).toUpperCase()})");
-            if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
-              _writeCompleter!.complete(false);
-            }
-          }
-        }
+      if ((checksum & 0xFF) != packet[totalPacketSize - 1]) {
+        emitData("⚠️ [Hopeland 에러] 체크섬 불일치. 깨진 패킷 무시.");
+        continue;
       }
+
+      // 안전하게 명령어 코드와 페이로드를 추출합니다.
+      int cmdH = packet[6];
+      int cmdL = packet[7];
+      int commandCode = (cmdH << 8) | cmdL;
+      List<int> payload = packet.sublist(8, totalPacketSize - 1);
+
+      _parseHopelandPayload(commandCode, payload);
     }
 
     if (_byteBuffer.length > 8192) {
-      _byteBuffer.clear();
+      _byteBuffer.clear(); // 안전을 위한 버퍼 비우기 (메모리 누수 방지)
+    }
+  }
+
+  /// 📥 [Hopeland 스마트 파서] 읽기(Read) 및 쓰기(Write) 응답 분기 처리
+  void _parseHopelandPayload(int cmd, List<int> payload) {
+    // 1. 태그 읽기 응답 (Inventory)
+    if (cmd == 0x0102 || cmd == 0x0222 || cmd == 0x0101) {
+      if (payload.length > 4) {
+        int ant = payload[0] + 1; // 0-based 포트를 1-based 포트로 변환
+
+        // PC (Protocol Control) 영역을 비트마스킹하여 EPC 길이를 도출합니다.
+        int pc = (payload[1] << 8) | payload[2];
+        int epcWordLen = (pc >> 11) & 0x1F;
+        int epcByteLen = epcWordLen * 2;
+
+        if (epcByteLen > 0 && 3 + epcByteLen <= payload.length) {
+          List<int> epcBytes = payload.sublist(3, 3 + epcByteLen);
+          String epc = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('').toUpperCase();
+
+          String rssi = "-";
+          if (3 + epcByteLen < payload.length) {
+            int rssiVal = payload[3 + epcByteLen];
+            rssi = "-$rssiVal dBm";
+          }
+
+          emitData('JSON:{"epc":"$epc", "ant":$ant, "rssi":"$rssi", "tid":"-"}');
+        }
+      }
+    }
+    // 2. 태그 쓰기(Write Data) 응답 (0x0104 또는 0x0105 커맨드)
+    else if (cmd == 0x0105 || cmd == 0x0104) {
+      if (payload.isNotEmpty) {
+        int result = payload[0]; // Payload의 첫 번째 바이트가 결과 코드
+        if (result == 0x00) {
+          emitData("✅ [장비 응답] 태그 메모리 기록 완벽 성공!");
+          if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
+            _writeCompleter!.complete(true);
+          }
+        } else {
+          String errStr = result.toRadixString(16).toUpperCase().padLeft(2, '0');
+          String errMsg = "알 수 없는 오류";
+          if (result == 0x15) errMsg = "비밀번호 에러 또는 메모리 락 (Access Password)";
+          if (result == 0x16) errMsg = "태그를 찾을 수 없음 (리더기에서 멀어짐)";
+          if (result == 0x10) errMsg = "명령어 형식 또는 길이 에러";
+
+          emitData("❌ [장비 응답] 쓰기 실패 (에러코드: 0x$errStr - $errMsg)");
+          if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
+            _writeCompleter!.complete(false);
+          }
+        }
+      }
     }
   }
 
   @override
   String parseTagId(String rawData) {
-    return "";
+    return ""; // JSON 브릿지 방식으로 파싱하므로 빈 문자열 반환
   }
 
+  /// 📝 [Hopeland 쓰기 엔진] M120 규격에 맞춰 0x0105 명령어 패킷을 완벽히 조립하여 발송합니다!
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {
-      emitData("⚠️ [쓰기 실패] Hopeland 장비가 연결되어 있지 않습니다.");
+      emitData("⚠️ [쓰기 실패] Hopeland M120 장비가 연결되어 있지 않습니다.");
       return;
     }
 
+    // 쓰기 전 안전을 위해 읽기 폴링을 잠시 멈춥니다.
+    await stopInventory();
+    await Future.delayed(const Duration(milliseconds: 100));
+    _byteBuffer.clear();
+
     String paddedData = dataHex.toUpperCase().trim();
+    // 워드(2바이트) 단위로 맞추기 위해 패딩 처리
     if (paddedData.length % 4 != 0) {
       int neededChars = 4 - (paddedData.length % 4);
       paddedData = paddedData.padRight(paddedData.length + neededChars, '0');
     }
 
-    int wordLength = paddedData.length ~/ 4;
+    // 1 Word = 2 Bytes = 4 Hex chars
+    int wordCount = paddedData.length ~/ 4;
     List<int> dataBytes = [];
     for (int i = 0; i < paddedData.length; i += 2) {
       dataBytes.add(int.parse(paddedData.substring(i, i + 2), radix: 16));
     }
 
-    int payloadLen = 1 + 4 + 1 + 1 + 1 + dataBytes.length;
-
-    List<int> packet = [
-      0xAA, 0x00,
-      (payloadLen >> 8) & 0xFF, payloadLen & 0xFF,
-      0x00, 0x00,
-      0x09,
-      0x00, 0x00, 0x00, 0x00,
-      bank, offset, wordLength
+    // Payload 조합: [Timeout(1)] [Pass(4)] [Bank(1)] [Ptr(2)] [WordCnt(1)] [Data(N)]
+    List<int> payload = [
+      0x32, // Timeout (50 * 10ms = 500ms 대기)
+      0x00, 0x00, 0x00, 0x00, // Access Password (기본 00 00 00 00)
+      bank, // MemBank (1=EPC, 3=USER)
+      (offset >> 8) & 0xFF, offset & 0xFF, // Pointer/Offset 시작점
+      wordCount & 0xFF, // 기록할 Word 개수
     ];
-    packet.addAll(dataBytes);
+    payload.addAll(dataBytes);
 
-    int checksum = 0;
-    for (int i = 1; i < packet.length; i++) {
-      checksum = (checksum + packet[i]) & 0xFF;
-    }
-    packet.add(checksum);
-
-    emitData("📝 [Hopeland 쓰기 준비] Bank:$bank, Offset:$offset, WordCnt:$wordLength");
+    emitData("📝 [Hopeland M120 쓰기 준비] Bank:$bank, Offset:$offset, WordCnt:$wordCount");
 
     int maxRetries = 3;
     bool writeSuccess = false;
@@ -698,17 +798,18 @@ class HopelandProtocol extends BaseDeviceProtocol {
       emitData("▶️ [명령어 발송] 쓰기 시도 ($attempt/$maxRetries)");
 
       _writeCompleter = Completer<bool>();
-      sendCommandBytes(packet);
+      // 0x01 0x05 (Block Write Tag Data) 명령 전송
+      sendHopelandCommand(0x01, 0x05, payload);
 
       try {
-        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 1500));
+        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 2000));
       } catch (e) {
         writeSuccess = false;
         emitData("⏳ [타임아웃] 장비 응답 없음.");
       }
 
       if (writeSuccess) {
-        emitData("🎉 [최종 성공] 태그에 데이터가 완벽하게 기록(Verify)되었습니다!");
+        emitData("🎉 [최종 성공] 태그에 데이터가 완벽하게 기록되었습니다!");
         break;
       } else {
         if (attempt < maxRetries) {
@@ -724,7 +825,7 @@ class HopelandProtocol extends BaseDeviceProtocol {
 }
 
 /// ===========================================================================
-/// [최종 완성형] Marktrace (UHFReader09) 전용 해독 엔진 (CF_RU5102, CF815 포함)
+/// [구현체] Marktrace (UHFReader09) 전용 해독 엔진 (CF_RU5102, CF815 포함)
 /// ===========================================================================
 class ChafonProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
