@@ -56,7 +56,6 @@ abstract class BaseDeviceProtocol {
   Socket? _socket;
   StreamSubscription<Uint8List>? _socketSubscription;
 
-  // 🔥 [수정] SerialPort 클래스 대신 우리가 만든 AppSerialPort 래퍼를 사용합니다.
   AppSerialPort? _serialPort;
 
   bool _rxThreadRunning = false;
@@ -129,7 +128,6 @@ abstract class BaseDeviceProtocol {
     emitData("🔌 [SYS] 시리얼 포트 연결 시도: $ipAddress (BaudRate: $port)");
 
     try {
-      // 🔥 [수정] 래퍼 객체 생성으로 교체
       _serialPort ??= AppSerialPort(ipAddress);
 
       if (!_serialPort!.openReadWrite()) {
@@ -138,7 +136,6 @@ abstract class BaseDeviceProtocol {
       }
 
       try {
-        // 🔥 [수정] 복잡했던 config 구성을 래퍼 내부에 캡슐화한 1줄짜리 메서드로 교체
         _serialPort!.configure(baudRate: port);
       } catch (configErr) {
         emitData("⚠️ [SYS] 포트 설정(DCB) 예외 무시: $configErr");
@@ -399,6 +396,7 @@ abstract class PollingProtocol extends BaseDeviceProtocol {
 
 /// ===========================================================================
 /// [구현체] IDRO900F 전용 프로토콜
+/// 🔥 [완벽 복구 및 강화] IDRO900F 만의 파싱 규칙에 철저히 따르도록 캡슐화 완료!
 /// ===========================================================================
 class Idro900fProtocol extends AutoReportProtocol {
   Completer<bool>? _writeCompleter;
@@ -428,34 +426,61 @@ class Idro900fProtocol extends AutoReportProtocol {
     }
   }
 
+  /// 🔥 [IDRO 스마트 파서] 대표님께서 짚어주신 포맷을 완벽하게 해독합니다.
+  /// 포맷 규칙: >[안테나번호]T[메모리종류/PC(4자리)][EPC 데이터];[RSSI/기타]
+  /// 예시: >1T3000323530313039403030323630;RFE7B
   void _parseIdroPacket(String line) {
-    if (line.startsWith('>T') && line.length >= 5) {
+    // line[0] == '>', line[1] == 안테나번호, line[2] == 'T' 인지 확인합니다.
+    if (line.startsWith('>') && line.length >= 5 && line[2] == 'T') {
       try {
-        String antChar = line.substring(2, 3);
-        int antNo = (int.tryParse(antChar) ?? 0) + 1;
+        // 1. 안테나 번호 추출 (인덱스 1 위치)
+        String antChar = line.substring(1, 2);
+        int antNo = int.tryParse(antChar) ?? 1;
 
-        String remainData = line.substring(3);
+        // 2. 'T'문자 이후의 전체 데이터 (인덱스 3부터 시작)
+        String remainData = line.substring(3).trim();
         String epc = "";
-        String rssi = "알수없음";
-        String tid = "없음";
+        String rssi = "-";
+        String tid = "-";
 
-        if (remainData.contains(',')) {
-          List<String> parts = remainData.split(',');
-          epc = parts[0];
+        // 3. 세미콜론(;)을 기준으로 앞단(PC+EPC)과 뒷단(RSSI 등)을 분리합니다.
+        if (remainData.contains(';')) {
+          List<String> parts = remainData.split(';');
+          String epcPart = parts[0];
 
           if (parts.length > 1) {
-            rssi = parts[1];
+            rssi = parts[1]; // 세미콜론 뒷부분은 RSSI로 처리 (예: RFE7B)
           }
-          if (parts.length > 2) {
-            tid = parts[2];
+
+          // 4. epcPart에서 맨 앞 4자리는 메모리 종류(PC값, 예: 3000)이므로 제거하고 진짜 EPC만 취합니다.
+          if (epcPart.length > 4) {
+            epc = epcPart.substring(4);
+          } else {
+            epc = epcPart; // 예외 상황 대비
           }
-        } else {
-          epc = remainData.length > 4 ? remainData.substring(4) : remainData;
+        }
+        // 5. CSV 등 혹시 모를 커스텀 포맷 설정에 대한 1차 방어 코드
+        else if (remainData.contains(',')) {
+          List<String> parts = remainData.split(',');
+          epc = parts[0];
+          if (parts.length > 1) rssi = parts[1];
+          if (parts.length > 2) tid = parts[2];
+        }
+        // 6. 세미콜론조차 없는 포맷일 경우
+        else {
+          if (remainData.length > 4) {
+            epc = remainData.substring(4);
+          } else {
+            epc = remainData;
+          }
         }
 
-        String direction = (antNo <= 2) ? "IN (입고/입장)" : "OUT (출고/퇴장)";
-        String jsonPayload = 'JSON:{"epc":"$epc", "ant":$antNo, "rssi":"$rssi", "tid":"$tid", "direction":"$direction"}';
-        emitData(jsonPayload);
+        // 정상적으로 파싱된 데이터를 UI로 쏴줍니다.
+        if (epc.isNotEmpty) {
+          String jsonPayload = 'JSON:{"epc":"$epc", "ant":$antNo, "rssi":"$rssi", "tid":"$tid"}';
+          emitData(jsonPayload);
+        }
+
       } catch (e) {
         emitData("⚠️ [IDRO 파싱 오류] 규격 외 데이터: $line");
       }
@@ -480,7 +505,7 @@ class Idro900fProtocol extends AutoReportProtocol {
 
   @override
   String parseTagId(String packet) {
-    return "";
+    return ""; // 개별 구현 대신 onDataReceived에서 JSON으로 직접 쏩니다.
   }
 
   @override
@@ -700,9 +725,6 @@ class HopelandProtocol extends BaseDeviceProtocol {
 
 /// ===========================================================================
 /// [최종 완성형] Marktrace (UHFReader09) 전용 해독 엔진 (CF_RU5102, CF815 포함)
-/// 🔥 0xFD 바이트 밀림(Byte Misalignment) 버그 완벽 패치!
-/// 영문 매뉴얼의 오역(EpcWord)을 무시하고, EPC 길이를 바이트(Bytes) 단위로 조립하여
-/// C++ SDK의 WriteCard_G2와 100% 동일한 패킷 구조를 구현했습니다.
 /// ===========================================================================
 class ChafonProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
@@ -712,15 +734,13 @@ class ChafonProtocol extends BaseDeviceProtocol {
   int _lockedProtocol = -1;
 
   Completer<bool>? _writeCompleter;
-
-  // 수동 스캔(0x01) 시 장비의 응답을 기다리는 비동기 객체
   Completer<String?>? _singleReadCompleter;
 
   ChafonProtocol(String ip, int port) : super(ipAddress: ip, port: port);
 
   @override
   void onConnected() {
-    emitData("🚀 [SYS] Chafon CF_RU5102 장치 접속 성공: $ipAddress:$port");
+    emitData("🚀 [SYS] Chafon 장치 접속 성공: $ipAddress:$port");
   }
 
   @override
@@ -743,13 +763,15 @@ class ChafonProtocol extends BaseDeviceProtocol {
         } else if (_discoveryStep == 1) {
           sendUHFReader09Command(0x01, [], address: 0x00);
         } else if (_discoveryStep == 2) {
-          sendUHFReader09Command(0x27, [0xFF], address: 0xFF);
+          sendUHFReader09Command(0x27, [], address: 0xFF);
         } else if (_discoveryStep == 3) {
-          sendR2000Command(0x89, [0x01], address: 0xFF);
+          sendUHFReader09Command(0x27, [], address: 0x00);
         } else if (_discoveryStep == 4) {
-          sendCommandHex("BB 00 22 00 00 22 7E");
+          sendUHFReader09Command(0x0F, [], address: 0xFF);
+        } else if (_discoveryStep == 5) {
+          sendR2000Command(0x89, [0x01], address: 0xFF);
         }
-        _discoveryStep = (_discoveryStep + 1) % 5;
+        _discoveryStep = (_discoveryStep + 1) % 6;
       } else {
         _pollLockedProtocol();
       }
@@ -776,11 +798,13 @@ class ChafonProtocol extends BaseDeviceProtocol {
     } else if (_lockedProtocol == 1) {
       sendUHFReader09Command(0x01, [], address: 0x00);
     } else if (_lockedProtocol == 2) {
-      sendUHFReader09Command(0x27, [0xFF], address: 0xFF);
+      sendUHFReader09Command(0x27, [], address: 0xFF);
     } else if (_lockedProtocol == 3) {
-      sendR2000Command(0x89, [0x01], address: 0xFF);
+      sendUHFReader09Command(0x27, [], address: 0x00);
     } else if (_lockedProtocol == 4) {
-      sendCommandHex("BB 00 22 00 00 22 7E");
+      sendUHFReader09Command(0x0F, [], address: 0xFF);
+    } else if (_lockedProtocol == 5) {
+      sendR2000Command(0x89, [0x01], address: 0xFF);
     }
   }
 
@@ -790,7 +814,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
     }
 
     _lockedProtocol = protocolType;
-    emitData("✅ [장비 락온] $name 규격 고속 폴링 전환 완료!");
+    emitData("✅ [장비 락온] $name 규격으로 고속 폴링 전환 완료!");
   }
 
   void sendUHFReader09Command(int cmd, List<int> data, {int address = 0xFF}) {
@@ -909,17 +933,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
     int cmd = packet[2];
     List<int> payload = packet.sublist(3, packet.length - 2);
 
-    if (_lockedProtocol == -1) {
-      if (cmd == 0x01 || cmd == 0x27 || cmd == 0x0F) {
-        if (address == 0xFF) {
-          _lockOnProtocol(0, "UHFReader09 (Addr: 0xFF)");
-        } else {
-          _lockOnProtocol(1, "UHFReader09 (Addr: 0x00)");
-        }
-      }
-    }
-
-    // 0x06(Write Data By EPC 타겟 쓰기) 응답 처리
     if (cmd == 0x06) {
       if (payload.isNotEmpty) {
         int status = payload[0];
@@ -953,11 +966,20 @@ class ChafonProtocol extends BaseDeviceProtocol {
       return;
     }
 
-    if (payload.isNotEmpty && payload.length == 1 && payload[0] == 0xFF) {
+    if (payload.isNotEmpty && payload.length == 1 && (payload[0] == 0xFF || payload[0] == 0x15)) {
       return;
     }
 
-    // 단일 태그 읽기 (Single Read) 응답 시
+    if (_lockedProtocol == -1) {
+      if (cmd == 0x01) {
+        _lockOnProtocol(address == 0xFF ? 0 : 1, "UHFReader09 Inventory (0x01, Addr: 0x${address.toRadixString(16).padLeft(2, '0').toUpperCase()})");
+      } else if (cmd == 0x27) {
+        _lockOnProtocol(address == 0xFF ? 2 : 3, "UHFReader09 RealTime (0x27, Addr: 0x${address.toRadixString(16).padLeft(2, '0').toUpperCase()})");
+      } else if (cmd == 0x0F) {
+        _lockOnProtocol(4, "UHFReader09 Anti-collision (0x0F)");
+      }
+    }
+
     if (cmd == 0x27) {
       if (payload.length >= 4) {
         int ant = (payload[0] & 0x03) + 1;
@@ -974,26 +996,38 @@ class ChafonProtocol extends BaseDeviceProtocol {
         emitData('JSON:{"epc":"$rawHexEpc", "ant":$ant, "rssi":"$rssiStr", "tid":"-"}');
       }
     }
-    // 다중 태그 읽기 (Multi Read) 응답 시
     else if (cmd == 0x01 || cmd == 0x02 || cmd == 0x0F) {
       if (payload.isNotEmpty) {
         int tagCount = payload[0];
         int offset = 1;
+
+        bool isRU5102 = false;
+        int testOffset = 1;
+        for (int j = 0; j < tagCount; j++) {
+          if (testOffset + 1 >= payload.length) break;
+          testOffset += 2 + payload[testOffset + 1];
+        }
+
+        if (testOffset == payload.length) {
+          isRU5102 = true;
+        }
 
         for (int i = 0; i < tagCount; i++) {
           if (offset >= payload.length) {
             break;
           }
 
-          int ant = payload[offset];
-          offset += 1;
+          int ant = 1;
+          int epcLen = 0;
 
-          if (offset >= payload.length) {
-            break;
+          if (isRU5102) {
+            ant = payload[offset] + 1;
+            epcLen = payload[offset + 1];
+            offset += 2;
+          } else {
+            epcLen = payload[offset];
+            offset += 1;
           }
-
-          int epcLen = payload[offset];
-          offset += 1;
 
           if (offset + epcLen <= payload.length) {
             List<int> epcBytes = payload.sublist(offset, offset + epcLen);
@@ -1028,9 +1062,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
     return "";
   }
 
-  /// 🔥 [바이트 밀림(Misalignment) 완벽 패치판]
-  /// 매뉴얼의 'EpcWord'라는 오역을 무시하고, EPC 길이를 '바이트(Bytes)' 단위로 정확하게 입력하여
-  /// 0xFD 파라미터 에러를 완벽하게 근절한 C++ SDK의 WriteCard_G2와 100% 동일한 패킷 구조를 구현했습니다.
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {
@@ -1042,10 +1073,9 @@ class ChafonProtocol extends BaseDeviceProtocol {
     await Future.delayed(const Duration(milliseconds: 50));
     _byteBuffer.clear();
 
-    int targetAddress = _lockedProtocol == 1 ? 0x00 : 0xFF;
+    int targetAddress = (_lockedProtocol == 1 || _lockedProtocol == 3) ? 0x00 : 0xFF;
     String? activeTargetEpc = targetEpc?.trim();
 
-    // 기록할 데이터를 짝수(1워드 = 2바이트)로 예쁘게 맞춰줍니다.
     String paddedData = dataHex.toUpperCase().trim();
     if (paddedData.length % 4 != 0) {
       int neededChars = 4 - (paddedData.length % 4);
@@ -1061,11 +1091,9 @@ class ChafonProtocol extends BaseDeviceProtocol {
     int maxRetries = 3;
     bool writeSuccess = false;
 
-    // 🔥 재시도 루프 내부에서 [읽기 -> 0x06 쓰기] 패턴을 반복합니다.
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
       emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 태그 스캔(Inventory)하여 깨우기...");
 
-      // 1. 태그 읽기 (Inventory - 0x01)
       _singleReadCompleter = Completer<String?>();
       sendUHFReader09Command(0x01, [], address: targetAddress);
 
@@ -1090,7 +1118,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
       sendUHFReader09Command(0x40, [0x02], address: targetAddress);
       await Future.delayed(const Duration(milliseconds: 30));
 
-      // 2. 태그 쓰기 (WriteCard_G2 - 0x06)
       String cleanEpc = epcToWriteTo.replaceAll(' ', '').toUpperCase();
       List<int> epcBytes = [];
       try {
@@ -1102,16 +1129,15 @@ class ChafonProtocol extends BaseDeviceProtocol {
         return;
       }
 
-      // 🔥 [핵심 버그 수정] EpcWord 파라미터는 영문 매뉴얼의 오역이며, 실제로는 '바이트 수(Bytes)'를 넣어야 합니다!
-      int epcLenInBytes = epcBytes.length; // 12바이트면 0x0C가 들어가야 바이트 밀림(0xFD)이 발생하지 않습니다.
+      int epcLenInBytes = epcBytes.length;
 
       List<int> writeData = [];
-      writeData.add(epcLenInBytes); // <- 여기가 0xFD 에러를 유발했던 범인이었습니다! 완벽 수정!
+      writeData.add(epcLenInBytes);
       writeData.addAll(epcBytes);
-      writeData.addAll([0x00, 0x00, 0x00, 0x00]); // 비밀번호 (기본값)
+      writeData.addAll([0x00, 0x00, 0x00, 0x00]);
       writeData.add(bank);
       writeData.add(offset);
-      writeData.add(totalWords); // 쓸 데이터의 길이는 '워드 수'가 맞습니다.
+      writeData.add(totalWords);
       writeData.addAll(dataBytes);
 
       _writeCompleter = Completer<bool>();

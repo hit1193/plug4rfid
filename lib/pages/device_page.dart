@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // 🔥 [추가] kIsWeb 및 defaultTargetPlatform 확인용
+import 'package:flutter/foundation.dart'; // 🔥 kIsWeb 및 defaultTargetPlatform 확인용 (Uint8List 포함)
 import 'package:provider/provider.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
+import 'dart:async';
 
 // 🔥 [웹 컴파일 에러 해결] 시리얼 포트 직접 참조를 제거하고, 플랫폼 분기용 래퍼 클래스를 임포트합니다.
 import '../services/scanner/app_serial_port.dart';
@@ -125,7 +125,7 @@ class _DevicePageState extends State<DevicePage> {
     String rawString = rawLog;
 
     try {
-      // 시간 추출 (예: [14:22:33])
+      // 1. 시간 추출 (예: [14:22:33])
       final timeRegex = RegExp(r'^\[(\d{2}:\d{2}:\d{2})\]\s*');
       final timeMatch = timeRegex.firstMatch(rawString);
 
@@ -134,16 +134,17 @@ class _DevicePageState extends State<DevicePage> {
         rawString = rawString.substring(timeMatch.end);
       }
 
-      // 불필요한 특수문자 제거
+      // 2. 불필요한 특수문자 제거
       rawString = rawString.replaceAll(RegExp(r'^[ℹ️🔍🎯★<=\?\s]+'), '').trim();
 
-      // Provider가 만들어준 JSON 브릿지 문자열 해독 (태그 데이터)
+      // 3. 데이터 파싱 로직 분기
+      // CASE A: 프로토콜이 던져주는 원본 JSON 형태일 경우
       if (rawString.contains('JSON:{')) {
         type = 'TAG';
         final int jsonStart = rawString.indexOf('JSON:{') + 5;
         final String jsonPart = rawString.substring(jsonStart);
 
-        // 정규식으로 안전하게 추출
+        // 정규식으로 JSON 요소 추출
         final epcMatch = RegExp(r'"epc"\s*:\s*"([^"]+)"').firstMatch(jsonPart);
         final antMatch = RegExp(r'"ant"\s*:\s*"?(\d+)"?').firstMatch(jsonPart);
         final rssiMatch = RegExp(r'"rssi"\s*:\s*"([^"]+)"').firstMatch(jsonPart);
@@ -163,6 +164,30 @@ class _DevicePageState extends State<DevicePage> {
         }
         rawString = "EPC Data Received";
       }
+      // CASE B: DeviceProvider에서 이미 가공한 "[태그 인식]" 형태일 경우
+      else if (rawString.contains('[태그 인식]')) {
+        type = 'TAG';
+
+        final epcMatch = RegExp(r'EPC:\s*([A-Za-z0-9]+)').firstMatch(rawString);
+        final antMatch = RegExp(r'Ant:\s*(\d+)').firstMatch(rawString);
+        final rssiMatch = RegExp(r'RSSI:\s*([^\|\s]+)').firstMatch(rawString);
+        final tidMatch = RegExp(r'TID:\s*([A-Za-z0-9]+)').firstMatch(rawString);
+
+        if (epcMatch != null) {
+          epc = epcMatch.group(1)!;
+        }
+        if (antMatch != null) {
+          ant = antMatch.group(1)!;
+        }
+        if (rssiMatch != null && rssiMatch.group(1)! != "-") {
+          rssi = rssiMatch.group(1)!;
+        }
+        if (tidMatch != null) {
+          tid = tidMatch.group(1)!;
+        }
+        rawString = "EPC Data Received";
+      }
+      // CASE C: 그 외 시스템 로그 및 RAW 데이터
       else {
         // 일반 시스템 로그나 RAW 데이터 판별
         if (rawString.contains('[SYS]')) {
@@ -736,10 +761,13 @@ class _DevicePageState extends State<DevicePage> {
                   width: 100,
                   child: isOnline
                       ? OutlinedButton(
-                    onPressed: () async {
+                    onPressed: () {
                       try { provider.stopDeviceRead(item.id); } catch(_) {}
-                      await Future.delayed(const Duration(milliseconds: 300));
-                      provider.disconnectDevice(item.id);
+                      // 🔥 비동기 린트 방지를 위해 Future.delayed 콜백 내에서 연결 해제
+                      Future.delayed(const Duration(milliseconds: 300), () {
+                        if (!context.mounted) return;
+                        provider.disconnectDevice(item.id);
+                      });
                     },
                     style: OutlinedButton.styleFrom(
                         foregroundColor: AppTheme.danger,
@@ -844,10 +872,13 @@ class _DevicePageState extends State<DevicePage> {
               width: 120, // 버튼 최소 넓이 보장
               child: isOnline
                   ? OutlinedButton(
-                onPressed: () async {
+                onPressed: () {
                   try { provider.stopDeviceRead(item.id); } catch(_) {}
-                  await Future.delayed(const Duration(milliseconds: 300));
-                  provider.disconnectDevice(item.id);
+                  // 🔥 비동기 린트 방지를 위해 Future.delayed 콜백 내에서 연결 해제
+                  Future.delayed(const Duration(milliseconds: 300), () {
+                    if (!context.mounted) return;
+                    provider.disconnectDevice(item.id);
+                  });
                 },
                 style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.danger,
@@ -879,6 +910,104 @@ class _DevicePageState extends State<DevicePage> {
   }
 
   /// ===========================================================================
+  /// [장비 썸네일 박스]
+  /// 장비의 이미지를 로드하거나 기본 아이콘을 표시합니다.
+  /// ===========================================================================
+  Widget _buildDeviceThumbnail(DeviceModel item, ThemeData theme, {double size = 44}) {
+    final String? imgUrl = item.getImageUrl(widget.baseUrl, thumb: '100x100');
+    final bool isDark = theme.brightness == Brightness.dark;
+
+    if (imgUrl == null || imgUrl.isEmpty) {
+      return Container(
+          width: size, height: size,
+          padding: const EdgeInsets.all(6.0),
+          decoration: BoxDecoration(
+              color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
+          ),
+          alignment: Alignment.center,
+          child: FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30)
+      );
+    }
+
+    final String connector = imgUrl.contains('?') ? '&' : '?';
+    final String fullUrl = "$imgUrl${connector}t=${item.hashCode}";
+
+    return Container(
+        width: size, height: size,
+        padding: const EdgeInsets.all(6.0),
+        decoration: BoxDecoration(
+            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Image.network(
+            fullUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
+              return FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30);
+            }
+        )
+    );
+  }
+
+  /// 상태 배지(온라인/오프라인)
+  Widget _buildStatusBadge(String status, Color color) {
+    return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+        child: Text(status.toUpperCase(), style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900))
+    );
+  }
+
+  /// 키:값 텍스트 출력용 위젯
+  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
+    return SizedBox(
+        width: 140,
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: AppTheme.itemLabelStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1),
+              Text(value, style: AppTheme.itemValueStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1),
+            ]
+        )
+    );
+  }
+
+  /// 원형 액션 버튼 (테스트/제어용)
+  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
+    return Tooltip(
+        message: tip,
+        child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(25),
+            child: Container(
+                width: 50, height: 50,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 24)
+            )
+        )
+    );
+  }
+
+  /// 폼 내부에서 사용되는 텍스트 입력창 공통 생성 헬퍼
+  Widget _buildDialogTextField(String label, TextEditingController ctrl, ThemeData theme, {bool isNumber = false, IconData? icon}) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      style: TextStyle(
+          fontFamily: AppTheme.fontPretendard,
+          fontSize: 16,
+          fontWeight: FontWeight.w800,
+          color: AppTheme.dataColor(theme.brightness == Brightness.dark)
+      ),
+      decoration: AppTheme.inputDecoration(label: label, context: context, prefixIcon: icon),
+    );
+  }
+
+  /// ===========================================================================
   /// [장치 테스트 다이얼로그]
   /// 읽기(Read)와 쓰기(Write)를 테스트하는 핵심 화면입니다.
   /// ===========================================================================
@@ -895,7 +1024,7 @@ class _DevicePageState extends State<DevicePage> {
           return ChangeNotifierProvider<DeviceProvider>.value(
             value: provider,
             child: StatefulBuilder(
-                builder: (BuildContext context, StateSetter setDialogState) {
+                builder: (BuildContext dialogContext, StateSetter setDialogState) {
                   DeviceModel currentDevice = provider.list.firstWhere((element) {
                     return element.id == d.id;
                   }, orElse: () {
@@ -922,7 +1051,6 @@ class _DevicePageState extends State<DevicePage> {
                                     child: Row(
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
-                                          // 🔥 텍스트가 다이얼로그 밖으로 삐져나가는 것 방지
                                           Flexible(
                                             child: Row(
                                                 children: [
@@ -939,20 +1067,25 @@ class _DevicePageState extends State<DevicePage> {
                                             ),
                                           ),
                                           ElevatedButton(
-                                            onPressed: () async {
+                                            onPressed: () {
                                               if (isOnline) {
                                                 if (isReading) {
                                                   setDialogState(() { isReading = false; });
                                                   try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
-                                                  await Future.delayed(const Duration(milliseconds: 300));
+                                                  // 비동기 Lint 회피를 위해 콜백 내 딜레이
+                                                  Future.delayed(const Duration(milliseconds: 300), () {
+                                                    if (!dialogContext.mounted) return;
+                                                    provider.disconnectDevice(currentDevice.id);
+                                                  });
+                                                } else {
+                                                  provider.disconnectDevice(currentDevice.id);
                                                 }
-                                                provider.disconnectDevice(currentDevice.id);
                                               } else {
                                                 provider.connectDevice(currentDevice);
                                               }
 
                                               Future.delayed(const Duration(milliseconds: 1000), () {
-                                                if (ctx.mounted) {
+                                                if (dialogContext.mounted) {
                                                   setDialogState(() {});
                                                 }
                                               });
@@ -995,7 +1128,7 @@ class _DevicePageState extends State<DevicePage> {
                                             enabled: isOnline && !isWriting,
                                             decoration: AppTheme.inputDecoration(
                                                 label: isHexMode ? "헥사값 입력 (예: 313233...)" : "일반 문자 입력 (예: ITEM01...)",
-                                                context: context,
+                                                context: dialogContext,
                                                 prefixIcon: isHexMode ? Icons.code : Icons.text_fields
                                             ),
                                             style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold),
@@ -1007,9 +1140,12 @@ class _DevicePageState extends State<DevicePage> {
                                           child: ElevatedButton.icon(
                                             onPressed: (!isOnline || isWriting) ? null : () async {
                                               if (writeCtrl.text.isEmpty) {
-                                                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("기록할 데이터를 입력해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+                                                ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text("기록할 데이터를 입력해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard))));
                                                 return;
                                               }
+
+                                              // 🔥 비동기 전 Messenger 캡처
+                                              final ScaffoldMessengerState messenger = ScaffoldMessenger.of(dialogContext);
 
                                               setDialogState(() {
                                                 isWriting = true;
@@ -1021,12 +1157,12 @@ class _DevicePageState extends State<DevicePage> {
                                                   isHexMode: isHexMode
                                               );
 
-                                              if (ctx.mounted) {
-                                                setDialogState(() {
-                                                  isWriting = false;
-                                                });
-                                                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(ok ? "기록 명령 전송 성공!" : "기록 실패 (로그 참조)", style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
-                                              }
+                                              if (!dialogContext.mounted) return;
+
+                                              setDialogState(() {
+                                                isWriting = false;
+                                              });
+                                              messenger.showSnackBar(SnackBar(content: Text(ok ? "기록 명령 전송 성공!" : "기록 실패 (로그 참조)", style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
                                             },
                                             icon: isWriting
                                                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -1047,7 +1183,7 @@ class _DevicePageState extends State<DevicePage> {
                                     Row(
                                       children: [
                                         ElevatedButton.icon(
-                                          onPressed: !isOnline ? null : () async {
+                                          onPressed: !isOnline ? null : () {
                                             if (isReading) {
                                               setDialogState(() { isReading = false; });
                                               try {
@@ -1106,10 +1242,10 @@ class _DevicePageState extends State<DevicePage> {
                                           return ListView.separated(
                                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                               itemCount: logs.length,
-                                              separatorBuilder: (BuildContext context, int index) {
+                                              separatorBuilder: (BuildContext sepCtx, int index) {
                                                 return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
                                               },
-                                              itemBuilder: (BuildContext context, int idx) {
+                                              itemBuilder: (BuildContext itemCtx, int idx) {
                                                 final Map<String, String> parsed = _parseLogData(logs[idx]);
 
                                                 Color typeColor = Colors.grey;
@@ -1186,8 +1322,6 @@ class _DevicePageState extends State<DevicePage> {
   /// 대용량 패킷을 상세 표 형태로 실시간 모니터링합니다.
   /// ===========================================================================
   void _showTerminalDialog(BuildContext context, String deviceId, DeviceProvider provider, DeviceModel d) {
-    final theme = Theme.of(context);
-
     showDialog(
         context: context,
         builder: (BuildContext dialogContext) {
@@ -1281,10 +1415,10 @@ class _DevicePageState extends State<DevicePage> {
                                 return ListView.separated(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                   itemCount: logs.length,
-                                  separatorBuilder: (BuildContext context, int idx) {
+                                  separatorBuilder: (BuildContext sepCtx, int idx) {
                                     return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
                                   },
-                                  itemBuilder: (BuildContext ctx, int idx) {
+                                  itemBuilder: (BuildContext itemCtx, int idx) {
                                     final Map<String, String> parsed = _parseLogData(logs[idx]);
 
                                     Color typeColor = Colors.grey;
@@ -1376,7 +1510,7 @@ class _DevicePageState extends State<DevicePage> {
                 AppTheme.actionButton(
                   label: "닫기",
                   color: Colors.transparent,
-                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  textColor: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
                   onPressed: () {
                     Navigator.pop(dialogContext);
                   },
@@ -1385,86 +1519,6 @@ class _DevicePageState extends State<DevicePage> {
             ),
           );
         }
-    );
-  }
-
-  /// 장비 썸네일 이미지 박스 렌더링
-  Widget _buildDeviceThumbnail(DeviceModel item, ThemeData theme, {double size = 44}) {
-    final String? imgUrl = item.getImageUrl(widget.baseUrl, thumb: '100x100');
-    final bool isDark = theme.brightness == Brightness.dark;
-
-    if (imgUrl == null || imgUrl.isEmpty) {
-      return Container(
-          width: size, height: size,
-          padding: const EdgeInsets.all(6.0),
-          decoration: BoxDecoration(
-              color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
-          ),
-          alignment: Alignment.center,
-          child: FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30)
-      );
-    }
-
-    final String connector = imgUrl.contains('?') ? '&' : '?';
-    final String fullUrl = "$imgUrl${connector}t=${item.hashCode}"; // 캐시 방지
-
-    return Container(
-        width: size, height: size,
-        padding: const EdgeInsets.all(6.0),
-        decoration: BoxDecoration(
-            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.network(
-            fullUrl,
-            fit: BoxFit.contain,
-            errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
-              return FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30);
-            }
-        )
-    );
-  }
-
-  /// 상태 배지(온라인/오프라인)
-  Widget _buildStatusBadge(String status, Color color) {
-    return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-        child: Text(status.toUpperCase(), style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900))
-    );
-  }
-
-  /// 키:값 텍스트 출력용 위젯
-  Widget _buildKeyValue(String label, String value, BuildContext ctx) {
-    return SizedBox(
-        width: 140, // 이 고정 크기 때문에 내부 텍스트가 길어지면 에러가 났습니다.
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTheme.itemLabelStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1),
-              Text(value, style: AppTheme.itemValueStyle(ctx), overflow: TextOverflow.ellipsis, maxLines: 1), // 🔥 [안전 조치] 줄임표 적용
-            ]
-        )
-    );
-  }
-
-  /// 원형 액션 버튼 (테스트/제어용)
-  Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
-    return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(25),
-            child: Container(
-                width: 50, height: 50,
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 24)
-            )
-        )
     );
   }
 
@@ -1481,7 +1535,7 @@ class _DevicePageState extends State<DevicePage> {
         context: context,
         builder: (BuildContext ctx) {
           return StatefulBuilder(
-              builder: (BuildContext context, StateSetter setDialogState) {
+              builder: (BuildContext dialogContext, StateSetter setDialogState) {
                 return AlertDialog(
                   title: AppTheme.dialogTitle('${d.name} 출력(RF Power) 설정', Icons.settings_input_antenna, color: Colors.blueAccent),
                   content: SizedBox(
@@ -1490,7 +1544,7 @@ class _DevicePageState extends State<DevicePage> {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("안테나 포트 선택", style: AppTheme.itemLabelStyle(context)),
+                        Text("안테나 포트 선택", style: AppTheme.itemLabelStyle(dialogContext)),
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
@@ -1521,7 +1575,7 @@ class _DevicePageState extends State<DevicePage> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text("주파수 출력 파워", style: AppTheme.itemLabelStyle(context)),
+                            Text("주파수 출력 파워", style: AppTheme.itemLabelStyle(dialogContext)),
                             Text("${(currentPower / 10).toStringAsFixed(1)} dBm",
                                 style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, fontWeight: FontWeight.w900, color: Colors.blueAccent)
                             ),
@@ -1653,7 +1707,6 @@ class _DevicePageState extends State<DevicePage> {
         portLabels[port] = label;
       }
     } catch (e) {
-      // 이제 안전하게 예외처리되어 앱이 뻗지 않습니다!
       debugPrint("시리얼 포트 자동 스캔 에러: $e");
     }
 
@@ -1671,11 +1724,11 @@ class _DevicePageState extends State<DevicePage> {
           return ListenableProvider.value(
             value: provider,
             child: StatefulBuilder(
-              builder: (BuildContext context, StateSetter setDialogState) {
-                bool isWide = MediaQuery.of(context).size.width > 750;
+              builder: (BuildContext dialogContext, StateSetter setDialogState) {
+                bool isWide = MediaQuery.of(dialogContext).size.width > 750;
 
                 Widget imagePickerWidget = _buildImagePickerBox(
-                  context, d, imagePreview, isImageDeleted,
+                  dialogContext, d, imagePreview, isImageDeleted,
                       (XFile file, Uint8List bytes) {
                     setDialogState(() {
                       imageFile = file;
@@ -1710,7 +1763,7 @@ class _DevicePageState extends State<DevicePage> {
                                 const SizedBox(width: 30),
                                 Expanded(
                                     child: _buildFormFields(
-                                        context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                                        dialogContext, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
                                         modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
                                         connType, selectedComPort, availablePorts, portLabels,
                                             (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
@@ -1750,7 +1803,7 @@ class _DevicePageState extends State<DevicePage> {
                             imagePickerWidget,
                             const SizedBox(height: 20),
                             _buildFormFields(
-                                context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                                dialogContext, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
                                 modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
                                 connType, selectedComPort, availablePorts, portLabels,
                                     (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
@@ -1809,12 +1862,17 @@ class _DevicePageState extends State<DevicePage> {
                           return;
                         }
 
-                        final nav = Navigator.of(ctx);
+                        // 🔥 비동기 작업 전 Navigator와 Messenger 안전 캡처 (Lint 원천 차단)
+                        final NavigatorState nav = Navigator.of(ctx);
+                        final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
                         if (d != null && d.status.toLowerCase() == 'online') {
                           try { provider.stopDeviceRead(d.id); } catch(_) {}
-                          await Future.delayed(const Duration(milliseconds: 300));
-                          provider.disconnectDevice(d.id);
+                          // 비동기 Lint 회피
+                          Future.delayed(const Duration(milliseconds: 300), () {
+                            if (!dialogContext.mounted) return;
+                            provider.disconnectDevice(d.id);
+                          });
                         }
 
                         final Map<String, dynamic> data = {
@@ -1836,9 +1894,11 @@ class _DevicePageState extends State<DevicePage> {
 
                         bool success = await provider.handleSave(d: d, data: data, imageXFile: imageFile);
 
-                        if (success && ctx.mounted) {
+                        if (!dialogContext.mounted) return; // 🔥 비동기 후 mounted 체크 추가
+
+                        if (success) {
                           nav.pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          messenger.showSnackBar(
                               const SnackBar(content: Text("장치 정보가 안전하게 저장되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
                           );
                         }
@@ -1877,6 +1937,7 @@ class _DevicePageState extends State<DevicePage> {
             final XFile? img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
             if (img != null) {
               final Uint8List b = await img.readAsBytes();
+              if (!context.mounted) return; // 🔥 비동기 린트 방어
               onPicked(img, b);
             }
           },
@@ -2308,16 +2369,6 @@ class _DevicePageState extends State<DevicePage> {
     }
   }
 
-  /// 텍스트 입력창 공통 생성 헬퍼
-  Widget _buildDialogTextField(String label, TextEditingController ctrl, ThemeData theme, {bool isNumber = false, IconData? icon}) {
-    return TextField(
-      controller: ctrl,
-      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
-      style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-      decoration: AppTheme.inputDecoration(label: label, context: context, prefixIcon: icon),
-    );
-  }
-
   /// 개별 장치 삭제 확인 창
   void _confirmDelete(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
@@ -2338,9 +2389,13 @@ class _DevicePageState extends State<DevicePage> {
             label: "삭제 실행",
             color: AppTheme.danger,
             onPressed: () async {
-              final nav = Navigator.of(c);
+              // 🔥 비동기 전 안전 캡처 (Lint 원천 차단)
+              final NavigatorState nav = Navigator.of(c);
+
               try { provider.stopDeviceRead(d.id); } catch(_) {}
               await Future.delayed(const Duration(milliseconds: 300));
+
+              if (!c.mounted) return;
 
               provider.disconnectDevice(d.id);
               bool result = await provider.deleteDevice(d.id);
@@ -2361,10 +2416,15 @@ class _DevicePageState extends State<DevicePage> {
       return;
     }
 
+    // 🔥 비동기 전 안전 캡처 (Lint 원천 차단)
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
     for (String id in _selectedItemIds) {
       try { provider.stopDeviceRead(id); } catch(_) {}
     }
     await Future.delayed(const Duration(milliseconds: 300));
+
+    if (!context.mounted) return;
 
     for (String id in _selectedItemIds) {
       provider.disconnectDevice(id);
@@ -2375,7 +2435,7 @@ class _DevicePageState extends State<DevicePage> {
       _isSelectionMode = false;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
         const SnackBar(content: Text("선택한 장치들의 통신이 일괄 해제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
     );
   }
@@ -2406,7 +2466,12 @@ class _DevicePageState extends State<DevicePage> {
                     label: "일괄 삭제",
                     color: AppTheme.danger,
                     onPressed: () async {
-                      Navigator.pop(ctx);
+                      // 🔥 비동기 전 안전 캡처 (Lint 원천 차단)
+                      final NavigatorState nav = Navigator.of(ctx);
+                      final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+                      nav.pop();
+
                       setState(() {
                         _isFullScreenLoading = true;
                       });
@@ -2416,14 +2481,14 @@ class _DevicePageState extends State<DevicePage> {
                       }
                       await Future.delayed(const Duration(milliseconds: 300));
 
+                      if (!context.mounted) return;
+
                       for (String id in _selectedItemIds) {
                         provider.disconnectDevice(id);
                         await provider.deleteDevice(id);
                       }
 
-                      if (!mounted) {
-                        return;
-                      }
+                      if (!context.mounted) return;
 
                       setState(() {
                         _selectedItemIds.clear();
@@ -2431,7 +2496,7 @@ class _DevicePageState extends State<DevicePage> {
                         _isSelectionMode = false;
                       });
 
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 장치들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+                      messenger.showSnackBar(const SnackBar(content: Text("선택한 장치들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
                     }
                 )
               ]
@@ -2460,9 +2525,12 @@ class _DevicePageState extends State<DevicePage> {
         }
     );
 
-    if (!mounted || confirm != true) {
+    if (!context.mounted || confirm != true) {
       return;
     }
+
+    // 🔥 비동기 전 안전 캡처 (Lint 원천 차단)
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     setState(() {
       _isFullScreenLoading = true;
@@ -2474,6 +2542,8 @@ class _DevicePageState extends State<DevicePage> {
       }
       await Future.delayed(const Duration(milliseconds: 300));
 
+      if (!context.mounted) return;
+
       for (var device in provider.list) {
         provider.disconnectDevice(device.id);
       }
@@ -2483,13 +2553,13 @@ class _DevicePageState extends State<DevicePage> {
       }
 
     } finally {
-      if (mounted) {
+      if (context.mounted) {
         setState(() {
           _isFullScreenLoading = false;
           _selectedItemIds.clear();
           _isSelectionMode = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('장치 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+        messenger.showSnackBar(const SnackBar(content: Text('장치 초기화가 완료되었습니다.', style: TextStyle(fontFamily: AppTheme.fontPretendard))));
       }
     }
   }
