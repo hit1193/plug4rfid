@@ -1,30 +1,48 @@
+// ---------------------------------------------------------------------------
+// 파일명: lib/services/scanner/app_serial_port_native.dart
+// 역할: 윈도우/안드로이드에서 실제 COM 포트를 긁어오는 진짜 구현체입니다.
+// ---------------------------------------------------------------------------
 import 'dart:typed_data';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 
-// -----------------------------------------------------------------------------
-// [공통 인터페이스 껍데기 (Stub)]
-// C/C++의 헤더 파일(.h)과 같은 역할을 합니다.
-// 플러터 컴파일러가 타입과 메서드 이름만을 미리 참조할 수 있게 해주는 명세서이며,
-// 실제 동작은 이 파일이 아니라 분기된 하위 파일(desktop 또는 web)에서 수행됩니다.
-// -----------------------------------------------------------------------------
 class AppSerialPort {
-  // PC에 연결된 COM 포트 목록을 가져오는 정적(Static) 메서드
-  static List<String> get availablePorts => throw UnsupportedError('Stub');
+  final SerialPort _port;
 
-  // 포트의 기본 정보 속성들
-  String get name => throw UnsupportedError('Stub');
-  String? get description => throw UnsupportedError('Stub');
-  bool get isBluetooth => throw UnsupportedError('Stub');
-  bool get isOpen => throw UnsupportedError('Stub');
-  int get bytesAvailable => throw UnsupportedError('Stub');
+  AppSerialPort(String name) : _port = SerialPort(name);
 
-  // 생성자
-  AppSerialPort(String name);
+  // 실제 PC에 꽂힌 COM 포트를 긁어옵니다.
+  static List<String> get availablePorts {
+    try {
+      return SerialPort.availablePorts;
+    } catch (e) {
+      return [];
+    }
+  }
 
-  // 하드웨어 포트 제어 메서드들
-  bool openReadWrite() => throw UnsupportedError('Stub');
-  void configure({required int baudRate}) => throw UnsupportedError('Stub');
-  Uint8List read(int bytes) => throw UnsupportedError('Stub');
-  void write(Uint8List data) => throw UnsupportedError('Stub');
-  void close() => throw UnsupportedError('Stub');
-  void dispose() => throw UnsupportedError('Stub');
+  String get name => _port.name ?? "";
+  String? get description => _port.description;
+
+  bool get isBluetooth {
+    try {
+      return _port.transport == SerialPortTransport.bluetooth;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool get isOpen => _port.isOpen;
+  int get bytesAvailable => _port.bytesAvailable;
+
+  bool openReadWrite() => _port.openReadWrite();
+
+  void configure({required int baudRate}) {
+    final config = _port.config;
+    config.baudRate = baudRate;
+    _port.config = config;
+  }
+
+  Uint8List read(int bytes) => _port.read(bytes);
+  void write(Uint8List data) => _port.write(data);
+  void close() => _port.close();
+  void dispose() => _port.dispose();
 }
