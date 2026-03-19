@@ -172,10 +172,14 @@ class _DeviceMapPageState extends State<DeviceMapPage> {
     if (model.contains('SCANNER') || model.contains('RS232')) {
       return FontAwesomeIcons.barcode;
     }
-    if (model == SupportedDeviceModels.ats200) {
+
+    // 🔥 [수정 포인트]
+    // 이전 단계에서 Linter 경고 해결을 위해 변경된 상수명(modelAts200, modelM120)으로
+    // 매칭되도록 완벽하게 수정했습니다. 이제 컴파일 에러가 나지 않습니다!
+    if (model == SupportedDeviceModels.modelAts200) {
       return FontAwesomeIcons.mobileScreen;
     }
-    if (model == SupportedDeviceModels.m120) {
+    if (model == SupportedDeviceModels.modelM120) {
       return FontAwesomeIcons.keyboard;
     }
     // 기본 아이콘 (기타 통신 장비)
