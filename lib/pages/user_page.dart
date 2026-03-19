@@ -816,13 +816,15 @@ class _UserPageState extends State<UserPage> {
                         return;
                       }
 
+                      final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider를 직접 가져와서 주입
                       showDialog(
                           context: context,
                           barrierDismissible: false,
                           builder: (BuildContext ctx) {
                             return _BulkTagIssueDialog(
                               selectedUsers: selectedUsers,
-                              provider: provider,
+                              userProvider: provider,
+                              deviceProvider: deviceProvider, // 전달
                               theme: theme,
                             );
                           }
@@ -1073,13 +1075,15 @@ class _UserPageState extends State<UserPage> {
                     return;
                   }
 
+                  final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider 주입
                   showDialog(
                       context: context,
                       barrierDismissible: false,
                       builder: (BuildContext ctx) {
                         return _BulkTagIssueDialog(
                           selectedUsers: [item],
-                          provider: provider,
+                          userProvider: provider,
+                          deviceProvider: deviceProvider, // 전달
                           theme: theme,
                         );
                       }
@@ -1191,13 +1195,15 @@ class _UserPageState extends State<UserPage> {
                 return;
               }
 
+              final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider 주입
               showDialog(
                   context: context,
                   barrierDismissible: false,
                   builder: (BuildContext ctx) {
                     return _BulkTagIssueDialog(
                       selectedUsers: [item],
-                      provider: provider,
+                      userProvider: provider,
+                      deviceProvider: deviceProvider, // 전달
                       theme: theme,
                     );
                   }
@@ -2255,7 +2261,8 @@ class _UserPageState extends State<UserPage> {
                                                                 builder: (BuildContext ctx) {
                                                                   return _BulkTagIssueDialog(
                                                                     selectedUsers: p != null ? [p] : [],
-                                                                    provider: provider,
+                                                                    userProvider: provider,
+                                                                    deviceProvider: context.read<DeviceProvider>(),
                                                                     theme: theme,
                                                                     onWriteComplete: (String writtenHex) {
                                                                       setS(() {
@@ -2463,17 +2470,19 @@ class _UserPageState extends State<UserPage> {
 }
 
 /// ---------------------------------------------------------------------------
-/// 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// 🔥 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<UserModel> selectedUsers;
-  final UserProvider provider;
+  final UserProvider userProvider;
+  final DeviceProvider deviceProvider;
   final ThemeData theme;
   final Function(String)? onWriteComplete;
 
   const _BulkTagIssueDialog({
     required this.selectedUsers,
-    required this.provider,
+    required this.userProvider,
+    required this.deviceProvider,
     required this.theme,
     this.onWriteComplete,
   });
@@ -2483,8 +2492,7 @@ class _BulkTagIssueDialog extends StatefulWidget {
 }
 
 class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
-  List<String> _readerOptions = [];
-  String? _selectedReader;
+  String? _selectedDeviceId;
   bool _isLoadingReaders = true;
 
   int _issueCount = 1;
@@ -2506,39 +2514,20 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
   Future<void> _fetchRegisteredReaders() async {
     try {
-      final deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
-
-      if (deviceProvider.list.isEmpty) {
-        await deviceProvider.fetchData();
+      if (widget.deviceProvider.list.isEmpty) {
+        await widget.deviceProvider.fetchData();
       } else {
         await Future.delayed(const Duration(milliseconds: 300));
       }
 
       if (mounted) {
         setState(() {
-          final availableDevices = deviceProvider.list.where((DeviceModel d) {
-            return d.isActive == true && d.isAutoConnect == false;
-          }).toList();
-
-          if (availableDevices.isEmpty) {
-            _readerOptions = ['가용한 리더기 없음 (모두 동작 중이거나 미등록)'];
-          } else {
-            _readerOptions = availableDevices.map((DeviceModel d) {
-              return '${d.name} (${d.model} - ${d.ipAddress})';
-            }).toList();
-          }
-
-          if (_readerOptions.isNotEmpty) {
-            _selectedReader = _readerOptions.first;
-          }
           _isLoadingReaders = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _readerOptions = ['오류: 장비 로딩 실패'];
-          _selectedReader = _readerOptions.first;
           _isLoadingReaders = false;
         });
       }
@@ -2566,9 +2555,25 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   }
 
   Future<void> _startBulkIssue() async {
-    if (_selectedReader == null || _selectedReader!.contains('오류') || _selectedReader!.contains('없음')) {
+    DeviceModel? targetDevice;
+    try {
+      targetDevice = widget.deviceProvider.list.firstWhere((d) => d.id == _selectedDeviceId);
+    } catch (e) {
+      targetDevice = null;
+    }
+
+    if (targetDevice == null) {
       setState(() {
-        _progressText = '❌ 가용 리더기가 없습니다. 장치 관리에서 수동 가동 리더기를 등록해주세요.';
+        _progressText = '❌ 선택된 가용 리더기가 없습니다. 장치관리 메뉴에서 리더기를 먼저 등록해주세요.';
+      });
+      return;
+    }
+
+    final DeviceModel device = targetDevice;
+
+    if (device.status.toLowerCase() != 'online') {
+      setState(() {
+        _progressText = '❌ 선택한 리더기(${device.name})가 미연결 상태입니다. 장치관리에서 [장치 연결]을 먼저 진행해주세요.';
       });
       return;
     }
@@ -2590,7 +2595,13 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           });
 
           String hexData = _formatDataToTargetSize(randomTag, memorySize);
-          await Future.delayed(const Duration(milliseconds: 600));
+
+          bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+
+          if (!isSuccess) {
+            throw Exception("리더기(${device.name}) 통신 또는 기록 실패");
+          }
+          await Future.delayed(const Duration(milliseconds: 300));
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
             widget.onWriteComplete!(hexData);
@@ -2611,14 +2622,25 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
             setState(() {
               _progressValue = currentOperationCount / totalOperations;
-              _progressText = "발급대상 $totalUsers건 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 기록하고 있습니다...";
+              _progressText = "발급대상 $totalUsers명 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 발급(기록) 중입니다...";
             });
 
             String hexData = _formatDataToTargetSize(tagData, memorySize);
-            await Future.delayed(const Duration(milliseconds: 600));
+
+            bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+
+            if (!isSuccess) {
+              await Future.delayed(const Duration(milliseconds: 500));
+              isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+
+              if(!isSuccess) {
+                throw Exception("인원 [${user.name}] 태그 기록 실패 (리더기 응답 없음)");
+              }
+            }
+            await Future.delayed(const Duration(milliseconds: 300));
 
             if (j == _issueCount - 1) {
-              await widget.provider.handleSave(p: user, data: {'tag_id': hexData});
+              await widget.userProvider.handleSave(p: user, data: {'tag_id': hexData});
               if (widget.onWriteComplete != null && totalUsers == 1) {
                 widget.onWriteComplete!(hexData);
               }
@@ -2631,7 +2653,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         setState(() {
           _isCompleted = true;
           _progressValue = 1.0;
-          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 성공적으로 완료되었습니다.';
+          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 완벽하게 완료되었습니다.';
         });
 
         await Future.delayed(const Duration(milliseconds: 1500));
@@ -2644,7 +2666,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _progressText = '❌ 기록 중 오류 발생: $e';
+          _progressText = '❌ 기록 중단됨: $e\n(장치를 다시 연결하거나 태그를 다시 올려주세요)';
         });
       }
     }
@@ -2653,144 +2675,184 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: AppTheme.dialogTitle('RFID 태그 일괄 발급 설정', Icons.wifi_tethering, color: Colors.indigo),
+      title: AppTheme.dialogTitle('RFID 태그 일괄 발급', Icons.wifi_tethering, color: Colors.indigo),
       content: SizedBox(
         width: 500,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('1. 발급 대상 리더기 (현재 가용 장비)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                borderRadius: BorderRadius.circular(10),
-                color: widget.theme.cardTheme.color,
-              ),
-              child: _isLoadingReaders
-                  ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12.0),
-                child: Center(
-                    child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
-                    )
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('1. 발급 대상 리더기', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
                 ),
-              )
-                  : DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  isExpanded: true,
-                  value: _selectedReader,
-                  icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
-                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
-                  onChanged: _isProcessing ? null : (String? newValue) {
-                    if (newValue != null) {
-                      setState(() {
-                        _selectedReader = newValue;
-                      });
-                    }
-                  },
-                  items: _readerOptions.map<DropdownMenuItem<String>>((String value) {
-                    return DropdownMenuItem<String>(
-                      value: value,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.router, size: 20, color: Colors.grey),
-                          const SizedBox(width: 12),
-                          Text(value),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                borderRadius: BorderRadius.circular(10),
-                color: widget.theme.cardTheme.color,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
-                    onPressed: _isProcessing ? null : () {
-                      if (_issueCount > 1) {
-                        setState(() { _issueCount--; });
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 20),
-                  Container(
-                    width: 80,
-                    alignment: Alignment.center,
-                    child: Text(
-                        '$_issueCount',
-                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
-                    onPressed: _isProcessing ? null : () {
-                      if (_issueCount < 99) {
-                        setState(() { _issueCount++; });
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            Container(
-              padding: const EdgeInsets.all(16.0),
-              decoration: BoxDecoration(
-                color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
-                borderRadius: BorderRadius.circular(10.0),
-                border: Border.all(color: _isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    _progressText,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontPretendard,
-                      fontSize: 15.0,
-                      height: 1.5,
-                      color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  (_isProcessing || _isCompleted) ? Column(
-                      children: [
-                        const SizedBox(height: 16),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: LinearProgressIndicator(
-                            value: _progressValue,
-                            minHeight: 12,
-                            backgroundColor: Colors.grey.withValues(alpha: 0.2),
-                            color: _isCompleted ? AppTheme.success : Colors.indigo,
+                child: ListenableBuilder(
+                    listenable: widget.deviceProvider,
+                    builder: (context, child) {
+                      if (_isLoadingReaders) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12.0),
+                          child: Center(
+                              child: SizedBox(
+                                  width: 24, height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
+                              )
                           ),
+                        );
+                      }
+
+                      final devices = widget.deviceProvider.list.where((d) => d.isActive).toList();
+
+                      if (devices.isEmpty) {
+                        return DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: null,
+                              hint: const Text('등록된 장비가 없습니다.', style: TextStyle(color: Colors.redAccent, fontFamily: AppTheme.fontPretendard)),
+                              items: const [],
+                              onChanged: null,
+                            )
+                        );
+                      }
+
+                      String? displayId = _selectedDeviceId;
+                      if (displayId == null || !devices.any((d) => d.id == displayId)) {
+                        final onlineDevice = devices.where((d) => d.status.toLowerCase() == 'online').firstOrNull;
+                        displayId = onlineDevice?.id ?? devices.first.id;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted && _selectedDeviceId != displayId) {
+                            setState(() { _selectedDeviceId = displayId; });
+                          }
+                        });
+                      }
+
+                      return DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: displayId,
+                          icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
+                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
+                          onChanged: _isProcessing ? null : (String? newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedDeviceId = newValue;
+                              });
+                            }
+                          },
+                          items: devices.map<DropdownMenuItem<String>>((DeviceModel d) {
+                            bool isOnline = d.status.toLowerCase() == 'online';
+                            return DropdownMenuItem<String>(
+                              value: d.id,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.router, size: 20, color: isOnline ? Colors.indigo : Colors.grey),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                      '${d.name} (${isOnline ? '연결됨' : '미연결'})',
+                                      style: TextStyle(
+                                          color: isOnline ? widget.theme.colorScheme.onSurface : Colors.grey,
+                                          fontFamily: AppTheme.fontPretendard
+                                      )
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
                         ),
-                      ]
-                  ) : const SizedBox.shrink()
-                ],
+                      );
+                    }
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+
+              Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
+                      onPressed: _isProcessing ? null : () {
+                        if (_issueCount > 1) {
+                          setState(() { _issueCount--; });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 20),
+                    Container(
+                      width: 80,
+                      alignment: Alignment.center,
+                      child: Text(
+                          '$_issueCount',
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
+                      onPressed: _isProcessing ? null : () {
+                        if (_issueCount < 99) {
+                          setState(() { _issueCount++; });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              Container(
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
+                  borderRadius: BorderRadius.circular(10.0),
+                  border: Border.all(color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3))),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      _progressText,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        fontSize: 15.0,
+                        height: 1.5,
+                        color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    (_isProcessing || _isCompleted) ? Column(
+                        children: [
+                          const SizedBox(height: 16),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: LinearProgressIndicator(
+                              value: _progressValue,
+                              minHeight: 12,
+                              backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                              color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.indigo),
+                            ),
+                          ),
+                        ]
+                    ) : const SizedBox.shrink()
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -2799,7 +2861,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             color: Colors.transparent,
             textColor: widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
             onPressed: () {
-              if (!_isProcessing || _isCompleted) {
+              if (!_isProcessing || _isCompleted || _progressText.contains('❌')) {
                 Navigator.pop(context);
               }
             }
@@ -2807,7 +2869,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         SizedBox(
           height: 48,
           child: ElevatedButton.icon(
-            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders) ? null : _startBulkIssue,
+            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders || _selectedDeviceId == null) ? null : _startBulkIssue,
             icon: const Icon(Icons.play_circle_fill, size: 20),
             label: const Text('발행 시작', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
             style: ElevatedButton.styleFrom(

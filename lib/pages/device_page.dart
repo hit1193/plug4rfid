@@ -892,19 +892,16 @@ class _DevicePageState extends State<DevicePage> {
                                             onPressed: () async {
                                               if (isOnline) {
                                                 // [OS 예외 방어 코드]
-                                                // 강제로 포트를 닫으면 C/C++ 네이티브 레벨에서 Access Violation이나 핸들 예외가 터지므로,
-                                                // 연결을 끊기 전에 읽기 스레드를 중단하고 OS 락이 풀릴 시간을 확보합니다.
                                                 if (isReading) {
                                                   setDialogState(() { isReading = false; });
                                                   try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
-                                                  await Future.delayed(const Duration(milliseconds: 300)); // OS 포트 락 해제 대기 (Sleep)
+                                                  await Future.delayed(const Duration(milliseconds: 300));
                                                 }
                                                 provider.disconnectDevice(currentDevice.id);
                                               } else {
                                                 provider.connectDevice(currentDevice);
                                               }
 
-                                              // 연결/해제 후 상태 업데이트를 위해 지연 갱신
                                               Future.delayed(const Duration(milliseconds: 1000), () {
                                                 if (ctx.mounted) {
                                                   setDialogState(() {});
@@ -947,12 +944,40 @@ class _DevicePageState extends State<DevicePage> {
                                           child: TextField(
                                             controller: writeCtrl,
                                             enabled: isOnline && !isWriting,
-                                            decoration: AppTheme.inputDecoration(
-                                                label: isHexMode ? "헥사값 입력 (예: 313233...)" : "일반 문자 입력 (예: ITEM01...)",
-                                                context: context,
-                                                prefixIcon: isHexMode ? Icons.code : Icons.text_fields
+                                            // 🔥 연결 전(Disabled)과 후(Enabled) 모두 예쁜 둥근 테두리를 유지하도록 스타일링 적용!
+                                            decoration: InputDecoration(
+                                              labelText: isHexMode ? "헥사값 입력 (예: 313233...)" : "일반 문자 입력 (예: ITEM01...)",
+                                              labelStyle: TextStyle(
+                                                fontFamily: AppTheme.fontPretendard,
+                                                fontWeight: FontWeight.bold,
+                                                color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
+                                              ),
+                                              prefixIcon: Icon(
+                                                isHexMode ? Icons.code : Icons.text_fields,
+                                                color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
+                                              ),
+                                              filled: true,
+                                              fillColor: isOnline
+                                                  ? Colors.deepPurpleAccent.withValues(alpha: 0.05)
+                                                  : Colors.grey.withValues(alpha: 0.05),
+                                              enabledBorder: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(10),
+                                                borderSide: BorderSide(color: Colors.deepPurpleAccent.withValues(alpha: 0.3), width: 1.5),
+                                              ),
+                                              focusedBorder: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(10),
+                                                borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2),
+                                              ),
+                                              disabledBorder: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(10),
+                                                borderSide: BorderSide(color: Colors.grey.withValues(alpha: 0.3), width: 1.5),
+                                              ),
                                             ),
-                                            style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold),
+                                            style: TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontWeight: FontWeight.bold,
+                                              color: isOnline ? AppTheme.dataColor(theme.brightness == Brightness.dark) : Colors.grey,
+                                            ),
                                           )
                                       ),
                                       const SizedBox(width: 12),
@@ -1000,11 +1025,9 @@ class _DevicePageState extends State<DevicePage> {
                                     const Text("🔍 실시간 읽기 로그 (Mini Terminal)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
                                     Row(
                                       children: [
-                                        // [핵심 변경] 단일 스캔 버튼을 '시작/중단' (Start/Stop) 토글 구조로 변경했습니다.
                                         ElevatedButton.icon(
                                           onPressed: !isOnline ? null : () async {
                                             if (isReading) {
-                                              // 스캔 중지
                                               setDialogState(() { isReading = false; });
                                               try {
                                                 provider.stopDeviceRead(currentDevice.id);
@@ -1012,7 +1035,6 @@ class _DevicePageState extends State<DevicePage> {
                                                 debugPrint("읽기 중단 에러: $e");
                                               }
                                             } else {
-                                              // 스캔 시작
                                               setDialogState(() { isReading = true; });
                                               try {
                                                 provider.triggerDeviceRead(currentDevice.id);
@@ -1024,7 +1046,6 @@ class _DevicePageState extends State<DevicePage> {
                                           icon: Icon(isReading ? Icons.stop_circle : Icons.sensors, size: 16),
                                           label: Text(isReading ? "읽기 중단 (Stop)" : "연속 읽기 (Scan)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                                           style: ElevatedButton.styleFrom(
-                                            // 동작 중일 때는 경고색(노란색)으로 바꾸어 사용자에게 중지해야 함을 인지시킵니다.
                                               backgroundColor: isReading ? AppTheme.warning : Colors.teal,
                                               foregroundColor: Colors.white,
                                               elevation: 0
@@ -1124,7 +1145,6 @@ class _DevicePageState extends State<DevicePage> {
                             color: Colors.transparent,
                             textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                             onPressed: () {
-                              // 폼을 닫을 때도 안전을 위해 스캔 중지 명령을 한번 더 날립니다.
                               if (isReading) {
                                 try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
                               }
@@ -2471,4 +2491,4 @@ class _DevicePageState extends State<DevicePage> {
       }
     }
   }
-}
+} // 이게 잘 되는 코드야! 딴짓 하지말고 그 입력필드만 바꿔!
