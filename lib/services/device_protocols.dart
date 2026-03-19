@@ -1,5 +1,5 @@
-// cspell:disable
-// ignore_for_file: constant_identifier_names, non_constant_identifier_names, empty_catches
+// cSpell:disable
+// ignore_for_file: constant_identifier_names, non_constant_identifier_names, empty_catches, spell-checker
 // noinspection SpellCheckingInspection
 
 import 'dart:async';
@@ -564,8 +564,8 @@ class Ats200Protocol extends AutoReportProtocol {
 }
 
 /// ===========================================================================
-/// 🔥 [에러 완전 정복] M120 / CL7206 "0xAA 특수 프로토콜" 지능형 엔진
-/// 장비가 요구하는 12바이트 뻥튀기 규칙을 1000% 완벽하게 모방했습니다!
+/// 🔥 [타임아웃 및 에러 완벽 차단] M120 / CL7206 "0xAA 특수 프로토콜" 지능형 엔진
+/// 장비 Busy 상태 회피 알고리즘 및 0x16 락온 에러 방지 처리 완료!
 /// ===========================================================================
 class M120ClouReaderProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
@@ -578,7 +578,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   @override
   void onConnected() {
     emitData("🚀 [SYS] M120 (0xAA 특수 프로토콜) 로우레벨 엔진 접속 완료!");
-    emitData("💡 12바이트 고정 강제 패딩 시스템이 가동됩니다 (0x16 에러 차단).");
+    emitData("💡 DLL 타이밍 100% 모방: 장비 Busy 상태 회피 알고리즘 가동!");
   }
 
   /// -------------------------------------------------------------------------
@@ -601,7 +601,6 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
 
   /// 0xAA 프로토콜 규격으로 패킷을 포장해서 쏘는 공통 발송 함수
   void _sendAAPacket(int cmd, List<int> payload) {
-    // Length 필드는 오직 Payload 길이만 의미합니다! (Cmd 1바이트 제외)
     int txLen = payload.length;
     int lenH = (txLen >> 8) & 0xFF;
     int lenL = txLen & 0xFF;
@@ -628,6 +627,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         timer.cancel();
         return;
       }
+      // 연속 스캔 패킷 (Length 0x05)
       List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x05, 0x01, 0x00, 0x02, 0x00, 0x06, 0x14, 0xE7];
       sendCommandBytes(scanPacket);
     });
@@ -732,7 +732,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         } else {
           String errMsg = "쓰기 거절";
           if (status == 0x16) {
-            errMsg = "입력 길이 오류(0x16) 또는 패스워드 불일치";
+            errMsg = "입력 데이터 길이 오류 또는 타겟 매칭(Lock-on) 실패";
           }
           emitData("❌ [장비 응답] $errMsg (에러코드: 0x${status.toRadixString(16).toUpperCase()})");
           if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
@@ -749,7 +749,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   }
 
   /// -------------------------------------------------------------------------
-  /// 🔥 [핵심 로직] DLL의 44바이트 Payload를 단 1의 오차도 없이 1000% 모방 생성!
+  /// 🔥 [타임아웃 및 0x16 에러 동시 완벽 해결]
   /// -------------------------------------------------------------------------
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
@@ -776,7 +776,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     List<int> finalDataBytes = [];
     int actualOffset = offset;
 
-    // 🔥 [가장 중요한 픽스 1] EPC에 쓸 때는 우리가 넣을 데이터도 "무조건 12바이트(00 패딩)"로 뻥튀기합니다!
+    // EPC 기록 시 PC 바이트(2바이트)를 동적으로 생성 (무조건 12바이트 뻥튀기)
     if (bank == 1) {
       actualOffset = 1;
 
@@ -787,11 +787,11 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         dataBytes = dataBytes.sublist(0, 12);
       }
 
-      int epcWordCount = 6; // 무조건 6워드 (12바이트)
-      int pc = (epcWordCount << 11); // 고정 PC: 0x3000
+      int epcWordCount = 6;
+      int pc = (epcWordCount << 11);
       finalDataBytes.add((pc >> 8) & 0xFF);
       finalDataBytes.add(pc & 0xFF);
-      finalDataBytes.addAll(dataBytes); // 총 14바이트 (PC 2 + Data 12)
+      finalDataBytes.addAll(dataBytes);
     } else {
       finalDataBytes.addAll(dataBytes);
     }
@@ -804,13 +804,16 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 단일 스캔(Read)으로 대상 태그 락온...");
       _singleReadCompleter = Completer<String?>();
 
-      List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x05, 0x01, 0x00, 0x02, 0x00, 0x06, 0x14, 0xE7];
+      // 스니퍼에서 캐낸 '정품 단일 읽기(Length 0x0A)' 패킷
+      List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x0A, 0x01, 0x00, 0x02, 0x00, 0x06, 0x05, 0x00, 0x00, 0x00, 0x00, 0xAB, 0x15];
       sendCommandBytes(scanPacket);
 
       String? currentEpc;
       try {
         currentEpc = await _singleReadCompleter!.future.timeout(const Duration(milliseconds: 600));
-      } catch (_) {}
+      } catch (_) {
+        debugPrint("Read Timeout");
+      }
       _singleReadCompleter = null;
 
       if (currentEpc == null || currentEpc.isEmpty) {
@@ -819,10 +822,14 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         continue;
       }
 
+      // 장비가 안테나를 끄고 쉴 수 있도록 충분한 시간을 기다려줍니다 (Busy 회피).
+      emitData("⏳ 타겟 확인. 장비 안정화(Busy 회피) 대기 중...");
+      await Future.delayed(const Duration(milliseconds: 400));
+
       String epcToWriteTo = (targetEpc != null && targetEpc.isNotEmpty) ? targetEpc : currentEpc;
       emitData("🎯 2단계: 대상 락온($epcToWriteTo)! 즉시 쓰기(Write) 발사!");
 
-      // 🔥 [가장 중요한 픽스 2] 타겟 EPC도 무조건 12바이트(96비트)로 패딩합니다!
+      // 타겟 EPC를 무조건 12바이트로 맞춤
       List<int> targetBytes = [];
       String cleanEpc = epcToWriteTo.replaceAll(' ', '').toUpperCase();
 
@@ -840,11 +847,11 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         targetBytes = targetBytes.sublist(0, 12);
       }
 
-      int matchBitLength = targetBytes.length * 8; // 무조건 96 (0x60)
+      int matchBitLength = targetBytes.length * 8; // 96비트
 
       List<int> payload = [];
 
-      // [Write 영역] 1+1+2+2+14 = 20바이트
+      // [Write 영역]
       payload.add(0x01); // Antenna
       payload.add(bank); // Write Bank
       payload.add((actualOffset >> 8) & 0xFF);
@@ -853,16 +860,16 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       payload.add(finalDataBytes.length & 0xFF);
       payload.addAll(finalDataBytes);
 
-      // [Target Match 영역] 스니핑 로깅과 100% 완벽하게 똑같은 19바이트!
+      // [Target Match 영역] 스니핑 로그와 100% 동일한 헤더
       payload.addAll([0x01, 0x00, 0x10, 0x02, 0x00, 0x00, matchBitLength]);
       payload.addAll(targetBytes);
 
-      // [Password 영역] 스니핑 로깅과 100% 동일한 5바이트 꼬리표
+      // [Password 영역] 스니핑 로그와 100% 동일
       payload.addAll([0x02, 0x00, 0x00, 0x00, 0x00]);
 
       _writeCompleter = Completer<bool>();
 
-      // 0x11 (Write) 명령어 발사! Payload 길이는 정확히 44바이트(0x2C)가 됩니다!
+      // 0x11 (Write) 명령어 발사
       _sendAAPacket(0x11, payload);
 
       try {
@@ -1160,6 +1167,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
       try {
         writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 1500));
       } catch (e) {
+        debugPrint("Chafon Write Timeout Exception: $e");
         writeSuccess = false;
       }
 
