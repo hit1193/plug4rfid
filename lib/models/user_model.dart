@@ -16,7 +16,8 @@ class UserModel {
   // 2. FA / RFID 업무용 커스텀 필드
   // ---------------------------------------------------------------------------
   final String code;         // 사번 (고유 식별자)
-  final String tagId;        // RFID 태그 UID
+  final String tagId;        // RFID 태그 UID (사번 등 내부 관리용 식별자 보관용)
+  final String tagEpc;       // 🔥 [추가] 실제 RFID 태그에 기록된 16진수(Hex) EPC 데이터 전용 필드
   final String name;         // 성명
   final String? avatar;      // 이미지 파일명 (users 컬렉션은 image 대신 avatar를 사용합니다)
 
@@ -25,7 +26,7 @@ class UserModel {
   final String? companyName; // 거래처명 (Expand를 통해 가져온 값)
 
   final bool isApproved;     // 출입 또는 시스템 사용 승인 여부
-  // 🔥 [수정] 불필요한 grade 필드를 삭제하고, 기본 제공되는 role 필드를 권한(등급)용으로 적극 활용합니다.
+  // 불필요한 grade 필드를 삭제하고, 기본 제공되는 role 필드를 권한(등급)용으로 적극 활용합니다.
   final String role;         // 시스템 권한 및 등급 (예: 최고관리자, 현장관리자, 일반작업자 등)
   final bool isActive;       // 퇴사/정지 여부를 가리는 활성화 상태
   final String remarks;      // 비고란
@@ -46,13 +47,14 @@ class UserModel {
     this.email = '',
     required this.code,
     required this.tagId,
+    required this.tagEpc, // 🔥 [추가] 생성자 파라미터에 추가
     required this.name,
     this.avatar,
     required this.department,
     this.companyId,
     this.companyName,
     this.isApproved = true,
-    this.role = '일반작업자 (Operator)', // 🔥 기본값을 3단계 중 가장 낮은 등급으로 고정합니다.
+    this.role = '일반작업자 (Operator)', // 기본값을 3단계 중 가장 낮은 등급으로 고정합니다.
     this.isActive = true,
     this.remarks = '',
     this.metadata = const {},
@@ -81,13 +83,13 @@ class UserModel {
       email: record.getStringValue('email'),
       code: record.getStringValue('code'),
       tagId: record.getStringValue('tag_id'),
+      tagEpc: record.getStringValue('tag_epc'), // 🔥 [추가] DB 레코드에서 tag_epc 읽기
       name: record.getStringValue('name'),
       avatar: record.getStringValue('avatar'),
       department: record.getStringValue('department', 'Unknown'),
       companyId: record.getStringValue('company_id'),
       companyName: expandedCompany?.getStringValue('name'),
       isApproved: approvedValue,
-      // 🔥 [수정] DB의 기본 필드인 role을 가져옵니다.
       role: record.getStringValue('role', '일반작업자 (Operator)'),
       isActive: record.getBoolValue('is_active', true),
       remarks: record.getStringValue('remarks'),
@@ -113,6 +115,7 @@ class UserModel {
       email: json['email'] as String? ?? '',
       code: json['code'] as String? ?? '',
       tagId: json['tag_id'] as String? ?? '',
+      tagEpc: json['tag_epc'] as String? ?? '', // 🔥 [추가] JSON 파싱 매핑
       name: json['name'] as String? ?? '',
       avatar: json['avatar'] as String?,
       department: json['department'] as String? ?? 'Unknown',
@@ -121,7 +124,6 @@ class UserModel {
 
       // boolean 값 파싱 (기본값 설정)
       isApproved: json['is_approved'] as bool? ?? true,
-      // 🔥 [수정] JSON 파싱 시에도 role 값을 맵핑합니다.
       role: json['role'] as String? ?? '일반작업자 (Operator)',
       isActive: json['is_active'] as bool? ?? true,
       remarks: json['remarks'] as String? ?? '',
@@ -152,13 +154,14 @@ class UserModel {
       'email': email,
       'code': code,
       'tag_id': tagId,
+      'tag_epc': tagEpc, // 🔥 [추가] JSON 변환 시 tag_epc 포함
       'name': name,
       if (avatar != null) 'avatar': avatar, // 아바타가 있을 때만 포함시킵니다.
       'department': department,
       'company_id': companyId,
       if (companyName != null) 'companyName': companyName,
       'is_approved': isApproved,
-      'role': role, // 🔥 role 필드 전송
+      'role': role,
       'is_active': isActive,
       'remarks': remarks,
       'metadata': {
@@ -179,6 +182,7 @@ class UserModel {
     String? email,
     String? code,
     String? tagId,
+    String? tagEpc, // 🔥 [추가] 복사본 생성 시 파라미터 추가
     String? name,
     String? avatar,
     String? department,
@@ -200,13 +204,14 @@ class UserModel {
       email: email ?? this.email,
       code: code ?? this.code,
       tagId: tagId ?? this.tagId,
+      tagEpc: tagEpc ?? this.tagEpc, // 🔥 [추가] 기존 값 또는 새 값 유지
       name: name ?? this.name,
       avatar: avatar ?? this.avatar,
       department: department ?? this.department,
       companyId: companyId ?? this.companyId,
       companyName: companyName ?? this.companyName,
       isApproved: isApproved ?? this.isApproved,
-      role: role ?? this.role, // 🔥 role 속성 유지
+      role: role ?? this.role,
       isActive: isActive ?? this.isActive,
       remarks: remarks ?? this.remarks,
       metadata: metadata ?? this.metadata,

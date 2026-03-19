@@ -442,7 +442,8 @@ class _UserPageState extends State<UserPage> {
           'passwordConfirm': 'password123',
           'name': '[ERP] $parsedName',
           'code': parsedCode,
-          'tag_id': parsedTagId,
+          'tag_id': parsedTagId, // 🔥 원본 데이터 보관
+          // 'tag_epc'를 명시하지 않으면 Provider에서 자동으로 Hex 변환하여 보관합니다.
           'department': parsedDept,
           'role': parsedRole,
           'is_approved': true,
@@ -2353,7 +2354,8 @@ class _UserPageState extends State<UserPage> {
                           'email': inputEmail,
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),
-                          'tag_id': tagC.text.trim(),
+                          'tag_id': tagC.text.trim(), // 🔥 원본 데이터 (사용자가 폼에서 입력한 값 그대로 보관)
+                          // 'tag_epc'는 명시적으로 넘기지 않음으로써 Provider 내부의 _generateEpcHex()를 통해 자동 변환되어 저장되도록 유도합니다.
                           'department': deptC.text.trim(),
                           'role': _getDbRole(currentDisplayRole),
                           'is_approved': approved,
@@ -2494,6 +2496,7 @@ class _BulkTagIssueDialog extends StatefulWidget {
 class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   String? _selectedDeviceId;
   bool _isLoadingReaders = true;
+  bool _isHexMode = false; // 🔥 데이터 변환 모드 상태 (기본은 ASCII 문자열 변환)
 
   int _issueCount = 1;
   bool _isProcessing = false;
@@ -2517,7 +2520,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
       if (widget.deviceProvider.list.isEmpty) {
         await widget.deviceProvider.fetchData();
       } else {
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(const Duration(milliseconds: 100));
       }
 
       if (mounted) {
@@ -2534,17 +2537,26 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     }
   }
 
-  String _formatDataToTargetSize(String inputData, int targetByteSize) {
-    List<int> utf8Bytes = utf8.encode(inputData);
-    StringBuffer hexBuffer = StringBuffer();
+  /// 🔥 모드에 따라 문자열을 헥사(Hex)로 변환하거나, 헥사 값 자체를 패딩합니다.
+  String _formatDataToTargetSize(String inputData, int targetByteSize, bool isHex) {
+    String hexString = "";
 
-    for (int i = 0; i < utf8Bytes.length; i++) {
-      hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+    if (isHex) {
+      // 헥사 모드: 문자열 자체가 이미 16진수 값이므로 불필요한 공백만 지우고 대문자화
+      hexString = inputData.replaceAll(RegExp(r'[^0-9a-fA-F]'), '').toUpperCase();
+    } else {
+      // ASCII 모드: 일반 문자열을 UTF-8 바이트로 변환 후 16진수(Hex) 문자열로 변환
+      List<int> utf8Bytes = utf8.encode(inputData);
+      StringBuffer hexBuffer = StringBuffer();
+      for (int i = 0; i < utf8Bytes.length; i++) {
+        hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+      }
+      hexString = hexBuffer.toString();
     }
 
-    String hexString = hexBuffer.toString();
     int targetHexLength = targetByteSize * 2;
 
+    // 패딩 규칙: 길이가 모자라면 오른쪽을 '0'으로 채우고, 길면 자름
     if (hexString.length < targetHexLength) {
       return hexString.padRight(targetHexLength, '0');
     } else if (hexString.length > targetHexLength) {
@@ -2564,7 +2576,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     if (targetDevice == null) {
       setState(() {
-        _progressText = '❌ 선택된 가용 리더기가 없습니다. 장치관리 메뉴에서 리더기를 먼저 등록해주세요.';
+        _progressText = '❌ 리더기를 선택해주세요.';
       });
       return;
     }
@@ -2573,7 +2585,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     if (device.status.toLowerCase() != 'online') {
       setState(() {
-        _progressText = '❌ 선택한 리더기(${device.name})가 미연결 상태입니다. 장치관리에서 [장치 연결]을 먼저 진행해주세요.';
+        _progressText = '❌ 선택한 리더기(${device.name})가 미연결 상태입니다. 장치관리에서 먼저 연결해주세요.';
       });
       return;
     }
@@ -2585,7 +2597,11 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     try {
       if (widget.selectedUsers.isEmpty) {
-        String randomTag = "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+        // [신규 생성] 헥사 모드일 때는 순수 16진수 문자열로 생성, 아닐 때는 일반 텍스트로 임의 생성
+        String randomTag = _isHexMode
+            ? "EEEE${DateTime.now().millisecondsSinceEpoch % 100000000}"
+            : "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+
         int memorySize = 12;
 
         for (int j = 0; j < _issueCount; j++) {
@@ -2594,7 +2610,8 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             _progressText = "신규 자동 태그의 ${j + 1}장째를 기록하고 있습니다...";
           });
 
-          String hexData = _formatDataToTargetSize(randomTag, memorySize);
+          // 변환 로직 호출
+          String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
 
           bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
 
@@ -2625,7 +2642,8 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
               _progressText = "발급대상 $totalUsers명 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 발급(기록) 중입니다...";
             });
 
-            String hexData = _formatDataToTargetSize(tagData, memorySize);
+            // 변환 로직 호출
+            String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
 
             bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
 
@@ -2640,7 +2658,12 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             await Future.delayed(const Duration(milliseconds: 300));
 
             if (j == _issueCount - 1) {
-              await widget.userProvider.handleSave(p: user, data: {'tag_id': hexData});
+              // 🔥 [수정] tag_id에는 사용자의 원래 입력값(tagData)을 그대로 보존하고, tag_epc에는 실제 기록된 Hex 값(hexData)을 분리 저장합니다.
+              await widget.userProvider.handleSave(p: user, data: {
+                'tag_id': tagData,  // 원본 입력값
+                'tag_epc': hexData  // 기록에 성공한 Hex 데이터
+              });
+
               if (widget.onWriteComplete != null && totalUsers == 1) {
                 widget.onWriteComplete!(hexData);
               }
@@ -2707,14 +2730,15 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                         );
                       }
 
-                      final devices = widget.deviceProvider.list.where((d) => d.isActive).toList();
+                      // 무조건 deviceProvider.list의 모든 장비를 드롭다운에 보여줍니다.
+                      final devices = widget.deviceProvider.list;
 
                       if (devices.isEmpty) {
                         return DropdownButtonHideUnderline(
                             child: DropdownButton<String>(
                               isExpanded: true,
                               value: null,
-                              hint: const Text('등록된 장비가 없습니다.', style: TextStyle(color: Colors.redAccent, fontFamily: AppTheme.fontPretendard)),
+                              hint: const Text('등록된 리더기가 없습니다. 장치관리에서 먼저 등록해주세요.', style: TextStyle(color: Colors.redAccent, fontFamily: AppTheme.fontPretendard)),
                               items: const [],
                               onChanged: null,
                             )
@@ -2748,7 +2772,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                           items: devices.map<DropdownMenuItem<String>>((DeviceModel d) {
                             bool isOnline = d.status.toLowerCase() == 'online';
                             return DropdownMenuItem<String>(
-                              value: d.id,
+                              value: d.id, // 객체 대신 String 형태의 고유 ID를 사용
                               child: Row(
                                 children: [
                                   Icon(Icons.router, size: 20, color: isOnline ? Colors.indigo : Colors.grey),
@@ -2771,7 +2795,46 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
               ),
               const SizedBox(height: 24),
 
-              Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              // 데이터 기록 변환 방식 선택 스위치
+              Text('2. 데이터 기록 모드 (변환 방식)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                          _isHexMode ? "입력값을 그대로 헥사(Hex)로 기록" : "문자열(ASCII)을 헥사로 자동 변환하여 기록",
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 13)
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ToggleButtons(
+                      constraints: const BoxConstraints(minHeight: 32, minWidth: 90),
+                      borderRadius: BorderRadius.circular(8),
+                      isSelected: [!_isHexMode, _isHexMode],
+                      onPressed: _isProcessing ? null : (int index) {
+                        setState(() {
+                          _isHexMode = index == 1;
+                        });
+                      },
+                      children: const [
+                        Text("일반(ASCII)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        Text("헥사값(HEX)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              Text('3. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

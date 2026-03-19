@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'dart:convert'; // 🔥 [에러 해결] utf8 인코딩/디코딩을 위한 다트 내장 라이브러리 추가!
 import 'package:file_picker/file_picker.dart';
 import 'package:excel/excel.dart';
 import 'package:pocketbase/pocketbase.dart';
@@ -204,7 +205,21 @@ class UserProvider extends ChangeNotifier {
         data['passwordConfirm'] = data['password'].toString().trim();
       }
 
-      // 🔥 [보안 규칙 충족] 포켓베이스 서버가 "인증 안 된 계정"이라며 로그인 막는 것을 방지
+      // 🔥 -----------------------------------------------------------------------
+      // [데이터 가공 공통 규칙 3] 태그 ID와 태그 EPC 분리 및 자동 변환 로직
+      // tag_id: 사용자가 입력한 문자열 원본(사번, 바코드 등)을 그대로 보관합니다.
+      // tag_epc: 실제 RFID 장비에 기록되는 24자리(12 Bytes) Hex 값으로 변환하여 보관합니다.
+      // -----------------------------------------------------------------------
+      if (data.containsKey('tag_id') && data['tag_id'].toString().isNotEmpty) {
+        String rawTagId = data['tag_id'].toString().trim();
+
+        // tag_epc가 명시적으로 들어오지 않았거나 비어있을 때 자동 변환 (ASCII -> HEX)
+        if (!data.containsKey('tag_epc') || data['tag_epc'].toString().isEmpty) {
+          data['tag_epc'] = _generateEpcHex(rawTagId);
+        }
+      }
+
+      // [보안 규칙 충족] 포켓베이스 서버가 "인증 안 된 계정"이라며 로그인 막는 것을 방지
       data['verified'] = true;
       data['emailVisibility'] = true;
 
@@ -245,7 +260,7 @@ class UserProvider extends ChangeNotifier {
       return ""; // 성공 시 빈 문자열 반환
 
     } catch (e) {
-      // 🚨 [핵심 디버깅] 포켓베이스가 저장을 거부한 "진짜 이유"를 파싱하여 UI로 전달합니다.
+      // [핵심 디버깅] 포켓베이스가 저장을 거부한 "진짜 이유"를 파싱하여 UI로 전달합니다.
       if (e is ClientException) {
         debugPrint("\n===================================================");
         debugPrint("❌ PocketBase DB 저장 거부 (ClientException) ❌");
@@ -278,6 +293,31 @@ class UserProvider extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 문자열(ASCII)을 태그 메모리 규격(24자리 HEX)에 맞게 자동 변환 및 패딩하는 내부 헬퍼 함수
+  String _generateEpcHex(String input) {
+    if (input.isEmpty) return "";
+
+    // 1. 이미 24자리(12 Bytes) 16진수로 꽉 채워져 있다면, 이미 정상적인 EPC Hex 포맷으로 간주합니다.
+    if (input.length == 24 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(input)) {
+      return input.toUpperCase();
+    }
+
+    // 2. 그 외의 경우(일반 사번, 이름, 짧은 영숫자 등) ASCII 문자열로 간주하고 Hex로 인코딩 후 24자리로 패딩합니다.
+    List<int> utf8Bytes = utf8.encode(input);
+    StringBuffer hexBuffer = StringBuffer();
+    for (int i = 0; i < utf8Bytes.length; i++) {
+      hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+    }
+
+    String hexStr = hexBuffer.toString();
+    if (hexStr.length < 24) {
+      return hexStr.padRight(24, '0'); // 남는 공간은 0으로 채움
+    } else if (hexStr.length > 24) {
+      return hexStr.substring(0, 24);  // 넘치면 잘라냄
+    }
+    return hexStr;
   }
 
   /// ---------------------------------------------------------------------------
@@ -337,7 +377,7 @@ class UserProvider extends ChangeNotifier {
             safeUsername = '${safeUsername}_${DateTime.now().millisecondsSinceEpoch % 1000}';
           }
 
-          // 🔥 [방어 로직] 엑셀의 자유형식 등급 문자열을 정해진 영문 키값으로 강제 치환합니다.
+          // [방어 로직] 엑셀의 자유형식 등급 문자열을 정해진 영문 키값으로 강제 치환합니다.
           String rawRole = _getExcelValue(row, ['등급', '직급', '권한', 'Role', 'Level']);
           String dbReadyRole = 'Operator'; // 최하위 기본값
 
@@ -346,6 +386,10 @@ class UserProvider extends ChangeNotifier {
           } else if (rawRole.toLowerCase().contains('manager') || rawRole.contains('현장')) {
             dbReadyRole = 'Manager';
           }
+
+          // 🔥 태그 식별자 추출 후 원본은 tag_id에, Hex 변환본은 tag_epc에 나누어 밀어넣기
+          String parsedTag = _getExcelValue(row, ['태그', 'EPC', 'RFID', 'tag_id']);
+          String tagEpcHex = parsedTag.isNotEmpty ? _generateEpcHex(parsedTag) : "";
 
           final body = {
             'username': safeUsername,
@@ -357,9 +401,10 @@ class UserProvider extends ChangeNotifier {
             'name': name,
             'code': code,
             'department': _getExcelValue(row, ['담당부서', '부서', '소속', 'Dept']),
-            'tag_id': _getExcelValue(row, ['태그', 'EPC', 'RFID', 'tag_id']),
+            'tag_id': parsedTag,         // 🔥 사용자가 입력/업로드한 원본 문자열 그대로 보관
+            'tag_epc': tagEpcHex,        // 🔥 실제 RFID에 쏘기 위해 16진수로 변환/패딩된 값 보관
             'is_active': true,
-            'role': dbReadyRole, // 🔥 변환 완료된 영문 롤 삽입
+            'role': dbReadyRole,
             'metadata': {
               'import_source': 'excel',
               'original_row_data': row
