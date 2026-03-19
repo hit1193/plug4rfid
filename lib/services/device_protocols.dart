@@ -10,36 +10,38 @@ import 'scanner/app_serial_port.dart';
 
 /// ---------------------------------------------------------------------------
 /// [상수 정의] 지원하는 구체적 장치 모델 리스트
+/// PocketBase의 'model' 필드 Select 옵션과 1:1 매칭됩니다.
+/// Dart Linter 경고를 피하기 위해 원래의 lowerCamelCase 변수명으로 원복했습니다.
 /// ---------------------------------------------------------------------------
 class SupportedDeviceModels {
-  static const String modelIdro900f      = 'IDRO900F';
-  static const String modelCf815         = 'CF815';
-  static const String modelCfRu5102      = 'CF_RU5102';
-  static const String modelCf601         = 'CF601';
-  static const String modelAts200        = 'ATS200';
-  static const String modelM120          = 'M120';
-  static const String modelHopeland      = 'HOPELAND';
-  static const String modelChafon        = 'CHAFON';
-  static const String modelZebra         = 'ZEBRA';
-  static const String modelBt200         = 'BT200';
-  static const String modelSato          = 'SATO';
-  static const String modelGenericTcp    = 'GENERIC_TCP';
-  static const String modelGenericRs232c = 'GENERIC_RS232C';
+  static const String idro900f      = 'IDRO900F';
+  static const String cf815         = 'CF815';
+  static const String cfRU5102      = 'CF_RU5102';
+  static const String cf601         = 'CF601';
+  static const String ats200        = 'ATS200';
+  static const String m120          = 'M120';
+  static const String hopeland      = 'HOPELAND';
+  static const String chafon        = 'CHAFON';
+  static const String zebra         = 'ZEBRA';
+  static const String bt200         = 'BT200';
+  static const String sato          = 'SATO';
+  static const String genericTcp    = 'GENERIC_TCP';
+  static const String genericRs232c = 'GENERIC_RS232C';
 
   static const Map<String, String> labels = {
-    modelIdro900f: '고정식 리더기 (IDRO900F)',
-    modelCf815: '고정식 리더기 (CHAFON CF815)',
-    modelCfRu5102: '데스크형 리더기 (CHAFON CF_RU5102)',
-    modelCf601: '데스크형 리더기 (CHAFON CF601)',
-    modelAts200: '휴대형 리더기 (ATS200/100)',
-    modelHopeland: '고정식 리더기 (Hopeland CL7206 계열)',
-    modelM120: '데스크형 리더기 (Hopeland M120 / ClouReader)',
-    modelChafon: '고정식/탁상형 범용 (Chafon)',
-    modelZebra: '프린터 (Zebra)',
-    modelBt200: '프린터 (BT200)',
-    modelSato: '프린터 (Sato)',
-    modelGenericTcp: '범용 TCP 장치',
-    modelGenericRs232c: '범용 RS232C 장치 (시리얼)',
+    idro900f: '고정식 리더기 (IDRO900F)',
+    cf815: '고정식 리더기 (CHAFON CF815)',
+    cfRU5102: '데스크형 리더기 (CHAFON CF_RU5102)',
+    cf601: '데스크형 리더기 (CHAFON CF601)',
+    ats200: '휴대형 리더기 (ATS200/100)',
+    hopeland: '고정식 리더기 (Hopeland 범용)',
+    m120: '데스크형 리더기 (Hopeland M120 / ClouReader)',
+    chafon: '고정식/탁상형 범용 (Chafon)',
+    zebra: '프린터 (Zebra)',
+    bt200: '프린터 (BT200)',
+    sato: '프린터 (Sato)',
+    genericTcp: '범용 TCP 장치',
+    genericRs232c: '범용 RS232C 장치 (시리얼)',
   };
 
   static List<String> get list {
@@ -49,6 +51,8 @@ class SupportedDeviceModels {
 
 /// ---------------------------------------------------------------------------
 /// [최상위 하이브리드 통신 엔진] BaseDeviceProtocol
+/// 모든 리더기 통신(TCP Socket 및 RS-232C Serial)의 공통 뼈대가 되는 추상 클래스입니다.
+/// C++Builder의 TDataModule 역할을 수행하며 OS 핸들을 안전하게 관리합니다.
 /// ---------------------------------------------------------------------------
 abstract class BaseDeviceProtocol {
   final String ipAddress;
@@ -77,6 +81,7 @@ abstract class BaseDeviceProtocol {
 
   BaseDeviceProtocol({required this.ipAddress, required this.port});
 
+  /// 하드웨어와 연결을 시도하는 메인 진입점입니다.
   Future<bool> connect() async {
     _isDisconnecting = false;
 
@@ -145,11 +150,11 @@ abstract class BaseDeviceProtocol {
 
       try {
         _serialPort!.configure(baudRate: actualBaudRate);
-        emitData("🛠️ [DEBUG] 포트 열기 및 설정(BaudRate) 완료.");
       } catch (configErr) {
         emitData("⚠️ [SYS] 포트 설정(DCB) 예외 무시: $configErr");
       }
 
+      // 장비 전원/칩셋 부팅 대기 시간 (하드웨어 안정화)
       await Future.delayed(const Duration(milliseconds: 500));
 
       _startRxThread();
@@ -162,35 +167,28 @@ abstract class BaseDeviceProtocol {
     }
   }
 
+  /// C++의 TThread Execute() 함수 역할을 수행하는 폴링 루프입니다.
   Future<void> _startRxThread() async {
     _rxThreadRunning = true;
     _terminateRxThread = false;
-
     debugPrint("[DEBUG] 시리얼 RX 폴링 스레드 가동 시작");
-
-    int emptyLoopCount = 0;
 
     while (!_terminateRxThread) {
       if (_serialPort != null && _serialPort!.isOpen) {
         try {
-          Uint8List data = _serialPort!.read(1024);
+          int available = _serialPort!.bytesAvailable;
 
-          if (data.isNotEmpty) {
-            emptyLoopCount = 0;
-            _internalOnDataReceived(data);
-          } else {
-            emptyLoopCount++;
-            if (emptyLoopCount % 100 == 0) {
-              // 응답 없음 로그 생략
+          if (available > 0) {
+            Uint8List data = _serialPort!.read(available);
+            if (data.isNotEmpty) {
+              _internalOnDataReceived(data);
             }
           }
         } catch (e) {
           debugPrint("[DEBUG] RX 스레드 읽기 중 예외: $e");
-          emitData("🚨 [DEBUG-에러] RX 스레드 읽기 실패: $e");
           break;
         }
       } else {
-        emitData("🚨 [DEBUG-에러] 포트가 닫혀있어 RX 스레드를 탈출합니다.");
         break;
       }
 
@@ -201,16 +199,13 @@ abstract class BaseDeviceProtocol {
     debugPrint("[DEBUG] 시리얼 RX 폴링 스레드 완전히 종료됨");
   }
 
+  /// 사용하던 메모리와 포트를 완벽하게 반환합니다. (메모리 릭 방지)
   Future<void> disconnect() async {
-    if (_isDisconnecting) {
-      return;
-    }
+    if (_isDisconnecting) return;
 
     try {
       await onDisconnecting();
-    } catch (e) {
-      debugPrint("onDisconnecting Exception: $e");
-    }
+    } catch (e) {}
 
     _isDisconnecting = true;
 
@@ -219,9 +214,7 @@ abstract class BaseDeviceProtocol {
       _socketSubscription = null;
       _socket?.destroy();
       _socket = null;
-    } catch (e) {
-      debugPrint("Socket Dispose Exception: $e");
-    }
+    } catch (e) {}
 
     try {
       _terminateRxThread = true;
@@ -229,30 +222,21 @@ abstract class BaseDeviceProtocol {
       while (_rxThreadRunning) {
         await Future.delayed(const Duration(milliseconds: 10));
         waitCount++;
-        if (waitCount > 100) {
-          break;
-        }
+        if (waitCount > 100) break;
       }
 
       if (_serialPort != null) {
         try {
-          if (_serialPort!.isOpen) {
-            _serialPort!.close();
-          }
-        } catch (e) {
-          debugPrint("Serial Close Exception: $e");
-        }
+          if (_serialPort!.isOpen) _serialPort!.close();
+        } catch (e) {}
       }
+
       _buffer = "";
-    } catch (e) {
-      debugPrint("Thread Wait Exception: $e");
-    }
+    } catch (e) {}
   }
 
   void sendCommandString(String command) {
-    if (command.isEmpty || _isDisconnecting) {
-      return;
-    }
+    if (command.isEmpty || _isDisconnecting) return;
 
     if (_socket != null) {
       _socket!.write(command);
@@ -267,9 +251,7 @@ abstract class BaseDeviceProtocol {
   }
 
   void sendCommandBytes(List<int> bytes) {
-    if (bytes.isEmpty || _isDisconnecting) {
-      return;
-    }
+    if (bytes.isEmpty || _isDisconnecting) return;
 
     String hexLog = bytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
     emitData("➡️ [TX 전송] $hexLog");
@@ -295,12 +277,8 @@ abstract class BaseDeviceProtocol {
   Future<void> dispose() async {
     await disconnect();
     try {
-      if (!_tagStreamController.isClosed) {
-        await _tagStreamController.close();
-      }
-    } catch (e) {
-      debugPrint("StreamController Close Exception: $e");
-    }
+      if (!_tagStreamController.isClosed) await _tagStreamController.close();
+    } catch (e) {}
   }
 
   void _internalOnDataReceived(Uint8List data) {
@@ -564,8 +542,8 @@ class Ats200Protocol extends AutoReportProtocol {
 }
 
 /// ===========================================================================
-/// 🔥 [타임아웃 및 에러 완벽 차단] M120 / CL7206 "0xAA 특수 프로토콜" 지능형 엔진
-/// 장비 Busy 상태 회피 알고리즘 및 0x16 락온 에러 방지 처리 완료!
+/// 🔥 [에러 완전 정복] M120 / CL7206 "0xAA 특수 프로토콜" 지능형 엔진
+/// Timeout을 막기 위한 5초 대기 락온 및 DLL 100% 모방 조립기 적용
 /// ===========================================================================
 class M120ClouReaderProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
@@ -578,7 +556,6 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   @override
   void onConnected() {
     emitData("🚀 [SYS] M120 (0xAA 특수 프로토콜) 로우레벨 엔진 접속 완료!");
-    emitData("💡 DLL 타이밍 100% 모방: 장비 Busy 상태 회피 알고리즘 가동!");
   }
 
   /// -------------------------------------------------------------------------
@@ -586,7 +563,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   /// -------------------------------------------------------------------------
   int _calculatePR9200CRC(List<int> data) {
     int crc = 0xFFFF;
-    for (int i = 1; i < data.length; i++) { // 맨 앞 0xAA 제외!
+    for (int i = 1; i < data.length; i++) { // 첫번째 0xAA는 계산에서 반드시 제외!
       crc ^= (data[i] << 8);
       for (int j = 0; j < 8; j++) {
         if ((crc & 0x8000) != 0) {
@@ -599,7 +576,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     return crc & 0xFFFF;
   }
 
-  /// 0xAA 프로토콜 규격으로 패킷을 포장해서 쏘는 공통 발송 함수
+  /// 0xAA 프로토콜 패킷 발송기 (명령어 길이 1바이트를 Length 필드에서 제외합니다)
   void _sendAAPacket(int cmd, List<int> payload) {
     int txLen = payload.length;
     int lenH = (txLen >> 8) & 0xFF;
@@ -618,16 +595,13 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   @override
   Future<void> startInventory() async {
     emitData("▶️ [명령] 0xAA 규격 다중 스캔(Inventory) 가동!");
-    if (_pollingTimer != null && _pollingTimer!.isActive) {
-      return;
-    }
+    if (_pollingTimer != null && _pollingTimer!.isActive) return;
 
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
       if (!isConnected || _isDisconnecting) {
         timer.cancel();
         return;
       }
-      // 연속 스캔 패킷 (Length 0x05)
       List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x05, 0x01, 0x00, 0x02, 0x00, 0x06, 0x14, 0xE7];
       sendCommandBytes(scanPacket);
     });
@@ -664,9 +638,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         _byteBuffer.removeRange(0, startIdx);
       }
 
-      if (_byteBuffer.length < 7) {
-        break;
-      }
+      if (_byteBuffer.length < 7) break;
 
       int payloadLen = (_byteBuffer[3] << 8) | _byteBuffer[4];
       if (payloadLen > 1024) {
@@ -675,9 +647,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       }
 
       int totalPacketSize = payloadLen + 7;
-      if (_byteBuffer.length < totalPacketSize) {
-        break;
-      }
+      if (_byteBuffer.length < totalPacketSize) break;
 
       List<int> packet = _byteBuffer.sublist(0, totalPacketSize);
       _byteBuffer.removeRange(0, totalPacketSize);
@@ -688,9 +658,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       _parseAAPayload(cmd, payload);
     }
 
-    if (_byteBuffer.length > 8192) {
-      _byteBuffer.clear();
-    }
+    if (_byteBuffer.length > 8192) _byteBuffer.clear();
   }
 
   void _parseAAPayload(int cmd, List<int> payload) {
@@ -705,7 +673,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
           List<int> epcData = payload.sublist(ptr + 2, ptr + 2 + epcLen);
 
           if (epcData.length >= 2) {
-            List<int> pureEpcBytes = epcData.sublist(2); // PC(2바이트) 도려내기
+            List<int> pureEpcBytes = epcData.sublist(2); // 맨앞 2바이트(PC) 도려내기
             String epc = pureEpcBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
 
             if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) {
@@ -731,9 +699,8 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
           }
         } else {
           String errMsg = "쓰기 거절";
-          if (status == 0x16) {
-            errMsg = "입력 데이터 길이 오류 또는 타겟 매칭(Lock-on) 실패";
-          }
+          if (status == 0x16) errMsg = "입력 길이 오류(0x16) 또는 패스워드 불일치";
+
           emitData("❌ [장비 응답] $errMsg (에러코드: 0x${status.toRadixString(16).toUpperCase()})");
           if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
             _writeCompleter!.complete(false);
@@ -744,12 +711,10 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   }
 
   @override
-  String parseTagId(String rawData) {
-    return "";
-  }
+  String parseTagId(String rawData) => "";
 
   /// -------------------------------------------------------------------------
-  /// 🔥 [타임아웃 및 0x16 에러 동시 완벽 해결]
+  /// 🔥 [쓰기 코어] 완벽한 조립 및 타임아웃 5초 대기 부여
   /// -------------------------------------------------------------------------
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
@@ -759,7 +724,8 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     }
 
     await stopInventory();
-    await Future.delayed(const Duration(milliseconds: 100));
+    // 🔥 [타임아웃 해결] 장비가 완전히 쉴 수 있도록 0.5초간 통신을 중지합니다.
+    await Future.delayed(const Duration(milliseconds: 500));
     _byteBuffer.clear();
 
     String paddedData = dataHex.toUpperCase().trim();
@@ -776,7 +742,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     List<int> finalDataBytes = [];
     int actualOffset = offset;
 
-    // EPC 기록 시 PC 바이트(2바이트)를 동적으로 생성 (무조건 12바이트 뻥튀기)
+    // 🔥 [핵심 1] 입력 데이터가 뭐든 무조건 12바이트로 패딩을 꽉 채웁니다!
     if (bank == 1) {
       actualOffset = 1;
 
@@ -791,7 +757,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       int pc = (epcWordCount << 11);
       finalDataBytes.add((pc >> 8) & 0xFF);
       finalDataBytes.add(pc & 0xFF);
-      finalDataBytes.addAll(dataBytes);
+      finalDataBytes.addAll(dataBytes); // 14바이트 고정!
     } else {
       finalDataBytes.addAll(dataBytes);
     }
@@ -801,19 +767,16 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     bool writeSuccess = false;
 
     for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 단일 스캔(Read)으로 대상 태그 락온...");
+      emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 단일 스캔(Read)으로 대상 태그 탐색...");
       _singleReadCompleter = Completer<String?>();
 
-      // 스니퍼에서 캐낸 '정품 단일 읽기(Length 0x0A)' 패킷
-      List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x0A, 0x01, 0x00, 0x02, 0x00, 0x06, 0x05, 0x00, 0x00, 0x00, 0x00, 0xAB, 0x15];
+      List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x05, 0x01, 0x00, 0x02, 0x00, 0x06, 0x14, 0xE7];
       sendCommandBytes(scanPacket);
 
       String? currentEpc;
       try {
         currentEpc = await _singleReadCompleter!.future.timeout(const Duration(milliseconds: 600));
-      } catch (_) {
-        debugPrint("Read Timeout");
-      }
+      } catch (_) {}
       _singleReadCompleter = null;
 
       if (currentEpc == null || currentEpc.isEmpty) {
@@ -822,20 +785,14 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         continue;
       }
 
-      // 장비가 안테나를 끄고 쉴 수 있도록 충분한 시간을 기다려줍니다 (Busy 회피).
-      emitData("⏳ 타겟 확인. 장비 안정화(Busy 회피) 대기 중...");
-      await Future.delayed(const Duration(milliseconds: 400));
-
       String epcToWriteTo = (targetEpc != null && targetEpc.isNotEmpty) ? targetEpc : currentEpc;
       emitData("🎯 2단계: 대상 락온($epcToWriteTo)! 즉시 쓰기(Write) 발사!");
 
-      // 타겟 EPC를 무조건 12바이트로 맞춤
+      // 🔥 [핵심 2] 타겟 EPC 역시 무조건 12바이트(96비트)로 패딩을 꽉 채웁니다!
       List<int> targetBytes = [];
       String cleanEpc = epcToWriteTo.replaceAll(' ', '').toUpperCase();
 
-      if (cleanEpc.length % 2 != 0) {
-        cleanEpc += '0';
-      }
+      if (cleanEpc.length % 2 != 0) cleanEpc += '0';
       for (int i = 0; i < cleanEpc.length; i += 2) {
         targetBytes.add(int.parse(cleanEpc.substring(i, i + 2), radix: 16));
       }
@@ -847,11 +804,12 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         targetBytes = targetBytes.sublist(0, 12);
       }
 
-      int matchBitLength = targetBytes.length * 8; // 96비트
+      int matchBitLength = targetBytes.length * 8; // 무조건 96(0x60) 비트
 
+      // 완벽한 44바이트 Payload 배열을 조립합니다!
       List<int> payload = [];
 
-      // [Write 영역]
+      // [Write 영역] (20 바이트)
       payload.add(0x01); // Antenna
       payload.add(bank); // Write Bank
       payload.add((actualOffset >> 8) & 0xFF);
@@ -860,20 +818,21 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       payload.add(finalDataBytes.length & 0xFF);
       payload.addAll(finalDataBytes);
 
-      // [Target Match 영역] 스니핑 로그와 100% 동일한 헤더
+      // [Target Match 영역] (19 바이트)
       payload.addAll([0x01, 0x00, 0x10, 0x02, 0x00, 0x00, matchBitLength]);
       payload.addAll(targetBytes);
 
-      // [Password 영역] 스니핑 로그와 100% 동일
+      // [Password 영역] (5 바이트) 스니핑 로그와 동일하게 고정!
       payload.addAll([0x02, 0x00, 0x00, 0x00, 0x00]);
 
       _writeCompleter = Completer<bool>();
 
-      // 0x11 (Write) 명령어 발사
+      // 0x11 (Write) 명령어 발사! 배열 길이는 정확히 44(0x2C)가 됩니다.
       _sendAAPacket(0x11, payload);
 
       try {
-        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 2000));
+        // 🔥 [타임아웃 해결의 핵심] 하드웨어의 처리 시간을 넉넉하게 5초(5000ms)까지 허용합니다!
+        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 5000));
       } catch (e) {
         debugPrint("Write Timeout Exception: $e");
         writeSuccess = false;
@@ -938,9 +897,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
   @override
   Future<void> startInventory() async {
     emitData("▶️ [명령] Chafon 전용 단일 스캔(0x01) 폴링 가동!");
-    if (_pollingTimer != null && _pollingTimer!.isActive) {
-      return;
-    }
+    if (_pollingTimer != null && _pollingTimer!.isActive) return;
 
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
       if (!isConnected || _isDisconnecting) {
@@ -977,10 +934,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
       if (header >= 0x03 && header <= 0x80) {
         int totalPacketSize = header + 1;
-
-        if (_byteBuffer.length < totalPacketSize) {
-          break;
-        }
+        if (_byteBuffer.length < totalPacketSize) break;
 
         List<int> packet = _byteBuffer.sublist(0, totalPacketSize);
         _byteBuffer.removeRange(0, totalPacketSize);
@@ -995,9 +949,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
       }
     }
 
-    if (_byteBuffer.length > 8192) {
-      _byteBuffer.clear();
-    }
+    if (_byteBuffer.length > 8192) _byteBuffer.clear();
   }
 
   void _parsePayload(int cmd, List<int> payload) {
@@ -1006,31 +958,23 @@ class ChafonProtocol extends BaseDeviceProtocol {
         int status = payload[0];
         if (status == 0x00 || status == 0x01) {
           emitData("✅ [장비 응답] 쓰기 성공!");
-          if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
-            _writeCompleter!.complete(true);
-          }
+          if (_writeCompleter != null && !_writeCompleter!.isCompleted) _writeCompleter!.complete(true);
         } else {
           emitData("❌ [장비 응답] 쓰기 실패 (에러: 0x${status.toRadixString(16).toUpperCase()})");
-          if (_writeCompleter != null && !_writeCompleter!.isCompleted) {
-            _writeCompleter!.complete(false);
-          }
+          if (_writeCompleter != null && !_writeCompleter!.isCompleted) _writeCompleter!.complete(false);
         }
       }
       return;
     }
 
-    if (payload.isNotEmpty && payload.length == 1 && (payload[0] == 0xFF || payload[0] == 0x15)) {
-      return;
-    }
+    if (payload.isNotEmpty && payload.length == 1 && (payload[0] == 0xFF || payload[0] == 0x15)) return;
 
     if (cmd == 0x27 && payload.length >= 4) {
       int ant = (payload[0] & 0x03) + 1;
       List<int> epcBytes = payload.sublist(3, payload.length - 1);
       String rawHexEpc = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
 
-      if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) {
-        _singleReadCompleter!.complete(rawHexEpc);
-      }
+      if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) _singleReadCompleter!.complete(rawHexEpc);
 
       int rssiByte = payload.last;
       String rssiStr = "-$rssiByte dBm";
@@ -1045,19 +989,13 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
         int testOffset = 1;
         for (int j = 0; j < tagCount; j++) {
-          if (testOffset + 1 >= payload.length) {
-            break;
-          }
+          if (testOffset + 1 >= payload.length) break;
           testOffset += 2 + payload[testOffset + 1];
         }
-        if (testOffset == payload.length) {
-          isRU5102 = true;
-        }
+        if (testOffset == payload.length) isRU5102 = true;
 
         for (int i = 0; i < tagCount; i++) {
-          if (offset >= payload.length) {
-            break;
-          }
+          if (offset >= payload.length) break;
 
           int ant = 1;
           int epcLen = 0;
@@ -1075,9 +1013,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
             List<int> epcBytes = payload.sublist(offset, offset + epcLen);
             String rawHexEpc = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
 
-            if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) {
-              _singleReadCompleter!.complete(rawHexEpc);
-            }
+            if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) _singleReadCompleter!.complete(rawHexEpc);
 
             emitData('JSON:{"epc":"$rawHexEpc", "ant":$ant, "rssi":"-", "tid":"-"}');
             emitData('🎯 [태그 인식] EPC: $rawHexEpc | Ant: $ant | RSSI: - | TID: -');
@@ -1091,9 +1027,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
   }
 
   @override
-  String parseTagId(String rawData) {
-    return "";
-  }
+  String parseTagId(String rawData) => "";
 
   @override
   Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
@@ -1132,7 +1066,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
       try {
         currentEpc = await _singleReadCompleter!.future.timeout(const Duration(milliseconds: 800));
       } catch (e) {
-        debugPrint("Chafon Read Timeout");
         currentEpc = null;
       }
       _singleReadCompleter = null;
@@ -1167,7 +1100,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
       try {
         writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 1500));
       } catch (e) {
-        debugPrint("Chafon Write Timeout Exception: $e");
         writeSuccess = false;
       }
 
@@ -1184,13 +1116,9 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
   @override
   Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {
-    if (!isConnected) {
-      return;
-    }
+    if (!isConnected) return;
     int pwr = powerLevel ~/ 10;
-    if (pwr > 30) {
-      pwr = 30;
-    }
+    if (pwr > 30) pwr = 30;
     _sendCommand(0x2F, [pwr], address: 0x00);
     await Future.delayed(const Duration(milliseconds: 100));
     _sendCommand(0x2F, [pwr], address: 0xFF);
@@ -1206,9 +1134,7 @@ class ZebraPrinterProtocol extends PollingProtocol {
       : super(ipAddress: ip, port: port, pollCmd: "~HS", intervalMs: 1000);
 
   @override
-  String parseTagId(String packet) {
-    return packet.trim();
-  }
+  String parseTagId(String packet) => packet.trim();
 }
 
 class SatoPrinterProtocol extends AutoReportProtocol {
@@ -1216,9 +1142,7 @@ class SatoPrinterProtocol extends AutoReportProtocol {
       : super(ipAddress: ip, port: port, startCmd: "\x1bA", stopCmd: "\x1bZ");
 
   @override
-  String parseTagId(String packet) {
-    return packet.trim();
-  }
+  String parseTagId(String packet) => packet.trim();
 }
 
 class GenericRs232cProtocol extends AutoReportProtocol {
@@ -1226,9 +1150,7 @@ class GenericRs232cProtocol extends AutoReportProtocol {
       : super(ipAddress: ip, port: port, startCmd: "", stopCmd: "");
 
   @override
-  String parseTagId(String packet) {
-    return packet.trim();
-  }
+  String parseTagId(String packet) => packet.trim();
 }
 
 class DefaultProtocol extends AutoReportProtocol {
@@ -1236,9 +1158,7 @@ class DefaultProtocol extends AutoReportProtocol {
       : super(ipAddress: ip, port: port, startCmd: "START\n", stopCmd: "STOP\n");
 
   @override
-  String parseTagId(String packet) {
-    return packet.trim();
-  }
+  String parseTagId(String packet) => packet.trim();
 }
 
 /// ---------------------------------------------------------------------------
@@ -1247,35 +1167,20 @@ class DefaultProtocol extends AutoReportProtocol {
 class DeviceProtocolFactory {
   static BaseDeviceProtocol create(String modelValue, String ip, int port) {
     switch (modelValue) {
-      case SupportedDeviceModels.modelIdro900f:
-        return Idro900fProtocol(ip, port);
-
-      case SupportedDeviceModels.modelAts200:
-        return Ats200Protocol(ip, port);
-
-      case SupportedDeviceModels.modelHopeland:
-      case SupportedDeviceModels.modelM120:
-        return M120ClouReaderProtocol(ip, port);
-
-      case SupportedDeviceModels.modelChafon:
-      case SupportedDeviceModels.modelCf815:
-      case SupportedDeviceModels.modelCfRu5102:
-      case SupportedDeviceModels.modelCf601:
-        return ChafonProtocol(ip, port);
-
-      case SupportedDeviceModels.modelSato:
-        return SatoPrinterProtocol(ip, port);
-
-      case SupportedDeviceModels.modelZebra:
-        return ZebraPrinterProtocol(ip, port);
-
-      case SupportedDeviceModels.modelGenericRs232c:
-        return GenericRs232cProtocol(ip, port);
-
-      case SupportedDeviceModels.modelBt200:
-      case SupportedDeviceModels.modelGenericTcp:
-      default:
-        return DefaultProtocol(ip, port);
+      case SupportedDeviceModels.idro900f: return Idro900fProtocol(ip, port);
+      case SupportedDeviceModels.ats200: return Ats200Protocol(ip, port);
+      case SupportedDeviceModels.hopeland:
+      case SupportedDeviceModels.m120: return M120ClouReaderProtocol(ip, port);
+      case SupportedDeviceModels.chafon:
+      case SupportedDeviceModels.cf815:
+      case SupportedDeviceModels.cfRU5102:
+      case SupportedDeviceModels.cf601: return ChafonProtocol(ip, port);
+      case SupportedDeviceModels.sato: return SatoPrinterProtocol(ip, port);
+      case SupportedDeviceModels.zebra: return ZebraPrinterProtocol(ip, port);
+      case SupportedDeviceModels.genericRs232c: return GenericRs232cProtocol(ip, port);
+      case SupportedDeviceModels.bt200:
+      case SupportedDeviceModels.genericTcp:
+      default: return DefaultProtocol(ip, port);
     }
   }
 }
