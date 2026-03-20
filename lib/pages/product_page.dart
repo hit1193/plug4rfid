@@ -22,8 +22,10 @@ import '../core/ai_search_helper.dart';
 import '../widgets/column_selection_dialog.dart';
 import '../widgets/bulk_edit_dialog.dart';
 
+/// ---------------------------------------------------------------------------
 /// 안전한 문자열 변환 유틸리티
 /// 데이터베이스의 null 값이나 빈 문자열을 안전하게 처리하여 UI 에러를 방지합니다.
+/// ---------------------------------------------------------------------------
 String _safeStr(dynamic value, {String defaultVal = ""}) {
   if (value == null) {
     return defaultVal;
@@ -38,7 +40,9 @@ String _safeStr(dynamic value, {String defaultVal = ""}) {
   return str;
 }
 
-/// 물품 관리 페이지 (ProductPage) 메인 위젯
+/// ---------------------------------------------------------------------------
+/// [RFID 물품 관리 페이지 (ProductPage)]
+/// ---------------------------------------------------------------------------
 class ProductPage extends StatefulWidget {
   final String searchQuery;
   final bool isMobile;
@@ -79,7 +83,7 @@ class _ProductPageState extends State<ProductPage> {
   bool _isAiSearching = false;
 
   static const double _colImgSize = 70.0;
-  static const double _colActionWidth = 240.0;
+  static const double _colActionWidth = 300.0; // 버튼 추가로 인한 넓이 확장
 
   static const Set<String> _inboundStatuses = {
     '보유중', '수동입고', '자동입고', '생산입고', '구매입고', '적치완료', '회수/반납'
@@ -211,8 +215,10 @@ class _ProductPageState extends State<ProductPage> {
           final String catStr = _safeStr(p.category).toLowerCase();
           final String snStr = _safeStr(p.serialNumber).toLowerCase();
 
+          // 🔥 EPC 검색 조건 반영
           isMatch = p.name.toLowerCase().contains(q) ||
               p.tagId.toLowerCase().contains(q) ||
+              p.tagEpc.toLowerCase().contains(q) ||
               locStr.contains(q) || catStr.contains(q) || snStr.contains(q);
 
           if (!isMatch) {
@@ -319,6 +325,8 @@ class _ProductPageState extends State<ProductPage> {
         return p.name;
       case '태그ID':
         return p.tagId;
+      case 'EPC':
+        return p.tagEpc;
       case '위치':
         return _safeStr(p.location, defaultVal: "-");
       case '상태':
@@ -403,7 +411,7 @@ class _ProductPageState extends State<ProductPage> {
 
         return {
           'name': '[ERP] $parsedName',
-          'tag_id': parsedTagId,
+          'tag_id': parsedTagId, // 🔥 원본 데이터 보관 (태그 발행시 자동 처리)
           'location': parsedLocation,
           'status': parsedStatus,
           'category': parsedCategory,
@@ -896,34 +904,46 @@ class _ProductPageState extends State<ProductPage> {
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
-                    icon: const Icon(Icons.edit_note, size: 18),
-                    label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
-                    onPressed: () {
-                      _showBulkEditDialog(provider, items, theme);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
                     icon: const Icon(Icons.wifi_tethering, size: 18),
                     label: const Text("태그 일괄 발급", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white, elevation: 0),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, elevation: 0),
                     onPressed: () {
+                      final deviceProvider = context.read<DeviceProvider>();
                       showDialog(
                           context: context,
+                          barrierDismissible: false,
                           builder: (BuildContext ctx) {
                             return _BulkTagIssueDialog(
                               selectedProducts: items.where((ProductModel p) {
                                 return _selectedItemIds.contains(p.id);
                               }).toList(),
                               provider: provider,
+                              deviceProvider: deviceProvider,
                               theme: theme,
-                              onWriteComplete: (String hexData) {
-                                debugPrint("태그 일괄 발급 성공: $hexData");
+                              // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백 연동
+                              onSuccessItem: (String pid) {
+                                setState(() {
+                                  _selectedItemIds.remove(pid);
+                                  if (_selectedItemIds.isEmpty) {
+                                    _isSelectionMode = false;
+                                  }
+                                });
+                              },
+                              onWriteComplete: (String originalTag) {
+                                debugPrint("태그 일괄 발급 완료 (원본): $originalTag");
                               },
                             );
                           }
                       );
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.edit_note, size: 18),
+                    label: const Text("일괄 편집", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: Colors.white, elevation: 0),
+                    onPressed: () {
+                      _showBulkEditDialog(provider, items, theme);
                     },
                   ),
                   const SizedBox(width: 8),
@@ -1121,6 +1141,28 @@ class _ProductPageState extends State<ProductPage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+                final deviceProvider = context.read<DeviceProvider>();
+                showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (BuildContext ctx) {
+                      return _BulkTagIssueDialog(
+                          selectedProducts: [p],
+                          provider: provider,
+                          deviceProvider: deviceProvider,
+                          theme: theme,
+                          onSuccessItem: (String pid) {
+                            setState(() {
+                              _selectedItemIds.remove(pid);
+                              if (_selectedItemIds.isEmpty) _isSelectionMode = false;
+                            });
+                          }
+                      );
+                    }
+                );
+              }),
+              const SizedBox(width: 12),
               _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () {
                 _showHistoryDialog(p, theme);
               }),
@@ -1217,9 +1259,31 @@ class _ProductPageState extends State<ProductPage> {
         const SizedBox(height: 16),
         Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5) ?? Colors.grey.withValues(alpha: 0.2)),
         const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        Wrap(
+          spacing: 8, runSpacing: 12,
+          alignment: WrapAlignment.spaceEvenly,
           children: [
+            _buildCircleAction(Icons.nfc_rounded, Colors.indigo, "개별 태그 발행", () {
+              final deviceProvider = context.read<DeviceProvider>();
+              showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (BuildContext ctx) {
+                    return _BulkTagIssueDialog(
+                        selectedProducts: [p],
+                        provider: provider,
+                        deviceProvider: deviceProvider,
+                        theme: theme,
+                        onSuccessItem: (String pid) {
+                          setState(() {
+                            _selectedItemIds.remove(pid);
+                            if (_selectedItemIds.isEmpty) _isSelectionMode = false;
+                          });
+                        }
+                    );
+                  }
+              );
+            }),
             _buildCircleAction(Icons.history, Colors.blueGrey, "이력", () {
               _showHistoryDialog(p, theme);
             }),
@@ -1468,12 +1532,10 @@ class _ProductPageState extends State<ProductPage> {
     );
   }
 
-  /// 썸네일 이미지 빌더 (ValueKey와 cacheWidth 적용 및 Null-check 최적화)
+  /// 썸네일 이미지 빌더
   Widget _buildThumbnail(ProductModel? p, ThemeData theme, {double size = 44}) {
     final bool isDark = theme.brightness == Brightness.dark;
 
-    // 🔥 [경고 해결] Null 상태를 함수 최상단에서 명확히 걸러냅니다.
-    // Dart 컴파일러가 이하 코드에서 p 변수를 Non-null로 자동 인식하게 됩니다.
     if (p == null) {
       return Container(
           width: size, height: size,
@@ -1501,12 +1563,10 @@ class _ProductPageState extends State<ProductPage> {
     }
 
     final String connector = url.contains('?') ? '&' : '?';
-    // 🔥 [경고 해결] p가 Non-null로 보장되므로 불필요한 '?.' 표기를 제거했습니다.
     final int timeStamp = p.updated.millisecondsSinceEpoch;
     final String fullUrl = "$url${connector}t=$timeStamp";
 
     return Container(
-      // 🔥 [경고 해결] p가 Non-null로 보장되므로 불필요한 '!' 표기를 제거했습니다.
         key: ValueKey('thumb_${p.id}_$timeStamp'),
         width: size, height: size,
         decoration: BoxDecoration(
@@ -1608,7 +1668,7 @@ class _ProductPageState extends State<ProductPage> {
 
   /// 표시 항목 설정 (Column Selection) 다이얼로그 호출
   void _showColumnSelectionDialog(ProductProvider provider, ThemeData theme) {
-    final List<String> baseFields = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+    final List<String> baseFields = ['품명', '태그ID', 'EPC', '위치', '상태', '규격', '분류', 'S/N'];
     final Set<String> metaKeySet = {};
 
     for (final ProductModel p in provider.items.take(100)) {
@@ -1670,7 +1730,6 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.resetAllProducts();
 
-                      // 🔥 [경고 해결] State 객체의 mounted를 확인하여 비동기 갭 오류를 차단합니다.
                       if (!mounted) {
                         return;
                       }
@@ -1726,7 +1785,6 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts(_selectedItemIds.toList());
 
-                      // 🔥 [경고 해결]
                       if (!mounted) {
                         return;
                       }
@@ -1776,7 +1834,6 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts([p.id]);
 
-                      // 🔥 [경고 해결]
                       if (!mounted) {
                         return;
                       }
@@ -1826,7 +1883,6 @@ class _ProductPageState extends State<ProductPage> {
 
                       await provider.deleteMultipleProducts(ids);
 
-                      // 🔥 [경고 해결]
                       if (!mounted) {
                         return;
                       }
@@ -1890,7 +1946,6 @@ class _ProductPageState extends State<ProductPage> {
       }
     });
 
-    // 🔥 [경고 해결]
     if (!mounted) {
       return;
     }
@@ -2075,7 +2130,6 @@ class _ProductPageState extends State<ProductPage> {
       await provider.handleSave(product: p, data: data);
     }
 
-    // 🔥 [경고 해결]
     if (!mounted) {
       return;
     }
@@ -2208,7 +2262,50 @@ class _ProductPageState extends State<ProductPage> {
                                                 children: [
                                                   _buildTextField(nameC, "품명 (필수)", theme, context),
                                                   const SizedBox(height: 16),
-                                                  _buildTextField(tagC, "태그ID (RFID EPC)", theme, context),
+
+                                                  IntrinsicHeight(
+                                                    child: Row(
+                                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                                      children: [
+                                                        Expanded(child: _buildTextField(tagC, "태그ID / 바코드 (원본 식별자)", theme, context)),
+                                                        const SizedBox(width: 12),
+                                                        ElevatedButton.icon(
+                                                          onPressed: () {
+                                                            showDialog(
+                                                                context: context,
+                                                                barrierDismissible: false,
+                                                                builder: (BuildContext ctx) {
+                                                                  return _BulkTagIssueDialog(
+                                                                    selectedProducts: p != null ? [p] : [],
+                                                                    provider: provider,
+                                                                    deviceProvider: context.read<DeviceProvider>(),
+                                                                    theme: theme,
+                                                                    onSuccessItem: (String pid) {
+                                                                      setState(() {
+                                                                        _selectedItemIds.remove(pid);
+                                                                      });
+                                                                    },
+                                                                    onWriteComplete: (String originalTag) {
+                                                                      setS(() {
+                                                                        tagC.text = originalTag;
+                                                                      });
+                                                                    },
+                                                                  );
+                                                                }
+                                                            );
+                                                          },
+                                                          icon: const Icon(Icons.nfc_rounded),
+                                                          label: const Text("장비로 기록", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 15)),
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor: Colors.indigo,
+                                                            foregroundColor: Colors.white,
+                                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+
                                                   const SizedBox(height: 16),
                                                   _buildTextField(catC, "자산 분류 (Category)", theme, context),
                                                   const SizedBox(height: 16),
@@ -2337,7 +2434,6 @@ class _ProductPageState extends State<ProductPage> {
                               };
 
                               final bool ok = await provider.handleSave(product: p, data: data, imageXFile: file);
-                              // 🔥 [경고 해결] 팝업 내부에서 닫기를 제어하므로 팝업의 context(dialogCtx)가 mounted 상태인지 검사합니다.
                               if (!dialogCtx.mounted) {
                                 return;
                               }
@@ -2390,7 +2486,6 @@ class _ProductPageState extends State<ProductPage> {
                                 }
                               }
 
-                              // 🔥 [경고 해결] 팝업은 닫혔으므로 현재 State 객체의 mounted 상태를 검사합니다.
                               if (!mounted) {
                                 return;
                               }
@@ -2575,7 +2670,6 @@ class _ProductPageState extends State<ProductPage> {
         }
       }
 
-      // 🔥 [경고 해결] State 객체의 mounted 상태 검사
       if (!mounted) {
         return;
       }
@@ -2631,7 +2725,7 @@ class _ProductPageState extends State<ProductPage> {
           continue;
         }
 
-        String name = "", tagId = "", location = "", category = "", status = "";
+        String name = "", tagId = "", tagEpc = "", location = "", category = "", status = "";
         final Map<String, dynamic> metadata = {};
         bool hasRowData = false;
 
@@ -2650,8 +2744,10 @@ class _ProductPageState extends State<ProductPage> {
 
           if (cleanHeader.contains('품명') || cleanHeader.contains('이름')) {
             name = val;
-          } else if (cleanHeader.contains('태그') || cleanHeader.contains('rfid')) {
+          } else if (cleanHeader.contains('태그id') || cleanHeader.contains('uid')) {
             tagId = val;
+          } else if (cleanHeader.contains('epc')) {
+            tagEpc = val;
           } else if (cleanHeader.contains('위치')) {
             location = val;
           } else if (cleanHeader.contains('분류')) {
@@ -2686,6 +2782,7 @@ class _ProductPageState extends State<ProductPage> {
         final Map<String, dynamic> data = {
           'name': name,
           'tag_id': tagId,
+          'tag_epc': tagEpc,
           'location': location,
           'category': category,
           'status': status,
@@ -2697,7 +2794,6 @@ class _ProductPageState extends State<ProductPage> {
         currentCountNotifier.value++;
       }
 
-      // 🔥 [경고 해결] State 객체의 mounted 상태 검사
       if (!mounted) {
         return;
       }
@@ -2736,7 +2832,7 @@ class _ProductPageState extends State<ProductPage> {
 
       final excel_pkg.Sheet sheet = excel['물품리스트']!;
 
-      final List<String> baseHeaders = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+      final List<String> baseHeaders = ['품명', '태그ID', 'EPC', '위치', '상태', '규격', '분류', 'S/N'];
 
       final Set<String> metaKeySet = {};
       for (final ProductModel p in list) {
@@ -2755,6 +2851,7 @@ class _ProductPageState extends State<ProductPage> {
         final List<excel_pkg.CellValue> rowData = [
           excel_pkg.TextCellValue(i.name),
           excel_pkg.TextCellValue(i.tagId),
+          excel_pkg.TextCellValue(i.tagEpc),
           excel_pkg.TextCellValue(_safeStr(i.location)),
           excel_pkg.TextCellValue(i.status),
           excel_pkg.TextCellValue(_safeStr(i.spec)),
@@ -2788,18 +2885,28 @@ class _ProductPageState extends State<ProductPage> {
   }
 }
 
-/// 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// ---------------------------------------------------------------------------
+/// 🔥 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// [수정 사항] 물품 관리용 다이얼로그에서도 타이머(초 단위 카운트) 관련 변수와 로직을 완벽히 제거했습니다.
+/// 순수 무한 Blocking 모드로 미니멀하고 안전하게 대기합니다.
+/// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<ProductModel> selectedProducts;
   final ProductProvider provider;
+  final DeviceProvider deviceProvider;
   final ThemeData theme;
   final Function(String)? onWriteComplete;
+
+  /// 🔥 발급에 성공한 자산의 ID를 메인 화면으로 전달하여 자동 선택 해제 처리용 콜백
+  final Function(String)? onSuccessItem;
 
   const _BulkTagIssueDialog({
     required this.selectedProducts,
     required this.provider,
+    required this.deviceProvider,
     required this.theme,
     this.onWriteComplete,
+    this.onSuccessItem,
   });
 
   @override
@@ -2807,9 +2914,9 @@ class _BulkTagIssueDialog extends StatefulWidget {
 }
 
 class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
-  List<String> _readerOptions = [];
-  String? _selectedReader;
+  String? _selectedDeviceId;
   bool _isLoadingReaders = true;
+  bool _isHexMode = false;
 
   int _issueCount = 1;
   bool _isProcessing = false;
@@ -2830,55 +2937,40 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
   Future<void> _fetchRegisteredReaders() async {
     try {
-      final DeviceProvider deviceProvider = Provider.of<DeviceProvider>(context, listen: false);
-
-      if (deviceProvider.list.isEmpty) {
-        await deviceProvider.fetchData();
+      if (widget.deviceProvider.list.isEmpty) {
+        await widget.deviceProvider.fetchData();
       } else {
-        await Future.delayed(const Duration(milliseconds: 300));
+        await Future.delayed(const Duration(milliseconds: 100));
       }
 
-      // 🔥 [경고 해결]
       if (mounted) {
         setState(() {
-          final List<DeviceModel> availableDevices = deviceProvider.list.where((DeviceModel d) {
-            return d.isActive == true && d.isAutoConnect == false;
-          }).toList();
-
-          if (availableDevices.isEmpty) {
-            _readerOptions = ['가용한 리더기 없음 (모두 동작 중이거나 미등록)'];
-          } else {
-            _readerOptions = availableDevices.map((DeviceModel d) {
-              return '${d.name} (${d.model} - ${d.ipAddress})';
-            }).toList();
-          }
-
-          if (_readerOptions.isNotEmpty) {
-            _selectedReader = _readerOptions.first;
-          }
           _isLoadingReaders = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _readerOptions = ['오류: 장비 로딩 실패'];
-          _selectedReader = _readerOptions.first;
           _isLoadingReaders = false;
         });
       }
     }
   }
 
-  String _formatDataToTargetSize(String inputData, int targetByteSize) {
-    List<int> utf8Bytes = utf8.encode(inputData);
-    StringBuffer hexBuffer = StringBuffer();
+  String _formatDataToTargetSize(String inputData, int targetByteSize, bool isHex) {
+    String hexString = "";
 
-    for (int i = 0; i < utf8Bytes.length; i++) {
-      hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+    if (isHex) {
+      hexString = inputData.replaceAll(RegExp(r'[^0-9a-fA-F]'), '').toUpperCase();
+    } else {
+      List<int> utf8Bytes = utf8.encode(inputData);
+      StringBuffer hexBuffer = StringBuffer();
+      for (int i = 0; i < utf8Bytes.length; i++) {
+        hexBuffer.write(utf8Bytes[i].toRadixString(16).padLeft(2, '0').toUpperCase());
+      }
+      hexString = hexBuffer.toString();
     }
 
-    String hexString = hexBuffer.toString();
     int targetHexLength = targetByteSize * 2;
 
     if (hexString.length < targetHexLength) {
@@ -2891,14 +2983,29 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   }
 
   Future<void> _startBulkIssue() async {
-    if (_selectedReader == null || _selectedReader!.contains('오류') || _selectedReader!.contains('없음')) {
+    DeviceModel? targetDevice;
+    try {
+      targetDevice = widget.deviceProvider.list.firstWhere((d) => d.id == _selectedDeviceId);
+    } catch (e) {
+      targetDevice = null;
+    }
+
+    if (targetDevice == null) {
       setState(() {
-        _progressText = '❌ 가용 리더기가 없습니다. 장치 관리에서 수동 가동 리더기를 등록해주세요.';
+        _progressText = '❌ 리더기를 선택해주세요.';
       });
       return;
     }
 
-    final NavigatorState nav = Navigator.of(context);
+    final DeviceModel device = targetDevice;
+
+    if (device.status.toLowerCase() != 'online') {
+      setState(() {
+        _progressText = '❌ 선택한 리더기(${device.name})가 미연결 상태입니다. 장치관리에서 먼저 연결해주세요.';
+      });
+      return;
+    }
+
     setState(() {
       _isProcessing = true;
       _progressValue = 0.0;
@@ -2906,20 +3013,44 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     try {
       if (widget.selectedProducts.isEmpty) {
-        String randomTag = "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+        String randomTag = _isHexMode
+            ? "EEEE${DateTime.now().millisecondsSinceEpoch % 100000000}"
+            : "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
+
         int memorySize = 12;
 
         for (int j = 0; j < _issueCount; j++) {
+          if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
+
+          String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
+          bool isSuccess = false;
+
+          // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
           setState(() {
-            _progressValue = (j + 1) / _issueCount;
-            _progressText = "신규 자동 태그의 ${j + 1}장째를 기록하고 있습니다...";
+            _progressValue = j / _issueCount;
+            _progressText = "⏳ 신규 자동 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
           });
 
-          String hexData = _formatDataToTargetSize(randomTag, memorySize);
-          await Future.delayed(const Duration(milliseconds: 600));
+          // 🔥 하드웨어 통신 대기 (DeviceProvider 단에서 무한으로 Blocking 대기)
+          try {
+            isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+          } catch(e) {
+            isSuccess = false;
+          }
+
+          if (!isSuccess || !_isProcessing) {
+            throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
+          }
+
+          // 🔥 성공 시 다음으로 진행
+          setState(() {
+            _progressValue = (j + 1) / _issueCount;
+            _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
+          });
+          await Future.delayed(const Duration(milliseconds: 500));
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
-            widget.onWriteComplete!(hexData);
+            widget.onWriteComplete!(randomTag);
           }
         }
       } else {
@@ -2930,51 +3061,82 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
         for (int i = 0; i < totalProducts; i++) {
           ProductModel product = widget.selectedProducts[i];
-          String tagData = product.tagId.isNotEmpty ? product.tagId : (product.serialNumber ?? "");
+          // EPC가 있으면 EPC 사용, 없으면 UID, 둘다 없으면 S/N 우선 적용 로직 복구
+          String tagData = product.tagEpc.isNotEmpty ? product.tagEpc : (product.tagId.isNotEmpty ? product.tagId : (product.serialNumber ?? ""));
           if (tagData.isEmpty) {
             tagData = product.name;
           }
 
           for (int j = 0; j < _issueCount; j++) {
-            currentOperationCount++;
+            if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
 
+            currentOperationCount++;
+            String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
+            bool isSuccess = false;
+
+            // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
             setState(() {
-              _progressValue = currentOperationCount / totalOperations;
-              _progressText = "발급대상 $totalProducts건 중 ${i + 1}번째 항목([${product.name}])의 ${j + 1}장째를 기록하고 있습니다...";
+              _progressValue = (currentOperationCount - 1) / totalOperations;
+              _progressText = "⏳ [${product.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
             });
 
-            String hexData = _formatDataToTargetSize(tagData, memorySize);
-            await Future.delayed(const Duration(milliseconds: 600));
+            // 🔥 하드웨어 통신 대기 (DeviceProvider 루프를 통해 태그가 찍힐 때까지 여기서 완벽하게 Blocking)
+            try {
+              isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+            } catch (e) {
+              isSuccess = false;
+            }
 
+            if (!isSuccess || !_isProcessing) {
+              throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
+            }
+
+            // 🔥 발급 성공
+            setState(() {
+              _progressValue = currentOperationCount / totalOperations;
+              _progressText = "✅ [${product.name}] 발급 성공!";
+            });
+            await Future.delayed(const Duration(milliseconds: 500));
+
+            // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 체크해제 콜백을 발생시킵니다.
             if (j == _issueCount - 1) {
-              await widget.provider.handleSave(product: product, data: {'tag_id': hexData});
+              await widget.provider.handleSave(product: product, data: {
+                'tag_id': tagData,  // 원본 입력값
+                'tag_epc': hexData  // 실제 기록에 성공한 Hex 데이터
+              });
+
+              // 🔥 [선택 해제] 부모 위젯으로 성공 사실을 알려 체크 해제(Deselect) 처리
+              if (widget.onSuccessItem != null) {
+                widget.onSuccessItem!(product.id);
+              }
+
               if (widget.onWriteComplete != null && totalProducts == 1) {
-                widget.onWriteComplete!(hexData);
+                widget.onWriteComplete!(tagData);
               }
             }
           }
         }
       }
 
-      // 🔥 [경고 해결] State.mounted 검사 후 안전하게 처리
-      if (mounted) {
+      if (mounted && _isProcessing) {
         setState(() {
           _isCompleted = true;
           _progressValue = 1.0;
-          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 성공적으로 완료되었습니다.';
+          _progressText = '🎉 설정하신 모든 태그의 발행 작업이 완벽하게 완료되었습니다.';
+          _isProcessing = false;
         });
 
-        await Future.delayed(const Duration(milliseconds: 1500));
-
-        if (!mounted) return;
-        nav.pop();
+        await Future.delayed(const Duration(milliseconds: 2000));
+        if (mounted) {
+          Navigator.pop(context);
+        }
       }
 
     } catch (e) {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _progressText = '❌ 기록 중 오류 발생: $e';
+          _progressText = '❌ 취소됨: ${e.toString().replaceAll('Exception: ', '')}';
         });
       }
     }
@@ -2983,151 +3145,240 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: AppTheme.dialogTitle('RFID 태그 일괄 발급 설정', Icons.wifi_tethering, color: Colors.indigo),
+      title: AppTheme.dialogTitle('RFID 태그 일괄 발급', Icons.wifi_tethering, color: Colors.indigo),
       content: SizedBox(
         width: 500,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('1. 발급 대상 리더기 (현재 가용 장비)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                borderRadius: BorderRadius.circular(10),
-                color: widget.theme.cardTheme.color,
-              ),
-              child: _isLoadingReaders
-                  ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12.0),
-                child: Center(
-                    child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
-                    )
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('1. 발급 대상 리더기', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
                 ),
-              )
-                  : DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  isExpanded: true,
-                  value: _selectedReader,
-                  icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
-                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
-                  onChanged: _isProcessing ? null : (String? newValue) {
-                    if (newValue != null) {
-                      setState(() {
-                        _selectedReader = newValue;
-                      });
+                child: ListenableBuilder(
+                    listenable: widget.deviceProvider,
+                    builder: (context, child) {
+                      if (_isLoadingReaders) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 12.0),
+                          child: Center(
+                              child: SizedBox(
+                                  width: 24, height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
+                              )
+                          ),
+                        );
+                      }
+
+                      final devices = widget.deviceProvider.list;
+
+                      if (devices.isEmpty) {
+                        return DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: null,
+                              hint: const Text('등록된 리더기가 없습니다. 장치관리에서 먼저 등록해주세요.', style: TextStyle(color: Colors.redAccent, fontFamily: AppTheme.fontPretendard)),
+                              items: const [],
+                              onChanged: null,
+                            )
+                        );
+                      }
+
+                      String? displayId = _selectedDeviceId;
+                      if (displayId == null || !devices.any((d) => d.id == displayId)) {
+                        final onlineDevice = devices.where((d) => d.status.toLowerCase() == 'online').firstOrNull;
+                        displayId = onlineDevice?.id ?? devices.first.id;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted && _selectedDeviceId != displayId) {
+                            setState(() { _selectedDeviceId = displayId; });
+                          }
+                        });
+                      }
+
+                      return DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: displayId,
+                          icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
+                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
+                          onChanged: _isProcessing ? null : (String? newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedDeviceId = newValue;
+                              });
+                            }
+                          },
+                          items: devices.map<DropdownMenuItem<String>>((DeviceModel d) {
+                            bool isOnline = d.status.toLowerCase() == 'online';
+                            return DropdownMenuItem<String>(
+                              value: d.id,
+                              child: Row(
+                                children: [
+                                  Icon(Icons.router, size: 20, color: isOnline ? Colors.indigo : Colors.grey),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                      '${d.name} (${isOnline ? '연결됨' : '미연결'})',
+                                      style: TextStyle(
+                                          color: isOnline ? widget.theme.colorScheme.onSurface : Colors.grey,
+                                          fontFamily: AppTheme.fontPretendard
+                                      )
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      );
                     }
-                  },
-                  items: _readerOptions.map<DropdownMenuItem<String>>((String value) {
-                    return DropdownMenuItem<String>(
-                      value: value,
-                      child: Row(
-                        children: [
-                          const Icon(Icons.router, size: 20, color: Colors.grey),
-                          const SizedBox(width: 12),
-                          Text(value),
-                        ],
-                      ),
-                    );
-                  }).toList(),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 24),
 
-            Text('2. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                borderRadius: BorderRadius.circular(10),
-                color: widget.theme.cardTheme.color,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
-                    onPressed: _isProcessing ? null : () {
-                      if (_issueCount > 1) {
-                        setState(() { _issueCount--; });
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 20),
-                  Container(
-                    width: 80,
-                    alignment: Alignment.center,
-                    child: Text(
-                        '$_issueCount',
-                        style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
-                    onPressed: _isProcessing ? null : () {
-                      if (_issueCount < 99) {
-                        setState(() { _issueCount++; });
-                      }
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            Container(
-              padding: const EdgeInsets.all(16.0),
-              decoration: BoxDecoration(
-                color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
-                borderRadius: BorderRadius.circular(10.0),
-                border: Border.all(color: _isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    _progressText,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontPretendard,
-                      fontSize: 15.0,
-                      height: 1.5,
-                      color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (_isProcessing || _isCompleted) ...[
-                    const SizedBox(height: 16),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: LinearProgressIndicator(
-                        value: _progressValue,
-                        minHeight: 12,
-                        backgroundColor: Colors.grey.withValues(alpha: 0.2),
-                        color: _isCompleted ? AppTheme.success : Colors.indigo,
+              Text('2. 데이터 기록 모드 (변환 방식)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                          _isHexMode ? "입력값을 그대로 헥사(Hex)로 기록" : "문자열(ASCII)을 헥사로 자동 변환하여 기록",
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 13)
                       ),
                     ),
-                  ]
-                ],
+                    const SizedBox(width: 8),
+                    ToggleButtons(
+                      constraints: const BoxConstraints(minHeight: 32, minWidth: 90),
+                      borderRadius: BorderRadius.circular(8),
+                      isSelected: [!_isHexMode, _isHexMode],
+                      onPressed: _isProcessing ? null : (int index) {
+                        setState(() {
+                          _isHexMode = index == 1;
+                        });
+                      },
+                      children: const [
+                        Text("일반(ASCII)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        Text("헥사값(HEX)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+
+              Text('3. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  color: widget.theme.cardTheme.color,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
+                      onPressed: _isProcessing ? null : () {
+                        if (_issueCount > 1) {
+                          setState(() { _issueCount--; });
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 20),
+                    Container(
+                      width: 80,
+                      alignment: Alignment.center,
+                      child: Text(
+                          '$_issueCount',
+                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
+                      onPressed: _isProcessing ? null : () {
+                        if (_issueCount < 99) {
+                          setState(() { _issueCount++; });
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              Container(
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
+                  borderRadius: BorderRadius.circular(10.0),
+                  border: Border.all(color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3))),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      _progressText,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontPretendard,
+                        fontSize: 15.0,
+                        height: 1.5,
+                        color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    (_isProcessing || _isCompleted) ? Column(
+                        children: [
+                          const SizedBox(height: 16),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: LinearProgressIndicator(
+                              value: _progressValue,
+                              minHeight: 12,
+                              backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                              color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.indigo),
+                            ),
+                          ),
+                        ]
+                    ) : const SizedBox.shrink()
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
         AppTheme.actionButton(
-            label: "돌아가기 (취소)",
+            label: _isProcessing && !_isCompleted ? "발행 중단" : "돌아가기 (취소)",
             color: Colors.transparent,
-            textColor: widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            textColor: _isProcessing && !_isCompleted ? AppTheme.danger : widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
             onPressed: () {
-              if (!_isProcessing || _isCompleted) {
+              if (_isProcessing && !_isCompleted) {
+                setState(() {
+                  _isProcessing = false;
+                  _progressText = '❌ 사용자에 의해 발행이 중단되었습니다. (무한 대기망 강제 해제 중...)';
+                });
+                // 🔥 [강제 종료 보장] 하드웨어 단에서 무한 대기 중인 루프(while)를 즉시 파괴하기 위해 기기 연결을 해제합니다!
+                if (_selectedDeviceId != null) {
+                  widget.deviceProvider.disconnectDevice(_selectedDeviceId!);
+                }
+              } else {
                 Navigator.pop(context);
               }
             }
@@ -3135,7 +3386,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         SizedBox(
           height: 48,
           child: ElevatedButton.icon(
-            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders) ? null : _startBulkIssue,
+            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders || _selectedDeviceId == null) ? null : _startBulkIssue,
             icon: const Icon(Icons.play_circle_fill, size: 20),
             label: const Text('발행 시작', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
             style: ElevatedButton.styleFrom(
@@ -3152,7 +3403,9 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   }
 }
 
-/// 수동 입출고 다이얼로그
+/// ---------------------------------------------------------------------------
+/// [수동 입출고 다이얼로그]
+/// ---------------------------------------------------------------------------
 class _ManualInoutDialog extends StatefulWidget {
   final String type;
   final ProductModel product;

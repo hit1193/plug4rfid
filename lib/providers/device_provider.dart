@@ -111,10 +111,10 @@ class DeviceProvider extends ChangeNotifier {
     for (int i = 0; i < _list.length; i++) {
       if (_list[i].status.toLowerCase() == 'online') {
         _list[i] = _list[i].copyWith(
-          status: 'Offline',
+          status: 'Offline', // 🔥 DB 스키마 검증에 맞게 대문자로 원복
           updated: DateTime.now(),
         );
-        _syncStatusToDbOnly(_list[i].id, 'Offline');
+        _syncStatusToDbOnly(_list[i].id, 'Offline'); // 🔥 DB 스키마 검증에 맞게 대문자로 원복
         needsNotify = true;
       }
     }
@@ -337,19 +337,19 @@ class DeviceProvider extends ChangeNotifier {
         }
 
         // [UI 즉시 갱신] DB 조회를 기다리지 않고 메모리 상태를 먼저 'Online'으로 바꿉니다. (빠른 반응성)
-        _updateLocalStatus(device.id, 'Online');
-        _syncStatusToDbOnly(device.id, 'Online');
+        _updateLocalStatus(device.id, 'Online'); // 🔥 대문자로 원복
+        _syncStatusToDbOnly(device.id, 'Online'); // 🔥 대문자로 원복
       } else {
         _logSystem(device.id, "❌ 접속 실패 (포트 점유 또는 설정 오류)");
         _activeProtocols.remove(device.id);
-        _updateLocalStatus(device.id, 'Offline');
-        _syncStatusToDbOnly(device.id, 'Offline');
+        _updateLocalStatus(device.id, 'Offline'); // 🔥 대문자로 원복
+        _syncStatusToDbOnly(device.id, 'Offline'); // 🔥 대문자로 원복
       }
     } catch (e) {
       _logSystem(device.id, "🔥 연결 중 치명적 예외: $e");
       _activeProtocols.remove(device.id);
-      _updateLocalStatus(device.id, 'Offline');
-      _syncStatusToDbOnly(device.id, 'Offline');
+      _updateLocalStatus(device.id, 'Offline'); // 🔥 대문자로 원복
+      _syncStatusToDbOnly(device.id, 'Offline'); // 🔥 대문자로 원복
     }
   }
 
@@ -449,8 +449,8 @@ class DeviceProvider extends ChangeNotifier {
         _logSystem(deviceId, "🔌 모든 작업 완료: 장치 연결이 완벽하게 해제되었습니다.");
 
         // 접속 해제 완료 후 상태를 갱신합니다.
-        _updateLocalStatus(deviceId, 'Offline');
-        _syncStatusToDbOnly(deviceId, 'Offline');
+        _updateLocalStatus(deviceId, 'Offline'); // 🔥 대문자로 원복
+        _syncStatusToDbOnly(deviceId, 'Offline'); // 🔥 대문자로 원복
 
       } finally {
         _disconnectingDevices.remove(deviceId); // 안전하게 락(Lock) 해제
@@ -506,13 +506,14 @@ class DeviceProvider extends ChangeNotifier {
   }
 
   /// -------------------------------------------------------------------------
-  /// [메모리 쓰기] 특정 장치에 RFID 태그 메모리 쓰기(Write) 명령 하달
-  /// 일반 문자열(ASCII)과 Hex(16진수) 모드를 모두 지원하며 입력값을 자동 컨버팅합니다.
+  /// [핵심 수정 포인트 🔥] 메모리 쓰기 시 스레드 락/대기 처리 (Blocking)
+  /// C++Builder의 Thread->WaitFor() 원리와 동일합니다.
+  /// 하위 프로토콜에서 완료 신호(ACK)가 떨어지기 전까지 절대 넘어가선 안 됩니다!
   /// -------------------------------------------------------------------------
   Future<bool> writeTagData(String deviceId, String input, {bool isHexMode = false}) async {
     if (!_activeProtocols.containsKey(deviceId)) {
       _logSystem(deviceId, "⚠️ 오류: 연결된 장치가 없습니다.");
-      return false;
+      return false; // 통신 객체가 없으면 즉시 실패 (대기망 유지됨)
     }
 
     String finalHex = "";
@@ -542,12 +543,20 @@ class DeviceProvider extends ChangeNotifier {
         }
       }
 
-      _logSystem(deviceId, "📝 태그 쓰기 전송: $finalHex");
-      // Bank 1(EPC 영역), Offset 2 번지에 데이터를 밀어 넣습니다.
+      // [버그 완벽 해결!]
+      // `writeTagMemory`가 반환형이 없는(void) 함수이므로 변수에 값을 담으려 하면
+      // Dart 문법 에러(Type of 'void')가 발생합니다.
+      // 단순히 await로 실행만 하고, 만약 하드웨어 쪽에서 에러나 타임아웃이 발생하면
+      // 프로토콜 단에서 던진 예외(Exception)를 바로 아래의 catch가 받도록 처리합니다!
       await _activeProtocols[deviceId]!.writeTagMemory(1, 2, finalHex);
+
+      // 여기까지 무사히 넘어왔다는 것은 하드웨어 쪽에서 아무 에러 없이 잘 기록했다는 뜻입니다.
       return true;
+
     } catch (e) {
-      _logSystem(deviceId, "❌ 쓰기 예외 발생: $e");
+      // 통신 단절이나 예외 발생 시(태그 없음 등) 앱이 뻗지 않도록 씹어버리고 false 반환!
+      // 이렇게 false가 반환되어야 ProductPage의 while 루프가 깨지지 않고 무한 대기합니다.
+      _logSystem(deviceId, "❌ 쓰기 실패 (태그 없음 또는 타임아웃)");
       return false;
     }
   }

@@ -14,7 +14,8 @@ class ProductModel {
   // 2. 기본 항목 (필수 데이터)
   // ---------------------------------------------------------------------------
   final String name;         // 품명
-  final String tagId;        // RFID 태그 UID
+  final String tagId;        // RFID 태그 UID (원본 입력 데이터)
+  final String tagEpc;       // RFID 태그 EPC (실제 발급/인식된 Hex 데이터)
   final int quantity;        // 현재 수량 (재고)
   final int safetyStock;     // 안전 재고 (이 수량 미만이면 부족 알림)
 
@@ -52,6 +53,7 @@ class ProductModel {
     this.collectionId = 'products',
     required this.name,
     required this.tagId,
+    this.tagEpc = '',
     this.quantity = 0,
     this.safetyStock = 5,
     this.location,
@@ -93,7 +95,8 @@ class ProductModel {
   // ---------------------------------------------------------------------------
   static const Map<String, List<String>> _aliasDefinition = {
     'name': ['품명', '제품명', '자산명', 'Item Name'],
-    'tag_id': ['태그ID', 'RFID', 'EPC', 'Barcode'],
+    'tag_id': ['태그ID', 'RFID', 'UID', 'Barcode'],
+    'tag_epc': ['태그EPC', 'EPC', 'Tag EPC'],
     'location': ['위치', '보관위치', '창고', 'Shelf'],
     'spec': ['규격', '모델명', '사양', 'Spec'],
     'manufacturer': ['제조사', '메이커', '공급사', 'Brand', 'Maker'],
@@ -129,6 +132,7 @@ class ProductModel {
       collectionId: record.collectionId,
       name: record.getStringValue('name'),
       tagId: record.getStringValue('tag_id'),
+      tagEpc: record.getStringValue('tag_epc'),
       quantity: record.getIntValue('quantity', 0),
       safetyStock: record.getIntValue('safety_stock', 5),
       location: record.getStringValue('location'),
@@ -156,9 +160,9 @@ class ProductModel {
   }
 
   /// 2. 범용 JSON 파서 (엑셀 임포트, 외부 API, 로컬 캐시용)
-  /// 대표님이 작성하신 강력한 Alias 매핑 로직이 적용되어 있습니다.
+  /// 강력한 Alias 매핑 로직이 적용되어 있습니다.
   factory ProductModel.fromJson(Map<String, dynamic> json) {
-    // [수정] metadata가 없을 때 전체 json을 대입하지 않도록 방어 (시스템 필드 혼입 방지)
+    // metadata가 없을 때 전체 json을 대입하지 않도록 방어 (시스템 필드 혼입 방지)
     final Map<String, dynamic> meta = (json['metadata'] is Map)
         ? Map<String, dynamic>.from(json['metadata'])
         : {};
@@ -191,6 +195,7 @@ class ProductModel {
       collectionId: json['collectionId']?.toString() ?? 'products',
       name: findValue('name') ?? '',
       tagId: findValue('tag_id') ?? '',
+      tagEpc: findValue('tag_epc') ?? '',
       quantity: int.tryParse(findValue('quantity') ?? '') ?? (json['quantity'] as int? ?? 0),
       safetyStock: int.tryParse(findValue('safety_stock') ?? '') ?? (json['safety_stock'] as int? ?? 5),
       location: findValue('location'),
@@ -228,6 +233,7 @@ class ProductModel {
       'collectionId': collectionId,
       'name': name,
       'tag_id': tagId,
+      'tag_epc': tagEpc,
       'quantity': quantity,
       'safety_stock': safetyStock,
       'location': location,
@@ -256,6 +262,7 @@ class ProductModel {
   ProductModel copyWith({
     String? name,
     String? tagId,
+    String? tagEpc,
     int? quantity,
     int? safetyStock,
     String? location,
@@ -277,6 +284,7 @@ class ProductModel {
       collectionId: collectionId,
       name: name ?? this.name,
       tagId: tagId ?? this.tagId,
+      tagEpc: tagEpc ?? this.tagEpc,
       quantity: quantity ?? this.quantity,
       safetyStock: safetyStock ?? this.safetyStock,
       location: location ?? this.location,

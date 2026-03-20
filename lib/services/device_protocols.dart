@@ -317,7 +317,12 @@ abstract class BaseDeviceProtocol {
   Future<void> setAntennaPower(int antennaIndex, int powerLevel) async {}
 
   Future<void> readTagMemory(int bank, int offset, int length) async {}
-  Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {}
+
+  /// 🔥 쓰기 명령의 기본 프로토타입. 하위 구현체에서 무한 대기 루프를 구현합니다.
+  Future<bool> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
+    return false;
+  }
+
   Future<void> setTagFilter(int bank, int offset, String maskDataHex) async {}
 }
 
@@ -472,11 +477,12 @@ class Idro900fProtocol extends AutoReportProtocol {
     return "";
   }
 
+  /// 🔥 [수정] 3번 시도하고 포기하는 로직 삭제. 사용자가 중단할 때까지 무한 대기!
   @override
-  Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
+  Future<bool> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {
       emitData("⚠️ [쓰기 실패] 장비가 연결되어 있지 않습니다.");
-      return;
+      return false;
     }
 
     String paddedData = dataHex.toUpperCase().trim();
@@ -491,35 +497,30 @@ class Idro900fProtocol extends AutoReportProtocol {
 
     emitData("📝 [Idro 쓰기 준비] Bank:$bank, Offset:$offset, Length:$wordLength Words");
 
-    int maxRetries = 3;
-    bool writeSuccess = false;
-
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      emitData("▶️ [명령어 발송] 쓰기 시도 ($attempt/$maxRetries)");
-
+    // 🔥 C++의 while(!Terminated) 처럼 포트가 살아있고 중단 명령이 없을 때까지 영원히 반복
+    while (isConnected && !_isDisconnecting) {
       _writeCompleter = Completer<bool>();
       sendCommandString(command);
 
+      bool writeSuccess = false;
       try {
         writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 1500));
       } catch (e) {
         writeSuccess = false;
-        emitData("⏳ [타임아웃] 장비 응답 없음.");
       }
 
       if (writeSuccess) {
         emitData("🎉 [최종 성공] 태그에 데이터가 완벽하게 기록(Verify)되었습니다!");
-        break;
+        _writeCompleter = null;
+        return true;
       } else {
-        if (attempt < maxRetries) {
-          emitData("🔄 [재시도] 기록 실패. 장비 상태 안정화 후 다시 시도합니다...");
-          await Future.delayed(const Duration(milliseconds: 500));
-        } else {
-          emitData("💥 [최종 실패] $maxRetries회 시도했으나 태그 기록에 실패했습니다.");
-        }
+        // 실패 시 루프를 끝내지 않고 잠시 쉬었다가 재시도 (무한 대기)
+        await Future.delayed(const Duration(milliseconds: 500));
       }
     }
+
     _writeCompleter = null;
+    return false;
   }
 }
 
@@ -543,7 +544,6 @@ class Ats200Protocol extends AutoReportProtocol {
 
 /// ===========================================================================
 /// 🔥 [에러 완전 정복] M120 / CL7206 "0xAA 특수 프로토콜" 지능형 엔진
-/// Timeout을 막기 위한 5초 대기 락온 및 DLL 100% 모방 조립기 적용
 /// ===========================================================================
 class M120ClouReaderProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
@@ -558,12 +558,9 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     emitData("🚀 [SYS] M120 (0xAA 특수 프로토콜) 로우레벨 엔진 접속 완료!");
   }
 
-  /// -------------------------------------------------------------------------
-  /// 🛠️ [로우레벨 암호화] PR9200 칩셋의 CCITT-16 CRC 생성 함수
-  /// -------------------------------------------------------------------------
   int _calculatePR9200CRC(List<int> data) {
     int crc = 0xFFFF;
-    for (int i = 1; i < data.length; i++) { // 첫번째 0xAA는 계산에서 반드시 제외!
+    for (int i = 1; i < data.length; i++) {
       crc ^= (data[i] << 8);
       for (int j = 0; j < 8; j++) {
         if ((crc & 0x8000) != 0) {
@@ -576,7 +573,6 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     return crc & 0xFFFF;
   }
 
-  /// 0xAA 프로토콜 패킷 발송기 (명령어 길이 1바이트를 Length 필드에서 제외합니다)
   void _sendAAPacket(int cmd, List<int> payload) {
     int txLen = payload.length;
     int lenH = (txLen >> 8) & 0xFF;
@@ -673,7 +669,7 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
           List<int> epcData = payload.sublist(ptr + 2, ptr + 2 + epcLen);
 
           if (epcData.length >= 2) {
-            List<int> pureEpcBytes = epcData.sublist(2); // 맨앞 2바이트(PC) 도려내기
+            List<int> pureEpcBytes = epcData.sublist(2);
             String epc = pureEpcBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
 
             if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) {
@@ -713,18 +709,15 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
   @override
   String parseTagId(String rawData) => "";
 
-  /// -------------------------------------------------------------------------
-  /// 🔥 [쓰기 코어] 완벽한 조립 및 타임아웃 5초 대기 부여
-  /// -------------------------------------------------------------------------
+  /// 🔥 [수정] M120 프로토콜 무한 대기 적용!
   @override
-  Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
+  Future<bool> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {
       emitData("⚠️ [쓰기 실패] 장비가 연결되어 있지 않습니다.");
-      return;
+      return false;
     }
 
     await stopInventory();
-    // 🔥 [타임아웃 해결] 장비가 완전히 쉴 수 있도록 0.5초간 통신을 중지합니다.
     await Future.delayed(const Duration(milliseconds: 500));
     _byteBuffer.clear();
 
@@ -742,7 +735,6 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     List<int> finalDataBytes = [];
     int actualOffset = offset;
 
-    // 🔥 [핵심 1] 입력 데이터가 뭐든 무조건 12바이트로 패딩을 꽉 채웁니다!
     if (bank == 1) {
       actualOffset = 1;
 
@@ -763,11 +755,9 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
     }
 
     emitData("📝 [M120 쓰기 준비] Bank:$bank, Offset:$actualOffset, Data Bytes:${finalDataBytes.length}");
-    int maxRetries = 3;
-    bool writeSuccess = false;
 
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 단일 스캔(Read)으로 대상 태그 탐색...");
+    // 🔥 사용자가 취소(_isDisconnecting)하거나 포트가 닫히기 전까지 무한 대기!
+    while (isConnected && !_isDisconnecting) {
       _singleReadCompleter = Completer<String?>();
 
       List<int> scanPacket = [0xAA, 0x02, 0x10, 0x00, 0x05, 0x01, 0x00, 0x02, 0x00, 0x06, 0x14, 0xE7];
@@ -780,15 +770,14 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
       _singleReadCompleter = null;
 
       if (currentEpc == null || currentEpc.isEmpty) {
-        emitData("⚠️ 주변에 태그가 없습니다. 재시도합니다...");
+        // 태그를 못 찾으면 0.3초 쉬고 다시 스캔 (무한 루프)
         await Future.delayed(const Duration(milliseconds: 300));
         continue;
       }
 
       String epcToWriteTo = (targetEpc != null && targetEpc.isNotEmpty) ? targetEpc : currentEpc;
-      emitData("🎯 2단계: 대상 락온($epcToWriteTo)! 즉시 쓰기(Write) 발사!");
+      emitData("🎯 대상 락온($epcToWriteTo)! 즉시 쓰기(Write) 발사!");
 
-      // 🔥 [핵심 2] 타겟 EPC 역시 무조건 12바이트(96비트)로 패딩을 꽉 채웁니다!
       List<int> targetBytes = [];
       String cleanEpc = epcToWriteTo.replaceAll(' ', '').toUpperCase();
 
@@ -804,52 +793,45 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
         targetBytes = targetBytes.sublist(0, 12);
       }
 
-      int matchBitLength = targetBytes.length * 8; // 무조건 96(0x60) 비트
+      int matchBitLength = targetBytes.length * 8;
 
-      // 완벽한 44바이트 Payload 배열을 조립합니다!
       List<int> payload = [];
 
-      // [Write 영역] (20 바이트)
-      payload.add(0x01); // Antenna
-      payload.add(bank); // Write Bank
+      payload.add(0x01);
+      payload.add(bank);
       payload.add((actualOffset >> 8) & 0xFF);
       payload.add(actualOffset & 0xFF);
       payload.add((finalDataBytes.length >> 8) & 0xFF);
       payload.add(finalDataBytes.length & 0xFF);
       payload.addAll(finalDataBytes);
 
-      // [Target Match 영역] (19 바이트)
       payload.addAll([0x01, 0x00, 0x10, 0x02, 0x00, 0x00, matchBitLength]);
       payload.addAll(targetBytes);
 
-      // [Password 영역] (5 바이트) 스니핑 로그와 동일하게 고정!
       payload.addAll([0x02, 0x00, 0x00, 0x00, 0x00]);
 
       _writeCompleter = Completer<bool>();
-
-      // 0x11 (Write) 명령어 발사! 배열 길이는 정확히 44(0x2C)가 됩니다.
       _sendAAPacket(0x11, payload);
 
+      bool writeSuccess = false;
       try {
-        // 🔥 [타임아웃 해결의 핵심] 하드웨어의 처리 시간을 넉넉하게 5초(5000ms)까지 허용합니다!
-        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 5000));
+        writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 2000));
       } catch (e) {
-        debugPrint("Write Timeout Exception: $e");
         writeSuccess = false;
       }
 
       if (writeSuccess) {
         emitData("🎉 [최종 성공] 태그에 데이터가 안전하게 기록되었습니다!");
-        break;
+        _writeCompleter = null;
+        return true; // 성공 시에만 true 반환 후 종료
       } else {
+        // 쓰기 실패 시 조금 대기 후 다시 처음(스캔)부터 무한 재시도
         await Future.delayed(const Duration(milliseconds: 500));
       }
     }
 
-    if (!writeSuccess) {
-      emitData("💥 [최종 실패] 3회 시도했으나 장비가 응답하지 않았거나 쓰기에 실패했습니다.");
-    }
     _writeCompleter = null;
+    return false;
   }
 
   @override
@@ -860,7 +842,6 @@ class M120ClouReaderProtocol extends BaseDeviceProtocol {
 
 /// ===========================================================================
 /// [구현체] Chafon 전용 엔진 (CF_RU5102, CF815 등)
-/// 스니퍼 로그를 완벽하게 분석하여 0x01(스캔)과 0x03(쓰기) 명령어로 재구성했습니다.
 /// ===========================================================================
 class ChafonProtocol extends BaseDeviceProtocol {
   final List<int> _byteBuffer = [];
@@ -875,8 +856,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
     emitData("🚀 [SYS] Chafon(CF_RU5102) 로우레벨 엔진 접속 성공!");
   }
 
-  /// 하드웨어로 명령어를 전송하는 공통 함수 (CRC16 자동 계산 적용)
-  /// 스니퍼 로그 분석 결과 Address는 기본적으로 0x00을 사용합니다.
   void _sendCommand(int cmd, List<int> data, {int address = 0x00}) {
     int len = data.length + 4;
     List<int> packet = [len, address, cmd];
@@ -903,7 +882,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
     emitData("▶️ [명령] CF_RU5102 전용 단일 스캔(0x01) 폴링 가동!");
     if (_pollingTimer != null && _pollingTimer!.isActive) return;
 
-    // 스니퍼 로그처럼 150ms 간격으로 스캔 명령(0x01)을 폴링합니다.
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
       if (!isConnected || _isDisconnecting) {
         timer.cancel();
@@ -934,41 +912,34 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
     _byteBuffer.addAll(data);
 
-    // 패킷 조립기: 길이를 기반으로 완전한 패킷만 추출하여 파싱합니다.
     while (_byteBuffer.isNotEmpty) {
       int header = _byteBuffer[0];
 
-      // Length 바이트는 통상적으로 최소 3 이상, 최대 128 이하로 들어옵니다.
       if (header >= 0x03 && header <= 0x80) {
-        int totalPacketSize = header + 1; // Length 바이트 자체의 크기 1바이트 추가
+        int totalPacketSize = header + 1;
 
-        // 버퍼에 전체 패킷이 아직 다 안 들어왔으면 대기
         if (_byteBuffer.length < totalPacketSize) break;
 
         List<int> packet = _byteBuffer.sublist(0, totalPacketSize);
         _byteBuffer.removeRange(0, totalPacketSize);
 
         int cmd = packet[2];
-        List<int> payload = packet.sublist(3, packet.length - 2); // CRC 2바이트 제외
+        List<int> payload = packet.sublist(3, packet.length - 2);
 
         _parsePayload(cmd, payload);
       }
       else {
-        // 쓰레기 데이터 폐기
         _byteBuffer.removeAt(0);
       }
     }
 
-    if (_byteBuffer.length > 8192) _byteBuffer.clear(); // 메모리 보호
+    if (_byteBuffer.length > 8192) _byteBuffer.clear();
   }
 
-  /// 명령어 종류에 따라 응답을 분석합니다.
   void _parsePayload(int cmd, List<int> payload) {
-    // [명령어 0x03] 쓰기(Write Data) 응답 처리
     if (cmd == 0x03) {
       if (payload.isNotEmpty) {
         int status = payload[0];
-        // 스니퍼에서 FF는 에러/실패를 의미했습니다. 00이면 성공으로 처리합니다.
         if (status == 0x00 || status == 0x01) {
           emitData("✅ [장비 응답] 쓰기(Write) 완벽 성공!");
           if (_writeCompleter != null && !_writeCompleter!.isCompleted) _writeCompleter!.complete(true);
@@ -980,8 +951,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
       return;
     }
 
-    // [명령어 0x01] 인벤토리(스캔) 응답 처리
-    // 스니퍼 로그(0d 00 01 01 01 0c 4b...) 구조를 반영합니다.
     if (cmd == 0x01) {
       if (payload.isNotEmpty) {
         int tagCount = payload[0];
@@ -990,7 +959,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
         for (int i = 0; i < tagCount; i++) {
           if (offset >= payload.length) break;
 
-          // CF_RU5102 스니퍼 분석: Ant(1) + EpcLen(1) + EPC(EpcLen)
           int ant = payload[offset];
           int epcLen = payload[offset + 1];
           offset += 2;
@@ -999,7 +967,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
             List<int> epcBytes = payload.sublist(offset, offset + epcLen);
             String rawHexEpc = epcBytes.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join('');
 
-            // 단일 스캔(쓰기 작업의 1단계) 대기 중이라면 대상 EPC를 넘겨줍니다.
             if (_singleReadCompleter != null && !_singleReadCompleter!.isCompleted) {
               _singleReadCompleter!.complete(rawHexEpc);
             }
@@ -1008,7 +975,7 @@ class ChafonProtocol extends BaseDeviceProtocol {
             emitData('🎯 [태그 인식] EPC: $rawHexEpc | Ant: $ant | RSSI: - | TID: -');
             offset += epcLen;
           } else {
-            break; // 데이터 짤림 방지
+            break;
           }
         }
       }
@@ -1018,22 +985,20 @@ class ChafonProtocol extends BaseDeviceProtocol {
   @override
   String parseTagId(String rawData) => "";
 
-  /// 스니퍼 로그를 완벽 재현한 CF_RU5102 전용 쓰기 엔진입니다.
-  /// 명령어 0x03과 정밀한 Payload 조립을 사용합니다.
+  /// 🔥 [수정] Chafon 프로토콜 무한 대기 적용!
   @override
-  Future<void> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
+  Future<bool> writeTagMemory(int bank, int offset, String dataHex, {String? targetEpc}) async {
     if (!isConnected) {
       emitData("⚠️ [쓰기 실패] 장비가 연결되어 있지 않습니다.");
-      return;
+      return false;
     }
 
     await stopInventory();
-    await Future.delayed(const Duration(milliseconds: 100)); // 하드웨어 안정화 대기
+    await Future.delayed(const Duration(milliseconds: 100));
     _byteBuffer.clear();
 
     String? activeTargetEpc = targetEpc?.trim();
 
-    // 1. 기록할 데이터 패딩 (Word 단위, 4자리 Hex = 2 Bytes = 1 Word)
     String paddedData = dataHex.toUpperCase().trim();
     if (paddedData.length % 4 != 0) {
       int neededChars = 4 - (paddedData.length % 4);
@@ -1046,14 +1011,10 @@ class ChafonProtocol extends BaseDeviceProtocol {
     }
     int dataWordCount = dataBytes.length ~/ 2;
 
-    int maxRetries = 3;
-    bool writeSuccess = false;
-
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-      emitData("▶️ [시도 $attempt/$maxRetries] 1단계: 주변 태그 스캔...");
+    // 🔥 사용자가 중단할 때까지 영원히 반복 탐색 & 쓰기
+    while (isConnected && !_isDisconnecting) {
       _singleReadCompleter = Completer<String?>();
 
-      // 0x01 명령어로 주변 태그를 깨우고 EPC를 확보합니다.
       _sendCommand(0x01, [], address: 0x00);
 
       String? currentEpc;
@@ -1065,15 +1026,14 @@ class ChafonProtocol extends BaseDeviceProtocol {
       _singleReadCompleter = null;
 
       if (currentEpc == null || currentEpc.isEmpty) {
-        emitData("⚠️ 응답하는 태그가 없습니다. 재시도합니다...");
+        // 태그 못 찾음 -> 쉬었다가 재스캔
         await Future.delayed(const Duration(milliseconds: 300));
         continue;
       }
 
       String epcToWriteTo = (activeTargetEpc != null && activeTargetEpc.isNotEmpty) ? activeTargetEpc : currentEpc;
-      emitData("🎯 2단계: 대상 락온($epcToWriteTo)! Cmd: 0x03 쓰기 발사!");
+      emitData("🎯 대상 락온($epcToWriteTo)! Cmd: 0x03 쓰기 발사!");
 
-      // 2. 타겟 EPC 패딩 준비 (헥사 변환)
       String cleanEpc = epcToWriteTo.replaceAll(' ', '').toUpperCase();
       if (cleanEpc.length % 4 != 0) {
         int needed = 4 - (cleanEpc.length % 4);
@@ -1087,24 +1047,23 @@ class ChafonProtocol extends BaseDeviceProtocol {
         }
       } catch (e) {
         emitData("❌ [EPC 파싱 오류] 올바른 Hex 형식이 아닙니다.");
-        return;
+        return false;
       }
       int epcWordCount = epcBytes.length ~/ 2;
 
-      // 3. 스니퍼 로그 완벽 대응 Payload 조립 (Cmd: 0x03)
-      // 패킷 구조: [데이터 Word 수] + [EPC Word 수] + [EPC 데이터] + [Bank] + [Offset] + [기록할 데이터] + [Password]
       List<int> writePayload = [];
       writePayload.add(dataWordCount);
       writePayload.add(epcWordCount);
       writePayload.addAll(epcBytes);
       writePayload.add(bank);
-      writePayload.add(offset & 0xFF); // Offset은 1바이트 크기 보장
+      writePayload.add(offset & 0xFF);
       writePayload.addAll(dataBytes);
-      writePayload.addAll([0x00, 0x00, 0x00, 0x00]); // 비밀번호 (기본값)
+      writePayload.addAll([0x00, 0x00, 0x00, 0x00]);
 
       _writeCompleter = Completer<bool>();
-      _sendCommand(0x03, writePayload, address: 0x00); // 스니퍼에서 본 0x03 커맨드로 전송
+      _sendCommand(0x03, writePayload, address: 0x00);
 
+      bool writeSuccess = false;
       try {
         writeSuccess = await _writeCompleter!.future.timeout(const Duration(milliseconds: 2000));
       } catch (e) {
@@ -1113,12 +1072,15 @@ class ChafonProtocol extends BaseDeviceProtocol {
 
       if (writeSuccess) {
         emitData("🎉 [최종 성공] 태그에 데이터가 안전하게 기록되었습니다!");
-        break; // 성공 시 루프 탈출
+        _writeCompleter = null;
+        return true;
       } else {
         await Future.delayed(const Duration(milliseconds: 500));
       }
     }
+
     _writeCompleter = null;
+    return false;
   }
 
   @override
@@ -1126,7 +1088,6 @@ class ChafonProtocol extends BaseDeviceProtocol {
     if (!isConnected) return;
     int pwr = powerLevel ~/ 10;
     if (pwr > 30) pwr = 30;
-    // 기존 0x2F 파워 설정 커맨드는 유지합니다.
     _sendCommand(0x2F, [pwr], address: 0x00);
   }
 }

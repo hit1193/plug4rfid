@@ -804,7 +804,15 @@ class _UserPageState extends State<UserPage> {
 
                       final authProvider = context.read<AuthProvider>();
                       int myRank = _getRoleRank(authProvider.role);
-                      final List<UserModel> selectedUsers = list.where((UserModel u) => _selectedUserIds.contains(u.id)).toList();
+
+                      final List<UserModel> selectedUsers = [];
+                      for (String id in _selectedUserIds) {
+                        try {
+                          selectedUsers.add(list.firstWhere((u) => u.id == id));
+                        } catch (e) {
+                          // 매칭 안되는 예외 방어
+                        }
+                      }
 
                       bool hasUnauthorized = selectedUsers.any((u) {
                         bool isSelf = u.id == authProvider.currentUserId;
@@ -817,7 +825,7 @@ class _UserPageState extends State<UserPage> {
                         return;
                       }
 
-                      final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider를 직접 가져와서 주입
+                      final deviceProvider = context.read<DeviceProvider>();
                       showDialog(
                           context: context,
                           barrierDismissible: false,
@@ -825,8 +833,17 @@ class _UserPageState extends State<UserPage> {
                             return _BulkTagIssueDialog(
                               selectedUsers: selectedUsers,
                               userProvider: provider,
-                              deviceProvider: deviceProvider, // 전달
+                              deviceProvider: deviceProvider,
                               theme: theme,
+                              // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백 연동
+                              onSuccessItem: (String pid) {
+                                setState(() {
+                                  _selectedUserIds.remove(pid);
+                                  if (_selectedUserIds.isEmpty) {
+                                    _isSelectionMode = false;
+                                  }
+                                });
+                              },
                             );
                           }
                       );
@@ -1076,16 +1093,23 @@ class _UserPageState extends State<UserPage> {
                     return;
                   }
 
-                  final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider 주입
+                  final deviceProvider = context.read<DeviceProvider>();
                   showDialog(
                       context: context,
                       barrierDismissible: false,
                       builder: (BuildContext ctx) {
                         return _BulkTagIssueDialog(
-                          selectedUsers: [item],
-                          userProvider: provider,
-                          deviceProvider: deviceProvider, // 전달
-                          theme: theme,
+                            selectedUsers: [item],
+                            userProvider: provider,
+                            deviceProvider: deviceProvider,
+                            theme: theme,
+                            // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백
+                            onSuccessItem: (String pid) {
+                              setState(() {
+                                _selectedUserIds.remove(pid);
+                                if (_selectedUserIds.isEmpty) _isSelectionMode = false;
+                              });
+                            }
                         );
                       }
                   );
@@ -1196,16 +1220,22 @@ class _UserPageState extends State<UserPage> {
                 return;
               }
 
-              final deviceProvider = context.read<DeviceProvider>(); // 🔥 DeviceProvider 주입
+              final deviceProvider = context.read<DeviceProvider>();
               showDialog(
                   context: context,
                   barrierDismissible: false,
                   builder: (BuildContext ctx) {
                     return _BulkTagIssueDialog(
-                      selectedUsers: [item],
-                      userProvider: provider,
-                      deviceProvider: deviceProvider, // 전달
-                      theme: theme,
+                        selectedUsers: [item],
+                        userProvider: provider,
+                        deviceProvider: deviceProvider,
+                        theme: theme,
+                        onSuccessItem: (String pid) {
+                          setState(() {
+                            _selectedUserIds.remove(pid);
+                            if (_selectedUserIds.isEmpty) _isSelectionMode = false;
+                          });
+                        }
                     );
                   }
               );
@@ -2265,9 +2295,9 @@ class _UserPageState extends State<UserPage> {
                                                                     userProvider: provider,
                                                                     deviceProvider: context.read<DeviceProvider>(),
                                                                     theme: theme,
-                                                                    onWriteComplete: (String writtenHex) {
+                                                                    onWriteComplete: (String writtenTag) {
                                                                       setS(() {
-                                                                        tagC.text = writtenHex;
+                                                                        tagC.text = writtenTag;
                                                                       });
                                                                     },
                                                                   );
@@ -2355,7 +2385,7 @@ class _UserPageState extends State<UserPage> {
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),
                           'tag_id': tagC.text.trim(), // 🔥 원본 데이터 (사용자가 폼에서 입력한 값 그대로 보관)
-                          // 'tag_epc'는 명시적으로 넘기지 않음으로써 Provider 내부의 _generateEpcHex()를 통해 자동 변환되어 저장되도록 유도합니다.
+                          // 'tag_epc'는 명시적으로 넘기지 않음으로써 Provider 내부를 통해 자동 변환되어 저장되도록 유도합니다.
                           'department': deptC.text.trim(),
                           'role': _getDbRole(currentDisplayRole),
                           'is_approved': approved,
@@ -2473,6 +2503,8 @@ class _UserPageState extends State<UserPage> {
 
 /// ---------------------------------------------------------------------------
 /// 🔥 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
+/// [수정 사항] 화면의 UI 타이머(카운터)를 완전히 제거하고, 군더더기 없이 깔끔하게
+/// 무한 대기를 수행하는 미니멀리즘 로직으로 업그레이드되었습니다.
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<UserModel> selectedUsers;
@@ -2481,12 +2513,16 @@ class _BulkTagIssueDialog extends StatefulWidget {
   final ThemeData theme;
   final Function(String)? onWriteComplete;
 
+  /// 🔥 발급에 성공한 자산의 ID를 메인 화면으로 전달하여 자동 선택 해제 처리용 콜백
+  final Function(String)? onSuccessItem;
+
   const _BulkTagIssueDialog({
     required this.selectedUsers,
     required this.userProvider,
     required this.deviceProvider,
     required this.theme,
     this.onWriteComplete,
+    this.onSuccessItem,
   });
 
   @override
@@ -2542,10 +2578,8 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     String hexString = "";
 
     if (isHex) {
-      // 헥사 모드: 문자열 자체가 이미 16진수 값이므로 불필요한 공백만 지우고 대문자화
       hexString = inputData.replaceAll(RegExp(r'[^0-9a-fA-F]'), '').toUpperCase();
     } else {
-      // ASCII 모드: 일반 문자열을 UTF-8 바이트로 변환 후 16진수(Hex) 문자열로 변환
       List<int> utf8Bytes = utf8.encode(inputData);
       StringBuffer hexBuffer = StringBuffer();
       for (int i = 0; i < utf8Bytes.length; i++) {
@@ -2556,7 +2590,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     int targetHexLength = targetByteSize * 2;
 
-    // 패딩 규칙: 길이가 모자라면 오른쪽을 '0'으로 채우고, 길면 자름
     if (hexString.length < targetHexLength) {
       return hexString.padRight(targetHexLength, '0');
     } else if (hexString.length > targetHexLength) {
@@ -2597,7 +2630,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     try {
       if (widget.selectedUsers.isEmpty) {
-        // [신규 생성] 헥사 모드일 때는 순수 16진수 문자열로 생성, 아닐 때는 일반 텍스트로 임의 생성
         String randomTag = _isHexMode
             ? "EEEE${DateTime.now().millisecondsSinceEpoch % 100000000}"
             : "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
@@ -2605,23 +2637,37 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
         int memorySize = 12;
 
         for (int j = 0; j < _issueCount; j++) {
+          if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
+
+          String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
+          bool isSuccess = false;
+
+          // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
           setState(() {
-            _progressValue = (j + 1) / _issueCount;
-            _progressText = "신규 자동 태그의 ${j + 1}장째를 기록하고 있습니다...";
+            _progressValue = j / _issueCount;
+            _progressText = "⏳ 신규 자동 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
           });
 
-          // 변환 로직 호출
-          String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
-
-          bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
-
-          if (!isSuccess) {
-            throw Exception("리더기(${device.name}) 통신 또는 기록 실패");
+          // 🔥 하드웨어 통신 대기 (DeviceProvider 단에서 무한으로 Blocking 대기)
+          try {
+            isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
+          } catch(e) {
+            isSuccess = false;
           }
-          await Future.delayed(const Duration(milliseconds: 300));
+
+          if (!isSuccess || !_isProcessing) {
+            throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
+          }
+
+          // 🔥 성공 시 다음으로 진행
+          setState(() {
+            _progressValue = (j + 1) / _issueCount;
+            _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
+          });
+          await Future.delayed(const Duration(milliseconds: 500));
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
-            widget.onWriteComplete!(hexData);
+            widget.onWriteComplete!(randomTag);
           }
         }
       } else {
@@ -2635,51 +2681,65 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           String tagData = user.tagId.isNotEmpty ? user.tagId : user.code;
 
           for (int j = 0; j < _issueCount; j++) {
-            currentOperationCount++;
+            if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
 
+            currentOperationCount++;
+            String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
+            bool isSuccess = false;
+
+            // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
             setState(() {
-              _progressValue = currentOperationCount / totalOperations;
-              _progressText = "발급대상 $totalUsers명 중 ${i + 1}번째 인원([${user.name}])의 ${j + 1}장째를 발급(기록) 중입니다...";
+              _progressValue = (currentOperationCount - 1) / totalOperations;
+              _progressText = "⏳ [${user.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
             });
 
-            // 변환 로직 호출
-            String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
-
-            bool isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
-
-            if (!isSuccess) {
-              await Future.delayed(const Duration(milliseconds: 500));
+            // 🔥 하드웨어 통신 대기 (DeviceProvider 루프를 통해 태그가 찍힐 때까지 여기서 완벽하게 Blocking)
+            try {
               isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
-
-              if(!isSuccess) {
-                throw Exception("인원 [${user.name}] 태그 기록 실패 (리더기 응답 없음)");
-              }
+            } catch (e) {
+              isSuccess = false;
             }
-            await Future.delayed(const Duration(milliseconds: 300));
 
+            if (!isSuccess || !_isProcessing) {
+              throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
+            }
+
+            // 🔥 발급 성공
+            setState(() {
+              _progressValue = currentOperationCount / totalOperations;
+              _progressText = "✅ [${user.name}] 발급 성공!";
+            });
+            await Future.delayed(const Duration(milliseconds: 500));
+
+            // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 체크해제 콜백을 발생시킵니다.
             if (j == _issueCount - 1) {
-              // 🔥 [수정] tag_id에는 사용자의 원래 입력값(tagData)을 그대로 보존하고, tag_epc에는 실제 기록된 Hex 값(hexData)을 분리 저장합니다.
               await widget.userProvider.handleSave(p: user, data: {
                 'tag_id': tagData,  // 원본 입력값
-                'tag_epc': hexData  // 기록에 성공한 Hex 데이터
+                'tag_epc': hexData  // 실제 기록에 성공한 Hex 데이터
               });
 
+              // 🔥 [선택 해제] 부모 위젯으로 성공 사실을 알려 체크 해제(Deselect) 처리
+              if (widget.onSuccessItem != null) {
+                widget.onSuccessItem!(user.id);
+              }
+
               if (widget.onWriteComplete != null && totalUsers == 1) {
-                widget.onWriteComplete!(hexData);
+                widget.onWriteComplete!(tagData);
               }
             }
           }
         }
       }
 
-      if (mounted) {
+      if (mounted && _isProcessing) {
         setState(() {
           _isCompleted = true;
           _progressValue = 1.0;
-          _progressText = '✅ 설정하신 모든 태그의 발행 작업이 완벽하게 완료되었습니다.';
+          _progressText = '🎉 설정하신 모든 태그의 발행 작업이 완벽하게 완료되었습니다.';
+          _isProcessing = false;
         });
 
-        await Future.delayed(const Duration(milliseconds: 1500));
+        await Future.delayed(const Duration(milliseconds: 2000));
         if (mounted) {
           Navigator.pop(context);
         }
@@ -2689,7 +2749,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _progressText = '❌ 기록 중단됨: $e\n(장치를 다시 연결하거나 태그를 다시 올려주세요)';
+          _progressText = '❌ 취소됨: ${e.toString().replaceAll('Exception: ', '')}';
         });
       }
     }
@@ -2730,7 +2790,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                         );
                       }
 
-                      // 무조건 deviceProvider.list의 모든 장비를 드롭다운에 보여줍니다.
                       final devices = widget.deviceProvider.list;
 
                       if (devices.isEmpty) {
@@ -2772,7 +2831,7 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                           items: devices.map<DropdownMenuItem<String>>((DeviceModel d) {
                             bool isOnline = d.status.toLowerCase() == 'online';
                             return DropdownMenuItem<String>(
-                              value: d.id, // 객체 대신 String 형태의 고유 ID를 사용
+                              value: d.id,
                               child: Row(
                                 children: [
                                   Icon(Icons.router, size: 20, color: isOnline ? Colors.indigo : Colors.grey),
@@ -2795,7 +2854,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
               ),
               const SizedBox(height: 24),
 
-              // 데이터 기록 변환 방식 선택 스위치
               Text('2. 데이터 기록 모드 (변환 방식)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
               const SizedBox(height: 8),
               Container(
@@ -2920,11 +2978,20 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
       ),
       actions: [
         AppTheme.actionButton(
-            label: "돌아가기 (취소)",
+            label: _isProcessing && !_isCompleted ? "발행 중단" : "돌아가기 (취소)",
             color: Colors.transparent,
-            textColor: widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
+            textColor: _isProcessing && !_isCompleted ? AppTheme.danger : widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
             onPressed: () {
-              if (!_isProcessing || _isCompleted || _progressText.contains('❌')) {
+              if (_isProcessing && !_isCompleted) {
+                setState(() {
+                  _isProcessing = false;
+                  _progressText = '❌ 사용자에 의해 발행이 중단되었습니다. (무한 대기망 강제 해제 중...)';
+                });
+                // 🔥 [강제 종료 보장] 하드웨어 단에서 무한 대기 중인 루프(while)를 즉시 파괴하기 위해 기기 연결을 해제합니다!
+                if (_selectedDeviceId != null) {
+                  widget.deviceProvider.disconnectDevice(_selectedDeviceId!);
+                }
+              } else {
                 Navigator.pop(context);
               }
             }

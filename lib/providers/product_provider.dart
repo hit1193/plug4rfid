@@ -231,7 +231,8 @@ class ProductProvider extends ChangeNotifier {
       for (var row in rows) {
         try {
           String name = _getExcelValue(row, ['품명', '이름', 'Name', '제품명', '자산명']);
-          String tagId = _getExcelValue(row, ['태그', 'EPC', 'RFID', 'tag_id']);
+          String tagId = _getExcelValue(row, ['태그ID', 'RFID', 'UID', 'tag_id']);
+          String tagEpc = _getExcelValue(row, ['EPC', '태그EPC', 'tag_epc']);
           String location = _getExcelValue(row, ['위치', '로케이션', '보관장소']);
           String category = _getExcelValue(row, ['분류', '카테고리']);
           String status = _getExcelValue(row, ['상태', 'status']);
@@ -250,6 +251,7 @@ class ProductProvider extends ChangeNotifier {
             final body = {
               'name': name,
               'tag_id': tagId,
+              'tag_epc': tagEpc,
               'location': location,
               'category': category,
               'status': status,
@@ -266,6 +268,7 @@ class ProductProvider extends ChangeNotifier {
             final errorBody = {
               'name': '형식에 맞지 않는 건',
               'tag_id': tagId,
+              'tag_epc': tagEpc,
               'location': location,
               'status': '수기입고', // 비정상 상태임을 알 수 있도록 임의의 상태 지정
               'metadata': {
@@ -374,7 +377,7 @@ class ProductProvider extends ChangeNotifier {
       }
     } on ClientException catch (e) {
       if (e.statusCode == 404) {
-        _selectedColumns = ['품명', '태그ID', '위치', '상태', '규격', '분류', 'S/N'];
+        _selectedColumns = ['품명', '태그ID', 'EPC', '위치', '상태', '규격', '분류', 'S/N']; // EPC 추가
         notifyListeners();
       }
     } catch (e) {
