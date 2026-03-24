@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart'; // 날짜 포맷팅 및 비교를 위해 추가
 import 'dart:async';
 import 'dart:convert';
+import 'package:provider/provider.dart';
 
 // 상위 시스템에서 정의한 중앙 집중형 테마와 데이터 모델을 임포트합니다.
 import '../theme/app_theme.dart';
 import '../models/detection_model.dart';
+import '../models/product_model.dart'; // 물품 마스터 모델
+import '../models/user_model.dart';    // 사용자(작업자) 모델
 import '../core/pocketbase_client.dart';
+
+// 전역 상태 공유망 (Provider) 임포트
+import '../providers/device_provider.dart';
+import '../providers/product_provider.dart';
+import '../providers/user_provider.dart';
 
 /// ---------------------------------------------------------------------------
 /// RFID 게이트의 운영 모드를 정의하는 열거형입니다.
@@ -19,10 +27,11 @@ enum GateScanMode {
 /// ---------------------------------------------------------------------------
 /// [실시간 입/출고 감시 키오스크 화면 - 반응형 통합 버전]
 ///
-/// [주요 특징]
-/// 1. Windows FHD(1920x1080)부터 모바일(Android/iOS)까지 지원하는 반응형 레이아웃.
+/// [주요 특징 및 갱신 내역]
+/// 1. Windows FHD부터 모바일(Android/iOS)까지 지원하는 반응형 레이아웃.
 /// 2. 미니멀리즘 디자인 유지 및 키오스크 감성 강화.
-/// 3. 모든 비즈니스 로직(타이머, DB 연동, 실시간 구독) 포함.
+/// 3. 복합 상태(IN/OUT) 동시 감지 시, 5초 내 세션(작업자 이름) 공유 로직 탑재
+/// 4. 🔥 [핵심 픽스] 방향이 달라도 하나의 번들(트랜잭션)로 묶고 개별 아이템 색상으로 구분
 /// ---------------------------------------------------------------------------
 class KioskView extends StatefulWidget {
   final VoidCallback onDismiss;
@@ -49,9 +58,10 @@ class _KioskViewState extends State<KioskView> {
 
   bool _useStandbyMode = true;
   bool _isStandbyActive = false;
+  bool _isReady = false;
 
   bool _requireWorkerMatch = true;
-  int _simCount = 0; // 시뮬레이션용 분기 카운터
+  int _simCount = 0;
 
   final int _standbyTimeoutSeconds = 10;
   final int _autoSaveDurationSeconds = 10;
@@ -73,6 +83,26 @@ class _KioskViewState extends State<KioskView> {
   int _currentStock = 0;
 
   // -------------------------------------------------------------------------
+  // [하드웨어 이벤트 중복 방지 캐시 (UI Buffer)]
+  // -------------------------------------------------------------------------
+  final Map<String, int> _processedTags = {};
+
+  // -------------------------------------------------------------------------
+  // [성능 최적화 코어: C++ std::map 방식의 해시 인덱스 캐시]
+  // -------------------------------------------------------------------------
+  final Map<String, UserModel> _userMapCache = {};
+  final Map<String, ProductModel> _productMapCache = {};
+  int _lastUserListLength = -1;
+  int _lastProductListLength = -1;
+
+  // -------------------------------------------------------------------------
+  // [Provider 캐시 포인터]
+  // -------------------------------------------------------------------------
+  DeviceProvider? _cachedDeviceProvider;
+  ProductProvider? _cachedProductProvider;
+  UserProvider? _cachedUserProvider;
+
+  // -------------------------------------------------------------------------
   // [슬라이드쇼 배경 이미지 목록]
   // -------------------------------------------------------------------------
   final List<String> _backgroundImages = [
@@ -82,9 +112,7 @@ class _KioskViewState extends State<KioskView> {
   ];
   int _currentImageIndex = 0;
 
-  // DB에서 불러올 때까지 표시할 기본 안내 문구
   String _noticeText = "최신 공지사항을 불러오는 중입니다...";
-
   final List<DetectionModel> _realtimeLogs = [];
 
   @override
@@ -95,6 +123,7 @@ class _KioskViewState extends State<KioskView> {
     _updateClock();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) {
       _updateClock();
+      _checkContinuousDetection();
     });
 
     _resetStandbyTimer();
@@ -108,8 +137,27 @@ class _KioskViewState extends State<KioskView> {
     });
 
     _fetchSummaryData();
-    _fetchNotice(); // 화면 초기화 시점에 가장 최신 공지사항을 가져옵니다.
+    _fetchNotice();
     _initRealtimeSubscription();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      _cachedDeviceProvider = context.read<DeviceProvider>();
+      _cachedProductProvider = context.read<ProductProvider>();
+      _cachedUserProvider = context.read<UserProvider>();
+
+      if (_cachedDeviceProvider != null) {
+        _cachedDeviceProvider!.tagStates.forEach((String epc, TagState state) {
+          if (state.status != 'NONE') {
+            _processedTags[epc] = state.lastStateChangeTime.millisecondsSinceEpoch;
+          }
+        });
+
+        _isReady = true;
+        _cachedDeviceProvider!.addListener(_onDeviceStateChanged);
+      }
+    });
   }
 
   @override
@@ -121,22 +169,381 @@ class _KioskViewState extends State<KioskView> {
 
     try {
       pb.realtime.unsubscribe('');
-    } catch (_) {
-      // 해제 시 에러 무시
-    }
+    } catch (_) {}
+
+    _cachedDeviceProvider?.removeListener(_onDeviceStateChanged);
 
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // [비즈니스 로직]
-  // ---------------------------------------------------------------------------
+  void _syncEpcMaps() {
+    if (_cachedUserProvider != null && _cachedUserProvider!.list.length != _lastUserListLength) {
+      _userMapCache.clear();
+      for (var user in _cachedUserProvider!.list) {
+        if (user.tagId.isNotEmpty) _userMapCache[user.tagId.toUpperCase()] = user;
+        if (user.tagEpc.isNotEmpty) _userMapCache[user.tagEpc.toUpperCase()] = user;
+      }
+      _lastUserListLength = _cachedUserProvider!.list.length;
+    }
+
+    if (_cachedProductProvider != null && _cachedProductProvider!.items.length != _lastProductListLength) {
+      _productMapCache.clear();
+      for (var product in _cachedProductProvider!.items) {
+        if (product.tagId.isNotEmpty) _productMapCache[product.tagId.toUpperCase()] = product;
+        if (product.tagEpc.isNotEmpty) _productMapCache[product.tagEpc.toUpperCase()] = product;
+      }
+      _lastProductListLength = _cachedProductProvider!.items.length;
+    }
+  }
+
+  void _checkContinuousDetection() {
+    if (!mounted || _realtimeLogs.isEmpty || _cachedDeviceProvider == null) return;
+    if (_autoSaveTimer == null || !_autoSaveTimer!.isActive) return;
+
+    bool isActivelyScanned = false;
+    final DateTime now = DateTime.now().add(_timeOffset);
+
+    for (String epc in _processedTags.keys) {
+      final state = _cachedDeviceProvider!.tagStates[epc];
+      if (state != null && state.status != 'NONE') {
+        if (now.difference(state.lastSeenTime).inSeconds < 2) {
+          isActivelyScanned = true;
+          break;
+        }
+      }
+    }
+
+    if (isActivelyScanned) {
+      if (_autoSaveCountdown < _autoSaveDurationSeconds) {
+        setState(() {
+          _autoSaveCountdown = _autoSaveDurationSeconds;
+        });
+      }
+    }
+  }
+
+  void _flushPhysicalBuffers() {
+    if (_cachedDeviceProvider != null) {
+      _processedTags.removeWhere((epc, _) => !_cachedDeviceProvider!.tagStates.containsKey(epc));
+    }
+  }
+
+  void _onDeviceStateChanged() {
+    if (!_isReady || !mounted || _cachedDeviceProvider == null || _cachedProductProvider == null || _cachedUserProvider == null) {
+      return;
+    }
+
+    _syncEpcMaps();
+
+    bool hasNewDetection = false;
+    final DateTime now = DateTime.now().add(_timeOffset);
+
+    _cachedDeviceProvider!.tagStates.forEach((String epc, TagState state) {
+      if (state.status == 'NONE') return;
+
+      final int lastChangeMs = state.lastStateChangeTime.millisecondsSinceEpoch;
+      if (_processedTags[epc] == lastChangeMs) return;
+
+      String deviceName = "스마트 게이트";
+      bool isAutoMode = true;
+
+      try {
+        final device = _cachedDeviceProvider!.list.firstWhere((d) => d.id == state.lastReaderId);
+        deviceName = device.name;
+
+        final String usageRole = device.settings['usage_role']?.toString() ?? '';
+        if (usageRole.contains('수동')) {
+          isAutoMode = false;
+        }
+      } catch (_) {}
+
+      if (!isAutoMode) return;
+
+      _processedTags[epc] = lastChangeMs;
+      final bool isEntry = state.status == 'IN';
+      final String epcUpper = epc.toUpperCase();
+
+      final UserModel? matchedUser = _userMapCache[epcUpper];
+      if (matchedUser != null) {
+        _processRealUserTag(matchedUser, isEntry, deviceName, now);
+        hasNewDetection = true;
+        return;
+      }
+
+      final ProductModel? matchedProduct = _productMapCache[epcUpper];
+      if (matchedProduct != null) {
+        _processRealProductTag(matchedProduct, isEntry, deviceName, now);
+        hasNewDetection = true;
+        return;
+      }
+
+      _processUnknownTag(epcUpper, isEntry, deviceName, now);
+      hasNewDetection = true;
+    });
+
+    if (hasNewDetection) {
+      _startAutoSaveTimer();
+    }
+  }
+
+  /// ---------------------------------------------------------------------------
+  /// [공용 함수] 최근 5초 이내 세션에서 작업자 정보를 찾아 반환합니다.
+  /// ---------------------------------------------------------------------------
+  Map<String, String> _getActiveSessionWorker(DateTime detectTime) {
+    String workerName = '미인식 작업자';
+    String workerImage = '';
+
+    for (var log in _realtimeLogs) {
+      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+      if (log.content != '미인식 작업자' && !log.content.contains('미등록')) {
+        workerName = log.content;
+        workerImage = log.imageUrl;
+        break; // 가장 최근의 유효한 작업자를 찾으면 종료
+      }
+    }
+    return {'name': workerName, 'image': workerImage};
+  }
+
+  void _processUnknownTag(String epc, bool isEntry, String deviceName, DateTime detectTime) {
+    if (_isStandbyActive) {
+      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+    }
+
+    DetectionModel? targetLog;
+
+    for (var log in _realtimeLogs) {
+      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+      // 🔥 [방향 분리 조건 제거] 장소만 같으면 하나의 번들로 병합합니다.
+      if (log.type == 'unknown' && log.spot == deviceName) {
+        targetLog = log;
+        break;
+      }
+    }
+
+    final Map<String, String> itemData = {
+      'id': epc,
+      'name': 'EPC: $epc',
+      'image': '',
+      'dir': isEntry ? 'IN' : 'OUT' // 🔥 개별 아이템에 방향 속성 추가
+    };
+
+    setState(() {
+      if (targetLog != null) {
+        bool exists = targetLog.items.any((i) => i['id'] == epc);
+        if (!exists) {
+          targetLog.items.add(itemData);
+
+          // 복합 상태(MIXED) 판별
+          bool hasIn = targetLog.items.any((i) => i['dir'] == 'IN');
+          bool hasOut = targetLog.items.any((i) => i['dir'] == 'OUT');
+          String newStatus = targetLog.status;
+
+          if (hasIn && hasOut) {
+            newStatus = '복합감지(MIXED)';
+          } else if (hasIn) {
+            newStatus = '자동입고(IN)';
+          } else if (hasOut) {
+            newStatus = '자동출고(OUT)';
+          }
+
+          int index = _realtimeLogs.indexOf(targetLog);
+          _realtimeLogs[index] = DetectionModel(
+              id: targetLog.id,
+              type: targetLog.type,
+              content: targetLog.content,
+              imageUrl: targetLog.imageUrl,
+              spot: targetLog.spot,
+              status: newStatus,
+              isEntry: targetLog.isEntry,
+              timestamp: targetLog.timestamp,
+              items: targetLog.items
+          );
+        }
+      } else {
+        _realtimeLogs.insert(0, DetectionModel(
+            type: 'unknown',
+            content: '미등록 태그 감지',
+            imageUrl: '',
+            spot: deviceName,
+            status: isEntry ? '자동입고(IN)' : '자동출고(OUT)',
+            isEntry: isEntry,
+            timestamp: detectTime,
+            items: [itemData]
+        ));
+      }
+    });
+  }
+
+  void _processRealProductTag(ProductModel product, bool isEntry, String deviceName, DateTime detectTime) {
+    if (_isStandbyActive) {
+      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+    }
+
+    DetectionModel? targetLog;
+    final workerInfo = _getActiveSessionWorker(detectTime);
+
+    for (int i = 0; i < _realtimeLogs.length; i++) {
+      final log = _realtimeLogs[i];
+      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+
+      // 🔥 [방향 분리 조건 제거] 방향(isEntry)이 달라도 장소(spot)가 같으면 같은 묶음으로 병합!
+      if (log.spot == deviceName && (log.type == 'matched' || log.type == 'person')) {
+        targetLog = log;
+        break;
+      }
+    }
+
+    final Map<String, String> itemData = {
+      'id': product.id,
+      'name': product.name,
+      'image': _getProductImageUrl(product),
+      'dir': isEntry ? 'IN' : 'OUT' // 🔥 개별 아이템 방향 명시
+    };
+
+    setState(() {
+      if (targetLog != null) {
+        bool exists = targetLog.items.any((i) => i['id'] == product.id);
+        if (!exists) {
+          targetLog.items.add(itemData);
+
+          // 🔥 번들 내 아이템들의 복합 상태(MIXED) 판별 로직
+          bool hasIn = targetLog.items.any((i) => i['dir'] == 'IN');
+          bool hasOut = targetLog.items.any((i) => i['dir'] == 'OUT');
+          String newStatus = targetLog.status;
+
+          if (hasIn && hasOut) {
+            newStatus = '복합이동(MIXED)';
+          } else if (hasIn) {
+            newStatus = '자동입고(IN)';
+          } else if (hasOut) {
+            newStatus = '자동출고(OUT)';
+          }
+
+          // 미인식 작업자였다가 이름이 생겼거나, 상태가 변했다면 덮어씌움
+          if (targetLog.content == '미인식 작업자' && workerInfo['name'] != '미인식 작업자') {
+            int index = _realtimeLogs.indexOf(targetLog);
+            _realtimeLogs[index] = DetectionModel(
+                id: targetLog.id,
+                type: 'matched',
+                content: workerInfo['name']!,
+                imageUrl: workerInfo['image']!,
+                spot: targetLog.spot,
+                status: newStatus,
+                isEntry: targetLog.isEntry,
+                timestamp: targetLog.timestamp,
+                items: targetLog.items
+            );
+          } else {
+            int index = _realtimeLogs.indexOf(targetLog);
+            _realtimeLogs[index] = DetectionModel(
+                id: targetLog.id,
+                type: targetLog.type,
+                content: targetLog.content,
+                imageUrl: targetLog.imageUrl,
+                spot: targetLog.spot,
+                status: newStatus, // 업데이트된 상태명
+                isEntry: targetLog.isEntry,
+                timestamp: targetLog.timestamp,
+                items: targetLog.items
+            );
+          }
+        }
+      } else {
+        _realtimeLogs.insert(0, DetectionModel(
+            type: 'matched',
+            content: workerInfo['name']!,
+            imageUrl: workerInfo['image']!,
+            spot: deviceName,
+            status: isEntry ? '자동입고(IN)' : '자동출고(OUT)',
+            isEntry: isEntry,
+            timestamp: detectTime,
+            items: [itemData]
+        ));
+      }
+    });
+  }
+
+  void _processRealUserTag(UserModel user, bool isEntry, String deviceName, DateTime detectTime) {
+    if (_isStandbyActive) {
+      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+    }
+
+    bool updatedAnyBundle = false;
+    final String workerContent = '${user.name} (${user.code})'.trim();
+    final String workerImage = _getUserImageUrl(user);
+
+    setState(() {
+      // 5초 이내의 모든 미인식 번들을 이 작업자로 덮어씌웁니다.
+      for (int i = 0; i < _realtimeLogs.length; i++) {
+        final log = _realtimeLogs[i];
+        if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+
+        if (log.content == '미인식 작업자' && log.spot == deviceName) {
+          _realtimeLogs[i] = DetectionModel(
+              id: log.id,
+              type: log.type == 'unknown' ? 'unknown' : 'matched',
+              content: workerContent,
+              imageUrl: workerImage,
+              spot: log.spot,
+              status: log.status,
+              isEntry: log.isEntry,
+              timestamp: log.timestamp,
+              items: log.items
+          );
+          updatedAnyBundle = true;
+        }
+      }
+
+      if (!updatedAnyBundle) {
+        bool alreadyExists = false;
+        if (_realtimeLogs.isNotEmpty) {
+          final first = _realtimeLogs.first;
+          // 인원의 출입 로그도 방향 무관하게 동일 장소 5초 이내면 하나로 합치고 갱신 가능하나,
+          // 순수 인원 로그는 아이템이 없으므로 중복 생성만 방지합니다.
+          if (detectTime.difference(first.timestamp).inSeconds <= 5 &&
+              first.content == workerContent &&
+              first.spot == deviceName) {
+            alreadyExists = true;
+          }
+        }
+        if (!alreadyExists) {
+          _realtimeLogs.insert(0, DetectionModel(
+              type: 'person',
+              content: workerContent,
+              imageUrl: workerImage,
+              spot: deviceName,
+              status: isEntry ? '입장' : '퇴장',
+              isEntry: isEntry,
+              timestamp: detectTime,
+              items: []
+          ));
+        }
+      }
+    });
+  }
+
+  String _getProductImageUrl(ProductModel p) {
+    try {
+      final dynamic url = p.getImageUrl(pb.baseUrl, thumb: '200x200');
+      return url?.toString() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _getUserImageUrl(UserModel u) {
+    try {
+      final dynamic url = u.getImageUrl(pb.baseUrl, thumb: '200x200');
+      return url?.toString() ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
 
   Future<void> _fetchSummaryData() async {
     try {
       final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-      // 인원 통계
       int tIn = 0;
       int tOut = 0;
       int cStay = 0;
@@ -157,7 +564,6 @@ class _KioskViewState extends State<KioskView> {
         debugPrint("User 통계 에러: $e");
       }
 
-      // 물품 통계
       int totalStock = 0;
       int itemIn = 0;
       int itemOut = 0;
@@ -222,10 +628,8 @@ class _KioskViewState extends State<KioskView> {
     }
   }
 
-  // DB에서 가장 최신 공지사항을 가져오는 로직
   Future<void> _fetchNotice() async {
     try {
-      // notices 컬렉션에서 등록일(created) 기준 가장 최신 데이터를 1건만 가져옵니다.
       final records = await pb.collection('notices').getList(
         page: 1,
         perPage: 1,
@@ -234,7 +638,6 @@ class _KioskViewState extends State<KioskView> {
 
       if (records.items.isNotEmpty && mounted) {
         final data = records.items.first.data;
-        // 가져온 데이터에서 제목과 내용을 조합하여 키오스크 전광판 양식으로 만듭니다.
         final String title = data['title']?.toString() ?? '사내 공지';
         final String content = data['content']?.toString() ?? '';
 
@@ -242,7 +645,6 @@ class _KioskViewState extends State<KioskView> {
           _noticeText = "[$title] $content";
         });
       } else if (mounted) {
-        // 등록된 공지사항이 비어있을 경우의 기본 메시지입니다.
         setState(() {
           _noticeText = "현재 등록된 특별한 공지사항이 없습니다. 현장 안전에 유의하여 작업해주시기 바랍니다.";
         });
@@ -264,13 +666,9 @@ class _KioskViewState extends State<KioskView> {
       pb.collection('products').subscribe('*', (e) {
         if (mounted) { _fetchSummaryData(); }
       });
-
-      // 관리자가 공지사항을 수정하거나 추가하면 키오스크도 즉각 이를 감지하고 업데이트합니다.
       pb.collection('notices').subscribe('*', (e) {
         if (mounted) { _fetchNotice(); }
       });
-
-      debugPrint("✅ 실시간 SSE 구독 설정 완료");
     } catch (e) {
       debugPrint("❌ 실시간 구독 중 에러: $e");
     }
@@ -342,21 +740,50 @@ class _KioskViewState extends State<KioskView> {
         final Map<String, dynamic> dbRecord = log.toJson();
         dbRecord['timestamp'] = "${log.timestamp.toUtc().toString().replaceAll('T', ' ')}Z";
 
+        if (log.type == 'unknown') {
+          dbRecord['type'] = 'unknown';
+        }
+
         await pb.collection('detections').create(body: dbRecord);
 
-        final userRecords = await pb.collection('users').getList(filter: 'name = "${log.content}"', perPage: 1);
+        if (log.type == 'unknown') continue;
 
-        if (userRecords.items.isNotEmpty) {
-          final userRecord = userRecords.items.first;
-          final Map<String, dynamic> meta = Map<String, dynamic>.from(userRecord.data['metadata'] ?? {});
-          String accessType = log.type == 'person'
-              ? (log.status.contains('퇴장') ? '퇴장' : '입장')
-              : (log.isEntry ? '입장' : '퇴장');
+        if (log.content != '미인식 작업자') {
+          String searchName = log.content.split(' ').first;
+          final userRecords = await pb.collection('users').getList(filter: 'name ~ "$searchName"', perPage: 1);
 
-          meta['last_access_type'] = accessType;
-          meta['last_access_time'] = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+          if (userRecords.items.isNotEmpty) {
+            final userRecord = userRecords.items.first;
+            final Map<String, dynamic> meta = Map<String, dynamic>.from(userRecord.data['metadata'] ?? {});
 
-          await pb.collection('users').update(userRecord.id, body: {'metadata': meta});
+            String accessType = log.type == 'person'
+                ? (log.status.contains('퇴장') ? '퇴장' : '입장')
+                : (log.isEntry ? '입장' : '퇴장');
+
+            meta['last_access_type'] = accessType;
+            meta['last_access_time'] = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+
+            await pb.collection('users').update(userRecord.id, body: {'metadata': meta});
+          }
+        }
+
+        if (log.type == 'matched' && log.items.isNotEmpty) {
+          for (var item in log.items) {
+            if (item.containsKey('id') && item['id'] != null && item['id']!.isNotEmpty) {
+              // 🔥 아이템 개별 방향('dir')을 기반으로 독립적인 DB 상태 결정
+              String itemDir = item['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
+              String newStatus = (itemDir == 'IN') ? '자동입고' : '자동출고';
+
+              try {
+                await pb.collection('products').update(item['id']!, body: {
+                  'status': newStatus,
+                  'location': log.spot
+                });
+              } catch (e) {
+                debugPrint("물품 상태 업데이트 개별 에러: $e");
+              }
+            }
+          }
         }
       }
     } catch (e) {
@@ -365,6 +792,7 @@ class _KioskViewState extends State<KioskView> {
 
     if (mounted) {
       setState(() {
+        _flushPhysicalBuffers();
         _realtimeLogs.clear();
         if (_useStandbyMode) { _isStandbyActive = true; }
       });
@@ -375,6 +803,7 @@ class _KioskViewState extends State<KioskView> {
   void _executeCancelAndClear() {
     _autoSaveTimer?.cancel();
     setState(() {
+      _flushPhysicalBuffers();
       _realtimeLogs.clear();
       if (_useStandbyMode) { _isStandbyActive = true; }
     });
@@ -404,17 +833,18 @@ class _KioskViewState extends State<KioskView> {
       );
     } else {
       if (_simCount % 3 == 0) {
+        // 🔥 복합 상태 시뮬레이션
         newLog = DetectionModel(
             type: 'matched',
             content: '미인식 작업자',
             imageUrl: '',
             spot: 'B구역 2번 공정 게이트',
-            status: '출고(대기중)',
-            isEntry: false,
+            status: '복합이동(MIXED)',
+            isEntry: true,
             timestamp: detectTime,
             items: [
-              {'name': '고성능 해머 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200'},
-              {'name': '안전모 (Type-A)', 'image': 'https://images.unsplash.com/photo-1599408162162-6b0af444014e?q=80&w=200'}
+              {'id': 'sim_1', 'name': '고성능 해머 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200', 'dir': 'IN'},
+              {'id': 'sim_2', 'name': '안전모 (Type-A)', 'image': 'https://images.unsplash.com/photo-1599408162162-6b0af444014e?q=80&w=200', 'dir': 'OUT'}
             ]
         );
       } else if (_simCount % 3 == 1) {
@@ -423,12 +853,12 @@ class _KioskViewState extends State<KioskView> {
             content: '이작업 주임',
             imageUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200',
             spot: 'B구역 2번 공정 게이트',
-            status: '출고(작업)',
+            status: '자동출고(OUT)',
             isEntry: false,
             timestamp: detectTime,
             items: [
-              {'name': '측정기 A-type', 'image': 'https://images.unsplash.com/photo-1581092160562-40aa08e78837?q=80&w=200'},
-              {'name': '개인 공구함', 'image': 'https://images.unsplash.com/photo-1530124566582-a618bc2615ad?q=80&w=200'}
+              {'id': 'sim_3', 'name': '측정기 A-type', 'image': 'https://images.unsplash.com/photo-1581092160562-40aa08e78837?q=80&w=200', 'dir': 'OUT'},
+              {'id': 'sim_4', 'name': '개인 공구함', 'image': 'https://images.unsplash.com/photo-1530124566582-a618bc2615ad?q=80&w=200', 'dir': 'OUT'}
             ]
         );
       } else {
@@ -437,11 +867,11 @@ class _KioskViewState extends State<KioskView> {
             content: '홍길동 책임',
             imageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200',
             spot: 'B구역 1번 자재고 게이트',
-            status: '입고(반납)',
+            status: '자동입고(IN)',
             isEntry: true,
             timestamp: detectTime,
             items: [
-              {'name': '전동 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200'}
+              {'id': 'sim_5', 'name': '전동 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200', 'dir': 'IN'}
             ]
         );
       }
@@ -454,36 +884,12 @@ class _KioskViewState extends State<KioskView> {
     _startAutoSaveTimer();
   }
 
-  void _simulatePersonTag() {
-    if (_realtimeLogs.isNotEmpty && _realtimeLogs.first.content == '미인식 작업자') {
-      final oldLog = _realtimeLogs.first;
-      setState(() {
-        _realtimeLogs[0] = DetectionModel(
-            id: oldLog.id,
-            type: oldLog.type,
-            content: '홍길동 책임',
-            imageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200',
-            spot: oldLog.spot,
-            status: '출고(작업)',
-            isEntry: oldLog.isEntry,
-            items: oldLog.items,
-            timestamp: oldLog.timestamp
-        );
-      });
-      _startAutoSaveTimer();
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // [반응형 레이아웃 빌드 메서드]
-  // ---------------------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final bool isDark = theme.brightness == Brightness.dark;
     final Size screenSize = MediaQuery.of(context).size;
-    final bool isSmallScreen = screenSize.width < 1000; // 태블릿/폰 기준
+    final bool isSmallScreen = screenSize.width < 1000;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -498,7 +904,6 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// 1. 대기 화면 (반응형 대응)
   Widget _buildStandbyScreen({required Key key, required bool isDark, required bool isSmall}) {
     return SizedBox(
       key: key,
@@ -520,7 +925,6 @@ class _KioskViewState extends State<KioskView> {
               ),
             ),
           ),
-          // 시간 표시 (화면 크기에 따라 폰트 크기 조정)
           Positioned(
               top: isSmall ? 16 : 32,
               left: isSmall ? 16 : 32,
@@ -536,7 +940,6 @@ class _KioskViewState extends State<KioskView> {
                   )
               )
           ),
-          // 설정 및 종료 버튼 그룹
           Positioned(
               top: isSmall ? 16 : 32,
               right: isSmall ? 8 : 32,
@@ -562,7 +965,6 @@ class _KioskViewState extends State<KioskView> {
                   ]
               )
           ),
-          // 하단 공지사항 (여기서 _noticeText 변수를 사용하여 출력합니다)
           Positioned(
               bottom: isSmall ? 10 : 30,
               left: isSmall ? 10 : 40,
@@ -580,7 +982,6 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// 2. 실시간 로그 화면 (반응형 대응)
   Widget _buildLogScreen({required Key key, required bool isDark, required ThemeData theme, required bool isSmall}) {
     return Padding(
       key: key,
@@ -622,7 +1023,7 @@ class _KioskViewState extends State<KioskView> {
                 separatorBuilder: (context, index) => const SizedBox(height: 24),
                 itemBuilder: (context, index) {
                   final DetectionModel log = _realtimeLogs[index];
-                  final bool isWarning = log.content == '미인식 작업자' && _requireWorkerMatch;
+                  final bool isWarning = log.content == '미인식 작업자' && _requireWorkerMatch && log.type != 'unknown';
 
                   return _LogCardWidget(
                       log: log,
@@ -643,11 +1044,9 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// [반응형 대응] 헤더 영역
   Widget _buildHeader({required bool isDark, required bool isSmall}) {
     final Color titleColor = AppTheme.dataColor(isDark);
 
-    // 모바일/작은 태블릿에서는 헤더를 위아래로 나눔
     if (isSmall && MediaQuery.of(context).size.width < 700) {
       return Column(
         children: [
@@ -676,7 +1075,6 @@ class _KioskViewState extends State<KioskView> {
       );
     }
 
-    // 일반 키오스크/데스크톱 헤더
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -722,11 +1120,9 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// [반응형 대응] 요약 바 영역
   Widget _buildSummaryBar({required bool isDark, required bool isSmall}) {
     final bool isExtremeSmall = MediaQuery.of(context).size.width < 700;
 
-    // 모바일에서는 2x2 그리드 형태로 표시
     if (isExtremeSmall) {
       return Container(
         padding: const EdgeInsets.all(16),
@@ -754,7 +1150,6 @@ class _KioskViewState extends State<KioskView> {
       );
     }
 
-    // 일반 가로형 요약 바
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         decoration: BoxDecoration(
@@ -789,7 +1184,6 @@ class _KioskViewState extends State<KioskView> {
     );
   }
 
-  /// [반응형 대응] 하단 액션 패널
   Widget _buildAutoSaveActionPanel({required bool isDark, required ThemeData theme, required bool isSmall}) {
     final bool canSave = _canSave;
     final bool isPhone = MediaQuery.of(context).size.width < 700;
@@ -835,10 +1229,6 @@ class _KioskViewState extends State<KioskView> {
       ),
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // [공통 컴포넌트들]
-  // ---------------------------------------------------------------------------
 
   Widget _buildModeSwitcher({required bool isDark, bool forceWhiteText = false}) {
     return Container(
@@ -923,9 +1313,6 @@ class _KioskViewState extends State<KioskView> {
   }
 }
 
-/// ---------------------------------------------------------------------------
-/// [로그 카드 위젯 - 반응형 대응]
-/// ---------------------------------------------------------------------------
 class _LogCardWidget extends StatelessWidget {
   final DetectionModel log;
   final bool isDark;
@@ -944,9 +1331,13 @@ class _LogCardWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isMatched = log.type == 'matched';
+    final bool isUnknown = log.type == 'unknown';
+    // 🔥 번들의 최상단 상태가 복합인지 판별하여 색상을 결정합니다.
+    final bool isMixed = log.status.contains('복합');
+
     final Color statusColor = isWarning
         ? AppTheme.danger
-        : (log.isEntry ? AppTheme.success : Colors.orange.shade700);
+        : (isUnknown ? Colors.grey.shade500 : (isMixed ? Colors.indigo : (log.isEntry ? AppTheme.success : Colors.orange.shade700)));
 
     return Container(
       padding: EdgeInsets.all(isSmall ? 16 : 24),
@@ -960,11 +1351,11 @@ class _LogCardWidget extends StatelessWidget {
         children: [
           Row(
             children: [
-              // 작업자 프로필 이미지 (너무 축약되었던 코드를 블록 단위로 풀어서 가독성 개선)
               CircleAvatar(
-                  radius: isSmall ? 24 : 32,
-                  backgroundImage: log.imageUrl.isNotEmpty ? NetworkImage(log.imageUrl) : null,
-                  child: log.imageUrl.isEmpty ? const Icon(Icons.person) : null
+                radius: isSmall ? 24 : 32,
+                backgroundImage: log.imageUrl.isNotEmpty ? NetworkImage(log.imageUrl) : null,
+                backgroundColor: isUnknown ? Colors.grey.shade400 : null,
+                child: log.imageUrl.isEmpty ? Icon(isUnknown ? Icons.help_outline : Icons.person, color: isUnknown ? Colors.white : null) : null,
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -973,7 +1364,7 @@ class _LogCardWidget extends StatelessWidget {
                   children: [
                     Text(
                         log.content,
-                        style: TextStyle(fontSize: isSmall ? 20 : 26, fontWeight: FontWeight.bold)
+                        style: TextStyle(fontSize: isSmall ? 20 : 26, fontWeight: FontWeight.bold, color: isUnknown ? Colors.grey.shade700 : null)
                     ),
                     Text(
                         log.spot,
@@ -997,13 +1388,12 @@ class _LogCardWidget extends StatelessWidget {
             ],
           ),
 
-          // 물품이 매칭된 경우 물품 사진들을 보여주는 영역
-          if (isMatched && log.items.isNotEmpty) ...[
+          if ((isMatched || isUnknown) && log.items.isNotEmpty) ...[
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
             Text(
-                "📦 감지 물품: ${log.items.length}건",
+                "📦 감지 태그/물품: ${log.items.length}건",
                 style: const TextStyle(fontWeight: FontWeight.bold)
             ),
             const SizedBox(height: 8),
@@ -1013,23 +1403,69 @@ class _LogCardWidget extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 itemCount: log.items.length,
                 itemBuilder: (context, i) {
+                  // 🔥 개별 아이템의 방향(dir) 속성을 읽어옵니다.
+                  String itemDir = log.items[i]['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
+                  bool isItemIn = itemDir == 'IN';
+                  Color itemBadgeColor = isItemIn ? AppTheme.success : Colors.orange.shade700;
+                  String itemBadgeText = isItemIn ? '입고' : '출고';
+
                   return Container(
-                    width: isSmall ? 80 : 120,
+                    width: isSmall ? 80 : 120, // 아이템 하나의 전체 폭 확보
                     margin: const EdgeInsets.only(right: 12),
                     child: Column(
                       children: [
                         Expanded(
-                          // ClipRRect 위젯을 사용하여 디자인 철학(미니멀리즘)에 맞게
-                          // 딱딱한 사각형 이미지를 둥근 모서리로 부드럽게 감싸줍니다.
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8.0), // 라운딩 수치 조절
-                            child: Image.network(
-                                log.items[i]['image'] ?? '',
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Icon(Icons.inventory);
-                                }
-                            ),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8.0),
+                                child: log.items[i]['image'] != null && log.items[i]['image']!.isNotEmpty
+                                    ? Image.network(
+                                    log.items[i]['image'] ?? '',
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) {
+                                      return const Icon(Icons.inventory);
+                                    }
+                                )
+                                    : Container(
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    color: Colors.grey.shade200,
+                                    child: Center(
+                                        child: Icon(isUnknown ? Icons.qr_code_scanner : Icons.inventory, color: Colors.grey.shade400, size: 36)
+                                    )
+                                ),
+                              ),
+                              // 🔥 개별 방향 표시 뱃지 추가
+                              Positioned(
+                                  top: 0, left: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(
+                                        color: itemBadgeColor,
+                                        borderRadius: const BorderRadius.only(
+                                            topLeft: Radius.circular(8.0),
+                                            bottomRight: Radius.circular(8.0)
+                                        )
+                                    ),
+                                    child: Text(
+                                        itemBadgeText,
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)
+                                    ),
+                                  )
+                              ),
+                              // 🔥 개별 아이템 테두리에 색상 부여하여 직관성 극대화
+                              Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                        color: itemBadgeColor.withValues(alpha: 0.6),
+                                        width: 2.0
+                                    ),
+                                    borderRadius: BorderRadius.circular(8.0),
+                                  )
+                              )
+                            ],
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -1037,7 +1473,7 @@ class _LogCardWidget extends StatelessWidget {
                             log.items[i]['name'] ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12)
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)
                         ),
                       ],
                     ),
@@ -1052,10 +1488,6 @@ class _LogCardWidget extends StatelessWidget {
   }
 }
 
-/// ---------------------------------------------------------------------------
-/// [공지사항 흐르는 텍스트 - 반응형 대응]
-/// (축약되었던 코드를 읽기 쉽게 블록 스타일로 포맷팅 했습니다.)
-/// ---------------------------------------------------------------------------
 class _MarqueeWidget extends StatefulWidget {
   final String text;
   final Color backgroundColor;
@@ -1081,7 +1513,6 @@ class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProvide
   @override
   void initState() {
     super.initState();
-    // 흐르는 텍스트 애니메이션 컨트롤러 설정
     _controller = AnimationController(
         vsync: this,
         duration: const Duration(seconds: 25)
@@ -1105,7 +1536,6 @@ class _MarqueeWidgetState extends State<_MarqueeWidget> with SingleTickerProvide
               return AnimatedBuilder(
                 animation: _controller,
                 builder: (context, child) {
-                  // 오른쪽 끝에서 나타나서 왼쪽으로 스크롤되는 오프셋 계산
                   final double offset = constraints.maxWidth - (_controller.value * (constraints.maxWidth + 2000));
                   return Transform.translate(
                       offset: Offset(offset, 0),

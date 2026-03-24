@@ -82,6 +82,11 @@ class _ProductPageState extends State<ProductPage> {
   List<String>? _aiFilteredIds;
   bool _isAiSearching = false;
 
+  // 🔥 [동시성 제어 및 채터링 방지 2중 방어벽]
+  // C++의 Mutex와 하드웨어 인터럽트 Debounce 개념을 플러터 상태에 적용합니다.
+  final Set<String> _lockedItemIds = {}; // 1. 현재 DB 트랜잭션이 진행 중인 자산 ID (비동기 락)
+  final Map<String, DateTime> _itemCooldowns = {}; // 2. 자산별 마지막 처리 시간 (채터링 무시용 쿨다운)
+
   static const double _colImgSize = 70.0;
   static const double _colActionWidth = 300.0; // 버튼 추가로 인한 넓이 확장
 
@@ -201,7 +206,7 @@ class _ProductPageState extends State<ProductPage> {
   /// 데이터 필터링 동기화 (메모리에서 즉시 처리)
   void _syncFiltering(List<ProductModel> rawItems) {
     final String q = _currentQuery.trim().toLowerCase();
-    final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final DateTime now = DateTime.now();
 
     List<ProductModel> result = rawItems.where((ProductModel p) {
       if (_aiFilteredIds != null) {
@@ -215,7 +220,6 @@ class _ProductPageState extends State<ProductPage> {
           final String catStr = _safeStr(p.category).toLowerCase();
           final String snStr = _safeStr(p.serialNumber).toLowerCase();
 
-          // 🔥 EPC 검색 조건 반영
           isMatch = p.name.toLowerCase().contains(q) ||
               p.tagId.toLowerCase().contains(q) ||
               p.tagEpc.toLowerCase().contains(q) ||
@@ -244,21 +248,25 @@ class _ProductPageState extends State<ProductPage> {
       final String crStr = _safeStr(p.created);
       final String lastDateStr = upStr.isNotEmpty ? upStr : crStr;
 
-      String localDateStr = "";
+      bool isToday = false;
       if (lastDateStr.isNotEmpty) {
-        DateTime? parsedDate = DateTime.tryParse(lastDateStr);
+        DateTime? parsedDate = DateTime.tryParse(lastDateStr)?.toLocal();
         if (parsedDate != null) {
-          localDateStr = DateFormat('yyyy-MM-dd').format(parsedDate.toLocal());
+          if (parsedDate.year == now.year &&
+              parsedDate.month == now.month &&
+              parsedDate.day == now.day) {
+            isToday = true;
+          }
         }
       }
 
       final bool isOut = _outboundStatuses.contains(p.status) || _exceptionStatuses.contains(p.status);
 
       if (_activeMetricFilter == "금일 입고") {
-        return localDateStr == todayStr && _inboundStatuses.contains(p.status);
+        return isToday && _inboundStatuses.contains(p.status);
       }
       if (_activeMetricFilter == "금일 출고") {
-        return localDateStr == todayStr && isOut;
+        return isToday && isOut;
       }
       if (_activeMetricFilter == "현재 실재고") {
         return !isOut;
@@ -282,7 +290,7 @@ class _ProductPageState extends State<ProductPage> {
 
   /// 대시보드 지표 계산기
   Map<String, dynamic> _calculateMetrics(List<ProductModel> allItems) {
-    final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final DateTime now = DateTime.now();
     int todayIn = 0;
     int todayOut = 0;
     int currentStock = 0;
@@ -292,17 +300,21 @@ class _ProductPageState extends State<ProductPage> {
       final String crStr = _safeStr(item.created);
       final String lastDateStr = upStr.isNotEmpty ? upStr : crStr;
 
-      String localDateStr = "";
+      bool isToday = false;
       if (lastDateStr.isNotEmpty) {
-        DateTime? parsedDate = DateTime.tryParse(lastDateStr);
+        DateTime? parsedDate = DateTime.tryParse(lastDateStr)?.toLocal();
         if (parsedDate != null) {
-          localDateStr = DateFormat('yyyy-MM-dd').format(parsedDate.toLocal());
+          if (parsedDate.year == now.year &&
+              parsedDate.month == now.month &&
+              parsedDate.day == now.day) {
+            isToday = true;
+          }
         }
       }
 
       final bool isOut = _outboundStatuses.contains(item.status) || _exceptionStatuses.contains(item.status);
 
-      if (localDateStr == todayStr) {
+      if (isToday) {
         if (!isOut) {
           todayIn++;
         } else {
@@ -411,7 +423,7 @@ class _ProductPageState extends State<ProductPage> {
 
         return {
           'name': '[ERP] $parsedName',
-          'tag_id': parsedTagId, // 🔥 원본 데이터 보관 (태그 발행시 자동 처리)
+          'tag_id': parsedTagId,
           'location': parsedLocation,
           'status': parsedStatus,
           'category': parsedCategory,
@@ -920,7 +932,6 @@ class _ProductPageState extends State<ProductPage> {
                               provider: provider,
                               deviceProvider: deviceProvider,
                               theme: theme,
-                              // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백 연동
                               onSuccessItem: (String pid) {
                                 setState(() {
                                   _selectedItemIds.remove(pid);
@@ -1906,58 +1917,102 @@ class _ProductPageState extends State<ProductPage> {
 
   /// 수기 입출고 처리 프로세스 연동
   Future<void> _processAssetAccess(ProductProvider provider, ProductModel p, String type, ThemeData theme) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    final userProvider = context.read<UserProvider>();
-
-    final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
-        context: context,
-        builder: (BuildContext ctx) {
-          return _ManualInoutDialog(
-            type: type,
-            product: p,
-            statusIcons: _statusIcons,
-            userList: userProvider.list,
-          );
-        }
-    );
-
-    if (result == null) {
+    // 1. [Lock 검사] 이미 DB 저장 트랜잭션이 진행 중이면 즉시 차단 (Race Condition 방지)
+    if (_lockedItemIds.contains(p.id)) {
+      debugPrint('[${p.name}] 현재 다른 프로세스가 처리 중입니다. (Lock 적용됨)');
       return;
     }
 
-    final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-    List<dynamic> history = p.metadata['history'] is List ? List.from(p.metadata['history']) : [];
-
-    history.insert(0, {
-      'time': now,
-      'type': result['status'],
-      'location': result['location'],
-      'handler': result['handler'],
-      'reason': result['reason'],
-      'is_approved': result['is_approved']
-    });
-
-    final bool success = await provider.handleSave(product: p, data: {
-      'status': result['status'],
-      'location': result['location'],
-      'metadata': {
-        ...p.metadata,
-        'history': history,
+    // 2. [채터링 방지] 최근 3초 이내에 처리된 이력이 있다면 무시 (디바운스/쿨다운)
+    if (_itemCooldowns.containsKey(p.id)) {
+      final int elapsedMs = DateTime.now().difference(_itemCooldowns[p.id]!).inMilliseconds;
+      if (elapsedMs < 3000) { // 3000ms = 3초
+        debugPrint('[${p.name}] 쿨다운 타임 적용 중입니다. ($elapsedMs ms 경과)');
+        return;
       }
-    });
-
-    if (!mounted) {
-      return;
     }
 
-    if (success) {
-      _syncFiltering(provider.items);
-      messenger.showSnackBar(SnackBar(
-          content: Text('[${p.name}] 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-          backgroundColor: AppTheme.success,
-          elevation: 0,
-          duration: const Duration(seconds: 1)
-      ));
+    // Lock 획득
+    setState(() {
+      _lockedItemIds.add(p.id);
+    });
+
+    try {
+      final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+      final userProvider = context.read<UserProvider>();
+
+      final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (BuildContext ctx) {
+            return _ManualInoutDialog(
+              type: type,
+              product: p,
+              statusIcons: _statusIcons,
+              userList: userProvider.list,
+            );
+          }
+      );
+
+      if (result == null) {
+        return; // 사용자가 취소한 경우 (finally 블록에서 자동으로 Lock 해제됨)
+      }
+
+      // [상태 중복 방지 최적화]
+      if (p.status == result['status'] && _safeStr(p.location) == result['location']) {
+        messenger.showSnackBar(SnackBar(
+            content: Text('[${p.name}] 자산은 이미 [${p.status}] 상태이며 위치가 동일합니다. (저장 무시)', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+            backgroundColor: Colors.blueGrey,
+            elevation: 0,
+            duration: const Duration(seconds: 2)
+        ));
+        return;
+      }
+
+      final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+      List<dynamic> history = p.metadata['history'] is List ? List.from(p.metadata['history']) : [];
+
+      history.insert(0, {
+        'time': now,
+        'type': result['status'],
+        'location': result['location'],
+        'handler': result['handler'],
+        'reason': result['reason'],
+        'is_approved': result['is_approved']
+      });
+
+      final bool success = await provider.handleSave(product: p, data: {
+        'status': result['status'],
+        'location': result['location'],
+        'metadata': {
+          ...p.metadata,
+          'history': history,
+        }
+      });
+
+      if (!mounted) {
+        return;
+      }
+
+      if (success) {
+        _syncFiltering(provider.items);
+
+        // 🔥 성공 시 쿨다운 타임 기록 (이 시점부터 3초간 동일 항목 재처리 불가)
+        _itemCooldowns[p.id] = DateTime.now();
+
+        messenger.showSnackBar(SnackBar(
+            content: Text('[${p.name}] 처리 완료', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+            backgroundColor: AppTheme.success,
+            elevation: 0,
+            duration: const Duration(seconds: 1)
+        ));
+      }
+    } finally {
+      // 예외가 발생하든 정상 종료되든 반드시 Lock 반환
+      if (mounted) {
+        setState(() {
+          _lockedItemIds.remove(p.id);
+        });
+      }
     }
   }
 
@@ -2287,7 +2342,10 @@ class _ProductPageState extends State<ProductPage> {
                                                                     },
                                                                     onWriteComplete: (String originalTag) {
                                                                       setS(() {
-                                                                        tagC.text = originalTag;
+                                                                        // 신규 자산 등록 시에만(입력값이 없을 때) 자동 생성된 태그를 반영
+                                                                        if (p == null && tagC.text.isEmpty) {
+                                                                          tagC.text = originalTag;
+                                                                        }
                                                                       });
                                                                     },
                                                                   );
@@ -2830,7 +2888,10 @@ class _ProductPageState extends State<ProductPage> {
       final String defaultSheet = excel.tables.keys.first;
       excel.rename(defaultSheet, '물품리스트');
 
-      final excel_pkg.Sheet sheet = excel['물품리스트']!;
+      // 🔥 [Null-Safety 최적화]
+      // 최신 엑셀 패키지에서 excel['시트명']은 시트가 없으면 자동으로 생성 후 반환하므로
+      // 절대 Null이 되지 않습니다. 따라서 불필요한 '!' 강제 언래핑을 제거했습니다.
+      final excel_pkg.Sheet sheet = excel['물품리스트'];
 
       final List<String> baseHeaders = ['품명', '태그ID', 'EPC', '위치', '상태', '규격', '분류', 'S/N'];
 
@@ -2873,6 +2934,7 @@ class _ProductPageState extends State<ProductPage> {
       );
 
       if (path != null) {
+        // 🔥 [Null-Safety 대응] 최신 패키지에 맞춰 excel.encode() 호출을 유지합니다.
         await File(path).writeAsBytes(excel.encode()!);
         messenger.showSnackBar(const SnackBar(
             content: Text('✅ 데이터 내보내기 성공', style: TextStyle(fontFamily: AppTheme.fontPretendard)),
@@ -2887,8 +2949,6 @@ class _ProductPageState extends State<ProductPage> {
 
 /// ---------------------------------------------------------------------------
 /// 🔥 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
-/// [수정 사항] 물품 관리용 다이얼로그에서도 타이머(초 단위 카운트) 관련 변수와 로직을 완벽히 제거했습니다.
-/// 순수 무한 Blocking 모드로 미니멀하고 안전하게 대기합니다.
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<ProductModel> selectedProducts;
@@ -2897,7 +2957,7 @@ class _BulkTagIssueDialog extends StatefulWidget {
   final ThemeData theme;
   final Function(String)? onWriteComplete;
 
-  /// 🔥 발급에 성공한 자산의 ID를 메인 화면으로 전달하여 자동 선택 해제 처리용 콜백
+  /// 발급에 성공한 자산의 ID를 메인 화면으로 전달하여 자동 선택 해제 처리용 콜백
   final Function(String)? onSuccessItem;
 
   const _BulkTagIssueDialog({
@@ -3025,13 +3085,12 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
           bool isSuccess = false;
 
-          // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
           setState(() {
             _progressValue = j / _issueCount;
             _progressText = "⏳ 신규 자동 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
           });
 
-          // 🔥 하드웨어 통신 대기 (DeviceProvider 단에서 무한으로 Blocking 대기)
+          // 하드웨어 통신 대기
           try {
             isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
           } catch(e) {
@@ -3042,12 +3101,24 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
           }
 
-          // 🔥 성공 시 다음으로 진행
-          setState(() {
-            _progressValue = (j + 1) / _issueCount;
-            _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
-          });
-          await Future.delayed(const Duration(milliseconds: 500));
+          // 🔥 신규 태그 연속 발급 시 대기 시간 부여
+          // 마지막 발급이 아닌 경우에만 3초 대기합니다.
+          bool isLastOperation = (j == _issueCount - 1);
+
+          if (!isLastOperation) {
+            setState(() {
+              _progressValue = (j + 1) / _issueCount;
+              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!\n👉 다음 태그를 안테나에 올려주세요. (3초 대기 중...)";
+            });
+            // 작업자가 다음 태그를 준비할 수 있도록 3초 대기합니다.
+            await Future.delayed(const Duration(seconds: 3));
+          } else {
+            setState(() {
+              _progressValue = (j + 1) / _issueCount;
+              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
+            });
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
             widget.onWriteComplete!(randomTag);
@@ -3061,8 +3132,9 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
         for (int i = 0; i < totalProducts; i++) {
           ProductModel product = widget.selectedProducts[i];
-          // EPC가 있으면 EPC 사용, 없으면 UID, 둘다 없으면 S/N 우선 적용 로직 복구
-          String tagData = product.tagEpc.isNotEmpty ? product.tagEpc : (product.tagId.isNotEmpty ? product.tagId : (product.serialNumber ?? ""));
+
+          // 원본 문자열인 tagId 필드를 최우선으로 사용하여 문제를 차단합니다.
+          String tagData = product.tagId.isNotEmpty ? product.tagId : (product.serialNumber ?? "");
           if (tagData.isEmpty) {
             tagData = product.name;
           }
@@ -3074,13 +3146,12 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
             bool isSuccess = false;
 
-            // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
             setState(() {
               _progressValue = (currentOperationCount - 1) / totalOperations;
               _progressText = "⏳ [${product.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
             });
 
-            // 🔥 하드웨어 통신 대기 (DeviceProvider 루프를 통해 태그가 찍힐 때까지 여기서 완벽하게 Blocking)
+            // 하드웨어 통신 대기
             try {
               isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
             } catch (e) {
@@ -3091,27 +3162,38 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
               throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
             }
 
-            // 🔥 발급 성공
-            setState(() {
-              _progressValue = currentOperationCount / totalOperations;
-              _progressText = "✅ [${product.name}] 발급 성공!";
-            });
-            await Future.delayed(const Duration(milliseconds: 500));
+            // 모든 자산과 모든 반복 횟수의 제일 마지막인지 판단합니다.
+            bool isLastOperationOverall = (i == totalProducts - 1) && (j == _issueCount - 1);
 
-            // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 체크해제 콜백을 발생시킵니다.
+            // 🔥 여러 건을 발급할 때 물리적인 교체 시간을 확보해 줍니다.
+            if (!isLastOperationOverall) {
+              setState(() {
+                _progressValue = currentOperationCount / totalOperations;
+                _progressText = "✅ [${product.name}] 발급 성공!\n👉 다음 태그를 안테나에 올려주세요. (3초 대기 중...)";
+              });
+              // 작업자가 기존 태그를 내리고 새 태그를 올려놓을 수 있게 3초 대기합니다.
+              await Future.delayed(const Duration(seconds: 3));
+            } else {
+              setState(() {
+                _progressValue = currentOperationCount / totalOperations;
+                _progressText = "✅ [${product.name}] 발급 성공!";
+              });
+              await Future.delayed(const Duration(milliseconds: 500));
+            }
+
+            // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 콜백 발생
             if (j == _issueCount - 1) {
               await widget.provider.handleSave(product: product, data: {
-                'tag_id': tagData,  // 원본 입력값
-                'tag_epc': hexData  // 실제 기록에 성공한 Hex 데이터
+                'tag_id': product.tagId.isNotEmpty ? product.tagId : tagData,  // Hex로 덮어쓰기 금지 (원본 문자열 보존)
+                'tag_epc': hexData  // 실제 리더기에 기록된 Hex 데이터
               });
 
-              // 🔥 [선택 해제] 부모 위젯으로 성공 사실을 알려 체크 해제(Deselect) 처리
               if (widget.onSuccessItem != null) {
                 widget.onSuccessItem!(product.id);
               }
 
               if (widget.onWriteComplete != null && totalProducts == 1) {
-                widget.onWriteComplete!(tagData);
+                widget.onWriteComplete!(tagData); // UI로 돌려보낼 때도 변환된 Hex가 아닌 원본 문자열만 반환
               }
             }
           }
@@ -3374,7 +3456,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                   _isProcessing = false;
                   _progressText = '❌ 사용자에 의해 발행이 중단되었습니다. (무한 대기망 강제 해제 중...)';
                 });
-                // 🔥 [강제 종료 보장] 하드웨어 단에서 무한 대기 중인 루프(while)를 즉시 파괴하기 위해 기기 연결을 해제합니다!
                 if (_selectedDeviceId != null) {
                   widget.deviceProvider.disconnectDevice(_selectedDeviceId!);
                 }

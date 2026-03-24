@@ -200,6 +200,7 @@ class _UserPageState extends State<UserPage> {
   }
 
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
+    // 🔥 [성능 최적화] 루프 외부에서 날짜 포맷을 한 번만 계산하여 프레임 드롭(병목)을 방지합니다.
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
     int todayOut = 0;
@@ -209,6 +210,7 @@ class _UserPageState extends State<UserPage> {
       final String lastType = _safeStr(p.metadata['last_access_type']);
       final String lastTime = _safeStr(p.metadata['last_access_time']);
 
+      // 초고속 문자열 비교 (O(1) 연산)
       if (lastTime.startsWith(todayStr)) {
         if (lastType == '입장') {
           todayIn++;
@@ -225,6 +227,9 @@ class _UserPageState extends State<UserPage> {
     return {'in': todayIn, 'out': todayOut, 'current': currentRemained};
   }
 
+  /// ---------------------------------------------------------------------------
+  /// 수동 출입 처리 프로세스
+  /// ---------------------------------------------------------------------------
   Future<void> _processAccessWithLocation(UserProvider provider, UserModel p, String type) async {
     final authProvider = context.read<AuthProvider>();
     bool isSelf = p.id == authProvider.currentUserId;
@@ -247,6 +252,32 @@ class _UserPageState extends State<UserPage> {
       return;
     }
 
+    // 🔥 [상태 중복 방지 최적화] 선배님의 통찰이 반영된 방어 로직 (Redundancy Check)
+    final String lastType = _safeStr(p.metadata['last_access_type']);
+    String lastBuilding = "미지정";
+    String lastGate = "미정";
+
+    if (p.metadata['last_location_info'] is Map) {
+      final Map locMap = p.metadata['last_location_info'] as Map;
+      lastBuilding = _safeStr(locMap['building'], defaultVal: "미지정");
+      lastGate = _safeStr(locMap['gate'], defaultVal: "미정");
+    }
+
+    final String newBuilding = _safeStr(result['building'], defaultVal: "미지정");
+    final String newGate = _safeStr(result['gate'], defaultVal: "미정");
+
+    // 상태(입장/퇴장)가 기존과 동일하고, 건물이름과 게이트마저 동일하다면
+    // 불필요한 DB 트랜잭션 낭비를 막기 위해 즉시 무시합니다.
+    if (lastType == type && lastBuilding == newBuilding && lastGate == newGate) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('[${p.name}]님은 이미 [$type] 상태이며 위치가 동일합니다. (저장 무시)', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+        backgroundColor: Colors.blueGrey,
+        elevation: 0,
+        duration: const Duration(seconds: 2),
+      ));
+      return; // 여기서 즉시 함수를 종료하여 하위의 DB 저장 로직을 생략합니다.
+    }
+
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
     final dynamic rawApprove = result['is_approved'];
     final bool isApproved = (rawApprove is bool) ? rawApprove : true;
@@ -256,9 +287,9 @@ class _UserPageState extends State<UserPage> {
     updatedMeta['last_access_time'] = now;
     updatedMeta['last_approval_status'] = isApproved;
     updatedMeta['last_location_info'] = {
-      'building': _safeStr(result['building'], defaultVal: "미지정"),
-      'gate': _safeStr(result['gate'], defaultVal: "미지정"),
-      'full_name': "${_safeStr(result['building'])} - ${_safeStr(result['gate'])}"
+      'building': newBuilding,
+      'gate': newGate,
+      'full_name': "$newBuilding - $newGate"
     };
 
     List<dynamic> history = (updatedMeta['access_history'] is List) ? List.from(updatedMeta['access_history']) : [];
@@ -512,6 +543,7 @@ class _UserPageState extends State<UserPage> {
         return true;
       }
 
+      // 🔥 초고속 비교 연산
       final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
       final String lastType = _safeStr(p.metadata['last_access_type']);
       final String lastTime = _safeStr(p.metadata['last_access_time']);
@@ -2503,8 +2535,6 @@ class _UserPageState extends State<UserPage> {
 
 /// ---------------------------------------------------------------------------
 /// 🔥 태그 일괄 발행 통합 다이얼로그 (Bulk Tag Issue)
-/// [수정 사항] 화면의 UI 타이머(카운터)를 완전히 제거하고, 군더더기 없이 깔끔하게
-/// 무한 대기를 수행하는 미니멀리즘 로직으로 업그레이드되었습니다.
 /// ---------------------------------------------------------------------------
 class _BulkTagIssueDialog extends StatefulWidget {
   final List<UserModel> selectedUsers;
@@ -2642,7 +2672,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
           String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
           bool isSuccess = false;
 
-          // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
           setState(() {
             _progressValue = j / _issueCount;
             _progressText = "⏳ 신규 자동 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
@@ -2659,12 +2688,22 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
           }
 
-          // 🔥 성공 시 다음으로 진행
-          setState(() {
-            _progressValue = (j + 1) / _issueCount;
-            _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
-          });
-          await Future.delayed(const Duration(milliseconds: 500));
+          // 🔥 신규 태그 발급 성공 및 3초 대기 로직 적용
+          bool isLastOperation = (j == _issueCount - 1);
+
+          if (!isLastOperation) {
+            setState(() {
+              _progressValue = (j + 1) / _issueCount;
+              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!\n👉 다음 카드를 안테나에 올려주세요. (3초 대기 중...)";
+            });
+            await Future.delayed(const Duration(seconds: 3));
+          } else {
+            setState(() {
+              _progressValue = (j + 1) / _issueCount;
+              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
+            });
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
 
           if (widget.onWriteComplete != null && j == _issueCount - 1) {
             widget.onWriteComplete!(randomTag);
@@ -2687,13 +2726,12 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
             String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
             bool isSuccess = false;
 
-            // 🔥 불필요한 카운터 관련 코드 완벽히 삭제
             setState(() {
               _progressValue = (currentOperationCount - 1) / totalOperations;
-              _progressText = "⏳ [${user.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
+              _progressText = "⏳ [${user.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 사원증을 올려주세요.";
             });
 
-            // 🔥 하드웨어 통신 대기 (DeviceProvider 루프를 통해 태그가 찍힐 때까지 여기서 완벽하게 Blocking)
+            // 🔥 하드웨어 통신 대기
             try {
               isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
             } catch (e) {
@@ -2704,12 +2742,24 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
               throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
             }
 
-            // 🔥 발급 성공
-            setState(() {
-              _progressValue = currentOperationCount / totalOperations;
-              _progressText = "✅ [${user.name}] 발급 성공!";
-            });
-            await Future.delayed(const Duration(milliseconds: 500));
+            // 모든 인원, 모든 횟수를 고려하여 마지막 발급 작업인지 확인
+            bool isLastOperationOverall = (i == totalUsers - 1) && (j == _issueCount - 1);
+
+            // 🔥 발급 성공 및 3초 대기 로직 적용
+            if (!isLastOperationOverall) {
+              setState(() {
+                _progressValue = currentOperationCount / totalOperations;
+                _progressText = "✅ [${user.name}] 발급 성공!\n👉 다음 카드를 안테나에 올려주세요. (3초 대기 중...)";
+              });
+              // 카드/태그 물리적 교체 시간 3초 대기
+              await Future.delayed(const Duration(seconds: 3));
+            } else {
+              setState(() {
+                _progressValue = currentOperationCount / totalOperations;
+                _progressText = "✅ [${user.name}] 발급 성공!";
+              });
+              await Future.delayed(const Duration(milliseconds: 500));
+            }
 
             // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 체크해제 콜백을 발생시킵니다.
             if (j == _issueCount - 1) {
@@ -2987,7 +3037,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
                   _isProcessing = false;
                   _progressText = '❌ 사용자에 의해 발행이 중단되었습니다. (무한 대기망 강제 해제 중...)';
                 });
-                // 🔥 [강제 종료 보장] 하드웨어 단에서 무한 대기 중인 루프(while)를 즉시 파괴하기 위해 기기 연결을 해제합니다!
                 if (_selectedDeviceId != null) {
                   widget.deviceProvider.disconnectDevice(_selectedDeviceId!);
                 }
