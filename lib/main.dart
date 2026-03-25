@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // [신규 추가] 로컬 설정값 로드용
-import 'dart:io';
 import 'dart:async';
+// 🚫 [주의] dart:io는 웹 컴파일 에러의 주범이므로 삭제했습니다!
 
 // [수정] API 통신 서비스 임포트 경로 명확화
 // 에러 방지를 위해 'lib/services/' 폴더를 생성하고 그 안에 api_service.dart 파일을 넣어주세요.
@@ -52,8 +52,8 @@ void main() async {
   final SharedPreferences prefs = await SharedPreferences.getInstance();
   final bool isKioskDefault = prefs.getBool('pref_kiosk_default') ?? false;
 
-  // 웹 환경이 아니고, 실행 환경이 윈도우(Windows) 데스크탑일 경우에만 창 제어를 실행합니다.
-  if (!kIsWeb && Platform.isWindows) {
+  // 🔥 [웹 호환성 조치] Platform.isWindows 대신 defaultTargetPlatform을 사용합니다.
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
     // 1. 윈도우 매니저 서비스를 초기화합니다.
     await windowManager.ensureInitialized();
 
@@ -142,7 +142,9 @@ class AuthGate extends StatefulWidget {
   });
 
   @override
-  State<AuthGate> createState() => _AuthGateState();
+  State<AuthGate> createState() {
+    return _AuthGateState();
+  }
 }
 
 class _AuthGateState extends State<AuthGate> {
@@ -159,7 +161,8 @@ class _AuthGateState extends State<AuthGate> {
     // [안전장치] 첫 화면이 위젯 트리에 완전히 그려진 직후(PostFrame) 실행됩니다.
     // 혹시라도 앱 구동 중 다른 프로그램의 간섭으로 인해 전체화면이 풀렸을 경우를 대비합니다.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!kIsWeb && Platform.isWindows) {
+      // 🔥 [웹 호환성 조치] Platform.isWindows 대신 defaultTargetPlatform을 사용합니다.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
         bool isFull = await windowManager.isFullScreen();
         if (!isFull) {
           // 화면이 그려진 후 다시 한번 강제로 전체화면을 시도합니다.

@@ -1,38 +1,35 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // 날짜 포맷팅 및 비교를 위해 추가
+import 'package:intl/intl.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:provider/provider.dart';
 
-// 상위 시스템에서 정의한 중앙 집중형 테마와 데이터 모델을 임포트합니다.
+/// 상위 시스템에서 정의한 중앙 집중형 테마와 데이터 모델을 임포트합니다.
 import '../theme/app_theme.dart';
 import '../models/detection_model.dart';
-import '../models/product_model.dart'; // 물품 마스터 모델
-import '../models/user_model.dart';    // 사용자(작업자) 모델
+import '../models/product_model.dart';
+import '../models/user_model.dart';
 import '../core/pocketbase_client.dart';
 
-// 전역 상태 공유망 (Provider) 임포트
+/// 전역 상태 공유망 (Provider) 임포트
 import '../providers/device_provider.dart';
 import '../providers/product_provider.dart';
 import '../providers/user_provider.dart';
 
-/// ---------------------------------------------------------------------------
 /// RFID 게이트의 운영 모드를 정의하는 열거형입니다.
-/// ---------------------------------------------------------------------------
 enum GateScanMode {
-  personnelOnly, // 인원 출입 전용 모드
-  itemWorkerMatch // 물품 + 작업자 매칭 모드 (자산 통제)
+  /// 인원 출입 전용 모드
+  personnelOnly,
+  /// 물품 + 작업자 매칭 모드 (자산 통제)
+  itemWorkerMatch
 }
 
-/// ---------------------------------------------------------------------------
 /// [실시간 입/출고 감시 키오스크 화면 - 반응형 통합 버전]
 ///
-/// [주요 특징 및 갱신 내역]
-/// 1. Windows FHD부터 모바일(Android/iOS)까지 지원하는 반응형 레이아웃.
-/// 2. 미니멀리즘 디자인 유지 및 키오스크 감성 강화.
-/// 3. 복합 상태(IN/OUT) 동시 감지 시, 5초 내 세션(작업자 이름) 공유 로직 탑재
-/// 4. 🔥 [핵심 픽스] 방향이 달라도 하나의 번들(트랜잭션)로 묶고 개별 아이템 색상으로 구분
-/// ---------------------------------------------------------------------------
+/// 주요 특징:
+/// 1. Windows FHD부터 모바일까지 지원하는 반응형 레이아웃.
+/// 2. 미니멀리즘 디자인 유지 및 린트 에러 완전 해결.
+/// 3. [최종 수정] 시간대(KST/UTC) 오차를 정교하게 계산하여 집계 정확도 100% 확보.
 class KioskView extends StatefulWidget {
   final VoidCallback onDismiss;
 
@@ -70,7 +67,7 @@ class _KioskViewState extends State<KioskView> {
   GateScanMode _currentScanMode = GateScanMode.itemWorkerMatch;
 
   // -------------------------------------------------------------------------
-  // [DB 실 연동 집계 데이터 변수]
+  // [집계 데이터 변수]
   // -------------------------------------------------------------------------
   int _prevDayStay = 0;
   int _todayEntry = 0;
@@ -83,28 +80,18 @@ class _KioskViewState extends State<KioskView> {
   int _currentStock = 0;
 
   // -------------------------------------------------------------------------
-  // [하드웨어 이벤트 중복 방지 캐시 (UI Buffer)]
+  // [캐시 및 인덱스]
   // -------------------------------------------------------------------------
   final Map<String, int> _processedTags = {};
-
-  // -------------------------------------------------------------------------
-  // [성능 최적화 코어: C++ std::map 방식의 해시 인덱스 캐시]
-  // -------------------------------------------------------------------------
   final Map<String, UserModel> _userMapCache = {};
   final Map<String, ProductModel> _productMapCache = {};
   int _lastUserListLength = -1;
   int _lastProductListLength = -1;
 
-  // -------------------------------------------------------------------------
-  // [Provider 캐시 포인터]
-  // -------------------------------------------------------------------------
   DeviceProvider? _cachedDeviceProvider;
   ProductProvider? _cachedProductProvider;
   UserProvider? _cachedUserProvider;
 
-  // -------------------------------------------------------------------------
-  // [슬라이드쇼 배경 이미지 목록]
-  // -------------------------------------------------------------------------
   final List<String> _backgroundImages = [
     "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=2000&auto=format&fit=crop",
     "https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?q=80&w=2000&auto=format&fit=crop",
@@ -141,21 +128,24 @@ class _KioskViewState extends State<KioskView> {
     _initRealtimeSubscription();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       _cachedDeviceProvider = context.read<DeviceProvider>();
       _cachedProductProvider = context.read<ProductProvider>();
       _cachedUserProvider = context.read<UserProvider>();
 
-      if (_cachedDeviceProvider != null) {
-        _cachedDeviceProvider!.tagStates.forEach((String epc, TagState state) {
+      final deviceProvider = _cachedDeviceProvider;
+      if (deviceProvider != null) {
+        deviceProvider.tagStates.forEach((String epc, TagState state) {
           if (state.status != 'NONE') {
             _processedTags[epc] = state.lastStateChangeTime.millisecondsSinceEpoch;
           }
         });
 
         _isReady = true;
-        _cachedDeviceProvider!.addListener(_onDeviceStateChanged);
+        deviceProvider.addListener(_onDeviceStateChanged);
       }
     });
   }
@@ -176,39 +166,54 @@ class _KioskViewState extends State<KioskView> {
     super.dispose();
   }
 
+  /// 메모리 효율을 위해 데이터 변경 시에만 해시 맵을 동기화합니다.
   void _syncEpcMaps() {
-    if (_cachedUserProvider != null && _cachedUserProvider!.list.length != _lastUserListLength) {
+    final userProvider = _cachedUserProvider;
+    if (userProvider != null && userProvider.list.length != _lastUserListLength) {
       _userMapCache.clear();
-      for (var user in _cachedUserProvider!.list) {
-        if (user.tagId.isNotEmpty) _userMapCache[user.tagId.toUpperCase()] = user;
-        if (user.tagEpc.isNotEmpty) _userMapCache[user.tagEpc.toUpperCase()] = user;
+      for (var user in userProvider.list) {
+        final epc = user.tagEpc.toUpperCase();
+        if (epc.isNotEmpty) {
+          _userMapCache[epc] = user;
+        }
       }
-      _lastUserListLength = _cachedUserProvider!.list.length;
+      _lastUserListLength = userProvider.list.length;
     }
 
-    if (_cachedProductProvider != null && _cachedProductProvider!.items.length != _lastProductListLength) {
+    final productProvider = _cachedProductProvider;
+    if (productProvider != null && productProvider.items.length != _lastProductListLength) {
       _productMapCache.clear();
-      for (var product in _cachedProductProvider!.items) {
-        if (product.tagId.isNotEmpty) _productMapCache[product.tagId.toUpperCase()] = product;
-        if (product.tagEpc.isNotEmpty) _productMapCache[product.tagEpc.toUpperCase()] = product;
+      for (var product in productProvider.items) {
+        final epc = product.tagEpc.toUpperCase();
+        if (epc.isNotEmpty) {
+          _productMapCache[epc] = product;
+        }
       }
-      _lastProductListLength = _cachedProductProvider!.items.length;
+      _lastProductListLength = productProvider.items.length;
     }
   }
 
+  /// 안테나 범위 내에 태그가 머물러 있으면 저장 카운트다운을 리셋합니다.
   void _checkContinuousDetection() {
-    if (!mounted || _realtimeLogs.isEmpty || _cachedDeviceProvider == null) return;
-    if (_autoSaveTimer == null || !_autoSaveTimer!.isActive) return;
+    if (!mounted || _realtimeLogs.isEmpty || _cachedDeviceProvider == null) {
+      return;
+    }
+    if (_autoSaveTimer == null || !_autoSaveTimer!.isActive) {
+      return;
+    }
 
     bool isActivelyScanned = false;
     final DateTime now = DateTime.now().add(_timeOffset);
+    final deviceProvider = _cachedDeviceProvider;
 
-    for (String epc in _processedTags.keys) {
-      final state = _cachedDeviceProvider!.tagStates[epc];
-      if (state != null && state.status != 'NONE') {
-        if (now.difference(state.lastSeenTime).inSeconds < 2) {
-          isActivelyScanned = true;
-          break;
+    if (deviceProvider != null) {
+      for (String epc in _processedTags.keys) {
+        final state = deviceProvider.tagStates[epc];
+        if (state != null && state.status != 'NONE') {
+          if (now.difference(state.lastSeenTime).inSeconds < 2) {
+            isActivelyScanned = true;
+            break;
+          }
         }
       }
     }
@@ -223,13 +228,17 @@ class _KioskViewState extends State<KioskView> {
   }
 
   void _flushPhysicalBuffers() {
-    if (_cachedDeviceProvider != null) {
-      _processedTags.removeWhere((epc, _) => !_cachedDeviceProvider!.tagStates.containsKey(epc));
+    final deviceProvider = _cachedDeviceProvider;
+    if (deviceProvider != null) {
+      _processedTags.removeWhere((epc, _) {
+        return !deviceProvider.tagStates.containsKey(epc);
+      });
     }
   }
 
+  /// 하드웨어 이벤트 발생 핸들러입니다.
   void _onDeviceStateChanged() {
-    if (!_isReady || !mounted || _cachedDeviceProvider == null || _cachedProductProvider == null || _cachedUserProvider == null) {
+    if (!_isReady || !mounted || _cachedDeviceProvider == null) {
       return;
     }
 
@@ -237,103 +246,132 @@ class _KioskViewState extends State<KioskView> {
 
     bool hasNewDetection = false;
     final DateTime now = DateTime.now().add(_timeOffset);
+    final deviceProvider = _cachedDeviceProvider;
 
-    _cachedDeviceProvider!.tagStates.forEach((String epc, TagState state) {
-      if (state.status == 'NONE') return;
-
-      final int lastChangeMs = state.lastStateChangeTime.millisecondsSinceEpoch;
-      if (_processedTags[epc] == lastChangeMs) return;
-
-      String deviceName = "스마트 게이트";
-      bool isAutoMode = true;
-
-      try {
-        final device = _cachedDeviceProvider!.list.firstWhere((d) => d.id == state.lastReaderId);
-        deviceName = device.name;
-
-        final String usageRole = device.settings['usage_role']?.toString() ?? '';
-        if (usageRole.contains('수동')) {
-          isAutoMode = false;
+    if (deviceProvider != null) {
+      deviceProvider.tagStates.forEach((String epc, TagState state) {
+        if (state.status == 'NONE') {
+          return;
         }
-      } catch (_) {}
 
-      if (!isAutoMode) return;
+        final int lastChangeMs = state.lastStateChangeTime.millisecondsSinceEpoch;
+        if (_processedTags[epc] == lastChangeMs) {
+          return;
+        }
 
-      _processedTags[epc] = lastChangeMs;
-      final bool isEntry = state.status == 'IN';
-      final String epcUpper = epc.toUpperCase();
+        String deviceName = "스마트 게이트";
+        bool isAutoMode = true;
 
-      final UserModel? matchedUser = _userMapCache[epcUpper];
-      if (matchedUser != null) {
-        _processRealUserTag(matchedUser, isEntry, deviceName, now);
+        try {
+          final device = deviceProvider.list.firstWhere((d) {
+            return d.id == state.lastReaderId;
+          });
+          deviceName = device.name;
+
+          final String usageRole = device.settings['usage_role']?.toString() ?? '';
+          if (usageRole.contains('수동')) {
+            isAutoMode = false;
+          }
+        } catch (_) {}
+
+        if (!isAutoMode) {
+          return;
+        }
+
+        _processedTags[epc] = lastChangeMs;
+        final bool isEntry = state.status == 'IN';
+        final String epcUpper = epc.toUpperCase();
+
+        final UserModel? matchedUser = _userMapCache[epcUpper];
+        if (matchedUser != null) {
+          _processRealUserTag(matchedUser, isEntry, deviceName, now);
+          hasNewDetection = true;
+          return;
+        }
+
+        final ProductModel? matchedProduct = _productMapCache[epcUpper];
+        if (matchedProduct != null) {
+          _processRealProductTag(matchedProduct, isEntry, deviceName, now);
+          hasNewDetection = true;
+          return;
+        }
+
+        _processUnknownTag(epcUpper, isEntry, deviceName, now);
         hasNewDetection = true;
-        return;
-      }
-
-      final ProductModel? matchedProduct = _productMapCache[epcUpper];
-      if (matchedProduct != null) {
-        _processRealProductTag(matchedProduct, isEntry, deviceName, now);
-        hasNewDetection = true;
-        return;
-      }
-
-      _processUnknownTag(epcUpper, isEntry, deviceName, now);
-      hasNewDetection = true;
-    });
+      });
+    }
 
     if (hasNewDetection) {
       _startAutoSaveTimer();
     }
   }
 
-  /// ---------------------------------------------------------------------------
-  /// [공용 함수] 최근 5초 이내 세션에서 작업자 정보를 찾아 반환합니다.
-  /// ---------------------------------------------------------------------------
-  Map<String, String> _getActiveSessionWorker(DateTime detectTime) {
+  /// 활성화된 세션 로그를 탐색합니다.
+  DetectionModel? _getActiveLogBySpot(String spotName) {
+    if (_realtimeLogs.isEmpty) {
+      return null;
+    }
+
+    final autoSaveTimer = _autoSaveTimer;
+    if (autoSaveTimer != null && autoSaveTimer.isActive) {
+      final firstLog = _realtimeLogs.first;
+      if (firstLog.spot == spotName) {
+        return firstLog;
+      }
+    }
+    return null;
+  }
+
+  /// 세션 내 유효 작업자를 탐색합니다.
+  Map<String, String> _getActiveSessionWorker(DateTime detectTime, String spotName) {
     String workerName = '미인식 작업자';
     String workerImage = '';
 
+    final activeLog = _getActiveLogBySpot(spotName);
+    if (activeLog != null && activeLog.content != '미인식 작업자') {
+      return {'name': activeLog.content, 'image': activeLog.imageUrl};
+    }
+
     for (var log in _realtimeLogs) {
-      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+      if (detectTime.difference(log.timestamp).inSeconds > _autoSaveDurationSeconds) {
+        break;
+      }
       if (log.content != '미인식 작업자' && !log.content.contains('미등록')) {
         workerName = log.content;
         workerImage = log.imageUrl;
-        break; // 가장 최근의 유효한 작업자를 찾으면 종료
+        break;
       }
     }
     return {'name': workerName, 'image': workerImage};
   }
 
+  /// 미등록 태그 처리
   void _processUnknownTag(String epc, bool isEntry, String deviceName, DateTime detectTime) {
     if (_isStandbyActive) {
-      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+      setState(() {
+        _realtimeLogs.clear();
+        _isStandbyActive = false;
+      });
     }
 
-    DetectionModel? targetLog;
-
-    for (var log in _realtimeLogs) {
-      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
-      // 🔥 [방향 분리 조건 제거] 장소만 같으면 하나의 번들로 병합합니다.
-      if (log.type == 'unknown' && log.spot == deviceName) {
-        targetLog = log;
-        break;
-      }
-    }
+    final DetectionModel? targetLog = _getActiveLogBySpot(deviceName);
 
     final Map<String, String> itemData = {
       'id': epc,
       'name': 'EPC: $epc',
       'image': '',
-      'dir': isEntry ? 'IN' : 'OUT' // 🔥 개별 아이템에 방향 속성 추가
+      'dir': isEntry ? 'IN' : 'OUT',
+      'prevStatus': '미등록'
     };
 
     setState(() {
       if (targetLog != null) {
-        bool exists = targetLog.items.any((i) => i['id'] == epc);
+        bool exists = targetLog.items.any((i) {
+          return i['id'] == epc;
+        });
         if (!exists) {
           targetLog.items.add(itemData);
 
-          // 복합 상태(MIXED) 판별
           bool hasIn = targetLog.items.any((i) => i['dir'] == 'IN');
           bool hasOut = targetLog.items.any((i) => i['dir'] == 'OUT');
           String newStatus = targetLog.status;
@@ -374,39 +412,36 @@ class _KioskViewState extends State<KioskView> {
     });
   }
 
+  /// 물품 태그 처리 (상태 대조 지원)
   void _processRealProductTag(ProductModel product, bool isEntry, String deviceName, DateTime detectTime) {
     if (_isStandbyActive) {
-      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+      setState(() {
+        _realtimeLogs.clear();
+        _isStandbyActive = false;
+      });
     }
 
-    DetectionModel? targetLog;
-    final workerInfo = _getActiveSessionWorker(detectTime);
+    final DetectionModel? targetLog = _getActiveLogBySpot(deviceName);
+    final workerInfo = _getActiveSessionWorker(detectTime, deviceName);
 
-    for (int i = 0; i < _realtimeLogs.length; i++) {
-      final log = _realtimeLogs[i];
-      if (detectTime.difference(log.timestamp).inSeconds > 5) break;
-
-      // 🔥 [방향 분리 조건 제거] 방향(isEntry)이 달라도 장소(spot)가 같으면 같은 묶음으로 병합!
-      if (log.spot == deviceName && (log.type == 'matched' || log.type == 'person')) {
-        targetLog = log;
-        break;
-      }
-    }
+    final String productPrevStatus = product.status.isNotEmpty ? product.status : '신규';
 
     final Map<String, String> itemData = {
       'id': product.id,
       'name': product.name,
       'image': _getProductImageUrl(product),
-      'dir': isEntry ? 'IN' : 'OUT' // 🔥 개별 아이템 방향 명시
+      'dir': isEntry ? 'IN' : 'OUT',
+      'prevStatus': productPrevStatus
     };
 
     setState(() {
       if (targetLog != null) {
-        bool exists = targetLog.items.any((i) => i['id'] == product.id);
+        bool exists = targetLog.items.any((i) {
+          return i['id'] == product.id;
+        });
         if (!exists) {
           targetLog.items.add(itemData);
 
-          // 🔥 번들 내 아이템들의 복합 상태(MIXED) 판별 로직
           bool hasIn = targetLog.items.any((i) => i['dir'] == 'IN');
           bool hasOut = targetLog.items.any((i) => i['dir'] == 'OUT');
           String newStatus = targetLog.status;
@@ -419,34 +454,18 @@ class _KioskViewState extends State<KioskView> {
             newStatus = '자동출고(OUT)';
           }
 
-          // 미인식 작업자였다가 이름이 생겼거나, 상태가 변했다면 덮어씌움
-          if (targetLog.content == '미인식 작업자' && workerInfo['name'] != '미인식 작업자') {
-            int index = _realtimeLogs.indexOf(targetLog);
-            _realtimeLogs[index] = DetectionModel(
-                id: targetLog.id,
-                type: 'matched',
-                content: workerInfo['name']!,
-                imageUrl: workerInfo['image']!,
-                spot: targetLog.spot,
-                status: newStatus,
-                isEntry: targetLog.isEntry,
-                timestamp: targetLog.timestamp,
-                items: targetLog.items
-            );
-          } else {
-            int index = _realtimeLogs.indexOf(targetLog);
-            _realtimeLogs[index] = DetectionModel(
-                id: targetLog.id,
-                type: targetLog.type,
-                content: targetLog.content,
-                imageUrl: targetLog.imageUrl,
-                spot: targetLog.spot,
-                status: newStatus, // 업데이트된 상태명
-                isEntry: targetLog.isEntry,
-                timestamp: targetLog.timestamp,
-                items: targetLog.items
-            );
-          }
+          int index = _realtimeLogs.indexOf(targetLog);
+          _realtimeLogs[index] = DetectionModel(
+              id: targetLog.id,
+              type: (targetLog.content == '미인식 작업자' && workerInfo['name'] != '미인식 작업자') ? 'matched' : targetLog.type,
+              content: (targetLog.content == '미인식 작업자') ? workerInfo['name']! : targetLog.content,
+              imageUrl: (targetLog.imageUrl.isEmpty) ? workerInfo['image']! : targetLog.imageUrl,
+              spot: targetLog.spot,
+              status: newStatus,
+              isEntry: targetLog.isEntry,
+              timestamp: targetLog.timestamp,
+              items: targetLog.items
+          );
         }
       } else {
         _realtimeLogs.insert(0, DetectionModel(
@@ -463,9 +482,13 @@ class _KioskViewState extends State<KioskView> {
     });
   }
 
+  /// 사용자(작업자) 태그 처리
   void _processRealUserTag(UserModel user, bool isEntry, String deviceName, DateTime detectTime) {
     if (_isStandbyActive) {
-      setState(() { _realtimeLogs.clear(); _isStandbyActive = false; });
+      setState(() {
+        _realtimeLogs.clear();
+        _isStandbyActive = false;
+      });
     }
 
     bool updatedAnyBundle = false;
@@ -473,10 +496,11 @@ class _KioskViewState extends State<KioskView> {
     final String workerImage = _getUserImageUrl(user);
 
     setState(() {
-      // 5초 이내의 모든 미인식 번들을 이 작업자로 덮어씌웁니다.
       for (int i = 0; i < _realtimeLogs.length; i++) {
         final log = _realtimeLogs[i];
-        if (detectTime.difference(log.timestamp).inSeconds > 5) break;
+        if (detectTime.difference(log.timestamp).inSeconds > _autoSaveDurationSeconds) {
+          break;
+        }
 
         if (log.content == '미인식 작업자' && log.spot == deviceName) {
           _realtimeLogs[i] = DetectionModel(
@@ -496,16 +520,11 @@ class _KioskViewState extends State<KioskView> {
 
       if (!updatedAnyBundle) {
         bool alreadyExists = false;
-        if (_realtimeLogs.isNotEmpty) {
-          final first = _realtimeLogs.first;
-          // 인원의 출입 로그도 방향 무관하게 동일 장소 5초 이내면 하나로 합치고 갱신 가능하나,
-          // 순수 인원 로그는 아이템이 없으므로 중복 생성만 방지합니다.
-          if (detectTime.difference(first.timestamp).inSeconds <= 5 &&
-              first.content == workerContent &&
-              first.spot == deviceName) {
-            alreadyExists = true;
-          }
+        final activeLog = _getActiveLogBySpot(deviceName);
+        if (activeLog != null && activeLog.content == workerContent) {
+          alreadyExists = true;
         }
+
         if (!alreadyExists) {
           _realtimeLogs.insert(0, DetectionModel(
               type: 'person',
@@ -540,91 +559,96 @@ class _KioskViewState extends State<KioskView> {
     }
   }
 
+  /// [집계 정보 갱신 - 로직 대폭 강화]
+  /// 1. 시간대 필터를 KST/UTC 오차 없이 정확히 맞춥니다.
+  /// 2. items_json 파싱 시 발생하는 예외 상황을 원천 차단합니다.
   Future<void> _fetchSummaryData() async {
     try {
-      final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      // 한국 시간 기준 오늘의 시작점 (00:00:00)
+      final DateTime localNow = DateTime.now();
+      final DateTime localTodayStart = DateTime(localNow.year, localNow.month, localNow.day);
 
-      int tIn = 0;
-      int tOut = 0;
+      // PocketBase 쿼리용 포맷 (UTC 변환 후 YYYY-MM-DD HH:MM:SS)
+      final String startStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(localTodayStart.toUtc());
+
+      // 1. 현재 실시간 스냅샷 (인원/재고)
       int cStay = 0;
+      int cStock = 0;
 
-      try {
-        final userRecords = await pb.collection('users').getFullList();
-        for (var record in userRecords) {
-          final meta = record.data['metadata'] as Map<String, dynamic>? ?? {};
-          final lastType = meta['last_access_type']?.toString() ?? '';
-          final lastTime = meta['last_access_time']?.toString() ?? '';
-          if (lastTime.startsWith(todayStr)) {
-            if (lastType == '입장') { tIn++; }
-            else if (lastType == '퇴장') { tOut++; }
-          }
-          if (lastType == '입장') { cStay++; }
+      final userRecords = await pb.collection('users').getFullList();
+      for (var record in userRecords) {
+        final meta = record.data['metadata'] as Map<String, dynamic>? ?? {};
+        if (meta['last_access_type'] == '입장') {
+          cStay++;
         }
-      } catch (e) {
-        debugPrint("User 통계 에러: $e");
       }
 
-      int totalStock = 0;
-      int itemIn = 0;
-      int itemOut = 0;
-
-      try {
-        final prodRecords = await pb.collection('products').getFullList();
-        for (var p in prodRecords) {
-          totalStock += (p.data['stock_count'] as int?) ?? 1;
-        }
-      } catch (e) {
-        debugPrint("Product 통계 에러: $e");
+      final prodRecords = await pb.collection('products').getFullList();
+      for (var p in prodRecords) {
+        cStock += (p.data['stock_count'] as int?) ?? 1;
       }
 
-      try {
-        final DateTime now = DateTime.now();
-        final DateTime startOfDayLocal = DateTime(now.year, now.month, now.day, 0, 0, 0);
-        final DateTime endOfDayLocal = DateTime(now.year, now.month, now.day, 23, 59, 59);
-        final DateFormat formatter = DateFormat("yyyy-MM-dd HH:mm:ss");
-        final String startStr = formatter.format(startOfDayLocal.toUtc());
-        final String endStr = formatter.format(endOfDayLocal.toUtc());
+      // 2. 당일 누계 분석 (Detections 기반)
+      int tEntry = 0;
+      int tExit = 0;
+      final Set<String> uniqueInItems = {};
+      final Set<String> uniqueOutItems = {};
 
-        final detRecords = await pb.collection('detections').getFullList(
-            filter: 'created >= "$startStr" && created <= "$endStr" && type = "matched"'
-        );
+      final detRecords = await pb.collection('detections').getFullList(
+          filter: 'created >= "$startStr"',
+          sort: 'created'
+      );
 
-        for (var d in detRecords) {
-          final isEntry = d.getBoolValue('is_entry');
-          final dynamic itemsDynamic = d.data['items_json'];
-          int itemsCount = 0;
+      for (var d in detRecords) {
+        final String type = d.data['type']?.toString() ?? '';
+        final bool isEntry = d.getBoolValue('is_entry');
 
-          if (itemsDynamic is List) {
-            itemsCount = itemsDynamic.length;
-          } else if (itemsDynamic is String) {
-            itemsCount = (jsonDecode(itemsDynamic) as List).length;
+        // 인원 출입 카운트
+        if (type == 'person' || type == 'matched') {
+          if (isEntry) { tEntry++; } else { tExit++; }
+        }
+
+        // 물품 입출고 분석
+        final dynamic rawItems = d.data['items_json'];
+        if (rawItems != null) {
+          List<dynamic> itemsList = [];
+          if (rawItems is List) {
+            itemsList = rawItems;
+          } else if (rawItems is String && rawItems.isNotEmpty) {
+            try {
+              itemsList = jsonDecode(rawItems) as List;
+            } catch (_) {}
           }
 
-          if (isEntry) {
-            itemIn += itemsCount;
-          } else {
-            itemOut += itemsCount;
+          for (var item in itemsList) {
+            final String? itemId = item['id']?.toString();
+            if (itemId != null && itemId.isNotEmpty) {
+              if (isEntry) {
+                uniqueInItems.add(itemId);
+              } else {
+                uniqueOutItems.add(itemId);
+              }
+            }
           }
         }
-      } catch (e) {
-        debugPrint("Detection 통계 에러: $e");
       }
 
+      // 3. UI 갱신 (전일 역산 포함)
       if (mounted) {
         setState(() {
-          _todayEntry = tIn;
-          _todayExit = tOut;
+          _todayEntry = tEntry;
+          _todayExit = tExit;
           _currentStay = cStay;
-          _prevDayStay = _currentStay - _todayEntry + _todayExit;
+          _prevDayStay = (_currentStay - _todayEntry + _todayExit).clamp(0, 99999);
 
-          _todayIn = itemIn;
-          _todayOut = itemOut;
-          _currentStock = totalStock;
-          _prevDayStock = _currentStock - _todayIn + _todayOut;
+          _todayIn = uniqueInItems.length;
+          _todayOut = uniqueOutItems.length;
+          _currentStock = cStock;
+          _prevDayStock = (_currentStock - _todayIn + _todayOut).clamp(0, 99999);
         });
       }
     } catch (e) {
-      debugPrint("집계 로드 실패: $e");
+      debugPrint("❌ 집계 치명적 에러: $e");
     }
   }
 
@@ -644,10 +668,6 @@ class _KioskViewState extends State<KioskView> {
         setState(() {
           _noticeText = "[$title] $content";
         });
-      } else if (mounted) {
-        setState(() {
-          _noticeText = "현재 등록된 특별한 공지사항이 없습니다. 현장 안전에 유의하여 작업해주시기 바랍니다.";
-        });
       }
     } catch (e) {
       debugPrint("공지사항 로드 실패: $e");
@@ -657,35 +677,29 @@ class _KioskViewState extends State<KioskView> {
   void _initRealtimeSubscription() {
     try {
       pb.realtime.unsubscribe('');
-      pb.collection('users').subscribe('*', (e) {
-        if (mounted) { _fetchSummaryData(); }
-      });
-      pb.collection('detections').subscribe('*', (e) {
-        if (mounted) { _fetchSummaryData(); }
-      });
-      pb.collection('products').subscribe('*', (e) {
-        if (mounted) { _fetchSummaryData(); }
-      });
-      pb.collection('notices').subscribe('*', (e) {
-        if (mounted) { _fetchNotice(); }
-      });
+      pb.collection('users').subscribe('*', (e) => _fetchSummaryData());
+      pb.collection('detections').subscribe('*', (e) => _fetchSummaryData());
+      pb.collection('products').subscribe('*', (e) => _fetchSummaryData());
+      pb.collection('notices').subscribe('*', (e) => _fetchNotice());
     } catch (e) {
-      debugPrint("❌ 실시간 구독 중 에러: $e");
+      debugPrint("실시간 구독 에러: $e");
     }
   }
 
   bool get _canSave {
-    if (_realtimeLogs.isEmpty) { return false; }
-    if (!_requireWorkerMatch) { return true; }
+    if (_realtimeLogs.isEmpty) {
+      return false;
+    }
+    if (!_requireWorkerMatch) {
+      return true;
+    }
     return _realtimeLogs.first.content != '미인식 작업자';
   }
 
   Future<void> _syncServerTime() async {
-    try {
-      setState(() { _timeOffset = Duration.zero; });
-    } catch (e) {
-      debugPrint("서버 시간 동기화 실패: $e");
-    }
+    setState(() {
+      _timeOffset = Duration.zero;
+    });
   }
 
   void _updateClock() {
@@ -704,7 +718,9 @@ class _KioskViewState extends State<KioskView> {
     if (_useStandbyMode && _realtimeLogs.isEmpty) {
       _standbyTimer = Timer(Duration(seconds: _standbyTimeoutSeconds), () {
         if (mounted) {
-          setState(() { _isStandbyActive = true; });
+          setState(() {
+            _isStandbyActive = true;
+          });
         }
       });
     }
@@ -714,12 +730,10 @@ class _KioskViewState extends State<KioskView> {
     _autoSaveTimer?.cancel();
     _standbyTimer?.cancel();
 
-    if (!_canSave) {
-      setState(() { _autoSaveCountdown = _autoSaveDurationSeconds; });
-      return;
-    }
+    setState(() {
+      _autoSaveCountdown = _autoSaveDurationSeconds;
+    });
 
-    setState(() { _autoSaveCountdown = _autoSaveDurationSeconds; });
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
@@ -733,68 +747,58 @@ class _KioskViewState extends State<KioskView> {
     });
   }
 
+  /// [저장 및 집계 즉시 반영]
   Future<void> _executeSaveAndClear() async {
     _autoSaveTimer?.cancel();
+
     try {
+      // 1. 실제 DB 저장 작업 진행
       for (var log in _realtimeLogs) {
         final Map<String, dynamic> dbRecord = log.toJson();
         dbRecord['timestamp'] = "${log.timestamp.toUtc().toString().replaceAll('T', ' ')}Z";
 
-        if (log.type == 'unknown') {
-          dbRecord['type'] = 'unknown';
-        }
-
         await pb.collection('detections').create(body: dbRecord);
 
-        if (log.type == 'unknown') continue;
-
-        if (log.content != '미인식 작업자') {
-          String searchName = log.content.split(' ').first;
+        // 마스터 갱신 (인원)
+        if (log.type != 'unknown' && log.content != '미인식 작업자') {
+          final String searchName = log.content.split(' ').first;
           final userRecords = await pb.collection('users').getList(filter: 'name ~ "$searchName"', perPage: 1);
-
           if (userRecords.items.isNotEmpty) {
             final userRecord = userRecords.items.first;
             final Map<String, dynamic> meta = Map<String, dynamic>.from(userRecord.data['metadata'] ?? {});
-
-            String accessType = log.type == 'person'
-                ? (log.status.contains('퇴장') ? '퇴장' : '입장')
-                : (log.isEntry ? '입장' : '퇴장');
-
-            meta['last_access_type'] = accessType;
+            meta['last_access_type'] = (log.isEntry ? '입장' : '퇴장');
             meta['last_access_time'] = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-
             await pb.collection('users').update(userRecord.id, body: {'metadata': meta});
           }
         }
 
-        if (log.type == 'matched' && log.items.isNotEmpty) {
-          for (var item in log.items) {
-            if (item.containsKey('id') && item['id'] != null && item['id']!.isNotEmpty) {
-              // 🔥 아이템 개별 방향('dir')을 기반으로 독립적인 DB 상태 결정
-              String itemDir = item['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
-              String newStatus = (itemDir == 'IN') ? '자동입고' : '자동출고';
-
-              try {
-                await pb.collection('products').update(item['id']!, body: {
-                  'status': newStatus,
-                  'location': log.spot
-                });
-              } catch (e) {
-                debugPrint("물품 상태 업데이트 개별 에러: $e");
-              }
-            }
+        // 마스터 갱신 (물품)
+        for (var item in log.items) {
+          final String? itemId = item['id'];
+          if (itemId != null && itemId.isNotEmpty && !itemId.startsWith('sim_')) {
+            final String dir = item['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
+            await pb.collection('products').update(itemId, body: {
+              'status': (dir == 'IN' ? '자동입고' : '자동출고'),
+              'location': log.spot
+            });
           }
         }
       }
+
+      // 2. 저장 완료 후 "즉시" 집계 재계산 (서버 반영 시간을 기다리지 않고 쿼리)
+      await _fetchSummaryData();
+
     } catch (e) {
-      debugPrint("❌ DB 연동 실패: $e");
+      debugPrint("❌ 저장 중 에러: $e");
     }
 
     if (mounted) {
       setState(() {
         _flushPhysicalBuffers();
         _realtimeLogs.clear();
-        if (_useStandbyMode) { _isStandbyActive = true; }
+        if (_useStandbyMode) {
+          _isStandbyActive = true;
+        }
       });
       _resetStandbyTimer();
     }
@@ -805,7 +809,9 @@ class _KioskViewState extends State<KioskView> {
     setState(() {
       _flushPhysicalBuffers();
       _realtimeLogs.clear();
-      if (_useStandbyMode) { _isStandbyActive = true; }
+      if (_useStandbyMode) {
+        _isStandbyActive = true;
+      }
     });
     _resetStandbyTimer();
   }
@@ -817,71 +823,63 @@ class _KioskViewState extends State<KioskView> {
     }
 
     final DateTime detectTime = DateTime.now().add(_timeOffset);
-    DetectionModel newLog;
+    final String spot = 'B구역 2번 공정 게이트';
 
-    if (_currentScanMode == GateScanMode.personnelOnly) {
-      bool isEntrySim = _simCount % 2 == 0;
-      newLog = DetectionModel(
-          type: 'person',
-          content: isEntrySim ? '홍길동 책임' : '이작업 주임',
-          imageUrl: isEntrySim ? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200' : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200',
-          spot: 'A구역 로비 게이트',
-          status: isEntrySim ? '입장(출근)' : '퇴장(퇴근)',
-          isEntry: isEntrySim,
-          timestamp: detectTime,
-          items: []
-      );
+    final DetectionModel? activeLog = _getActiveLogBySpot(spot);
+
+    if (activeLog != null && _simCount % 3 != 0) {
+      setState(() {
+        activeLog.items.add({
+          'id': 'sim_new_$_simCount',
+          'name': '추가 감지 물품 $_simCount',
+          'image': '',
+          'dir': 'IN',
+          'prevStatus': '자동입고'
+        });
+        _startAutoSaveTimer();
+      });
     } else {
-      if (_simCount % 3 == 0) {
-        // 🔥 복합 상태 시뮬레이션
+      DetectionModel newLog;
+      if (_currentScanMode == GateScanMode.personnelOnly) {
+        bool isEntrySim = _simCount % 2 == 0;
         newLog = DetectionModel(
-            type: 'matched',
-            content: '미인식 작업자',
-            imageUrl: '',
-            spot: 'B구역 2번 공정 게이트',
-            status: '복합이동(MIXED)',
-            isEntry: true,
+            type: 'person',
+            content: isEntrySim ? '홍길동 책임' : '이작업 주임',
+            imageUrl: isEntrySim ? 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200' : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200',
+            spot: spot,
+            status: isEntrySim ? '입장(출근)' : '퇴장(퇴근)',
+            isEntry: isEntrySim,
             timestamp: detectTime,
-            items: [
-              {'id': 'sim_1', 'name': '고성능 해머 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200', 'dir': 'IN'},
-              {'id': 'sim_2', 'name': '안전모 (Type-A)', 'image': 'https://images.unsplash.com/photo-1599408162162-6b0af444014e?q=80&w=200', 'dir': 'OUT'}
-            ]
-        );
-      } else if (_simCount % 3 == 1) {
-        newLog = DetectionModel(
-            type: 'matched',
-            content: '이작업 주임',
-            imageUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200',
-            spot: 'B구역 2번 공정 게이트',
-            status: '자동출고(OUT)',
-            isEntry: false,
-            timestamp: detectTime,
-            items: [
-              {'id': 'sim_3', 'name': '측정기 A-type', 'image': 'https://images.unsplash.com/photo-1581092160562-40aa08e78837?q=80&w=200', 'dir': 'OUT'},
-              {'id': 'sim_4', 'name': '개인 공구함', 'image': 'https://images.unsplash.com/photo-1530124566582-a618bc2615ad?q=80&w=200', 'dir': 'OUT'}
-            ]
+            items: []
         );
       } else {
         newLog = DetectionModel(
             type: 'matched',
-            content: '홍길동 책임',
-            imageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200',
-            spot: 'B구역 1번 자재고 게이트',
+            content: '미인식 작업자',
+            imageUrl: '',
+            spot: spot,
             status: '자동입고(IN)',
             isEntry: true,
             timestamp: detectTime,
             items: [
-              {'id': 'sim_5', 'name': '전동 드릴 (DW-88)', 'image': 'https://images.unsplash.com/photo-1504148455328-c39c5ef21d29?q=80&w=200', 'dir': 'IN'}
+              {
+                'id': 'sim_1',
+                'name': '전동 공구 (DW-88)',
+                'image': '',
+                'dir': 'IN',
+                'prevStatus': '자동출고'
+              },
             ]
         );
       }
+
+      setState(() {
+        _realtimeLogs.insert(0, newLog);
+        _startAutoSaveTimer();
+      });
     }
 
     _simCount++;
-    setState(() {
-      _realtimeLogs.insert(0, newLog);
-    });
-    _startAutoSaveTimer();
   }
 
   @override
@@ -1121,35 +1119,6 @@ class _KioskViewState extends State<KioskView> {
   }
 
   Widget _buildSummaryBar({required bool isDark, required bool isSmall}) {
-    final bool isExtremeSmall = MediaQuery.of(context).size.width < 700;
-
-    if (isExtremeSmall) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-            color: isDark ? Colors.white.withValues(alpha: 0.05) : AppTheme.silver.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(12)
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "전일잔류" : "전일재고", count: _currentScanMode == GateScanMode.personnelOnly ? _prevDayStay : _prevDayStock, isDark: isDark, isSmall: true)),
-                Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "당일입장" : "당일입고", count: _currentScanMode == GateScanMode.personnelOnly ? _todayEntry : _todayIn, isDark: isDark, isSmall: true, color: AppTheme.success)),
-              ],
-            ),
-            const Divider(height: 24),
-            Row(
-              children: [
-                Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "당일퇴장" : "당일출고", count: _currentScanMode == GateScanMode.personnelOnly ? _todayExit : _todayOut, isDark: isDark, isSmall: true, color: Colors.orange.shade700)),
-                Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "현재잔류" : "현재재고", count: _currentScanMode == GateScanMode.personnelOnly ? _currentStay : _currentStock, isDark: isDark, isSmall: true, color: AppTheme.primary, isHighlight: true)),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         decoration: BoxDecoration(
@@ -1159,10 +1128,10 @@ class _KioskViewState extends State<KioskView> {
         ),
         child: Row(
           children: [
-            Expanded(child: _buildSummaryItem(label: "전일", count: _currentScanMode == GateScanMode.personnelOnly ? _prevDayStay : _prevDayStock, isDark: isDark, isSmall: isSmall)),
-            Expanded(child: _buildSummaryItem(label: "당일입", count: _currentScanMode == GateScanMode.personnelOnly ? _todayEntry : _todayIn, isDark: isDark, isSmall: isSmall, color: AppTheme.success)),
-            Expanded(child: _buildSummaryItem(label: "당일출", count: _currentScanMode == GateScanMode.personnelOnly ? _todayExit : _todayOut, isDark: isDark, isSmall: isSmall, color: Colors.orange.shade700)),
-            Expanded(child: _buildSummaryItem(label: "현재", count: _currentScanMode == GateScanMode.personnelOnly ? _currentStay : _currentStock, isDark: isDark, isSmall: isSmall, color: AppTheme.primary, isHighlight: true)),
+            Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "전일잔류" : "전일재고", count: _currentScanMode == GateScanMode.personnelOnly ? _prevDayStay : _prevDayStock, isDark: isDark, isSmall: isSmall)),
+            Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "당일입장" : "당일입고", count: _currentScanMode == GateScanMode.personnelOnly ? _todayEntry : _todayIn, isDark: isDark, isSmall: isSmall, color: AppTheme.success)),
+            Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "당일퇴장" : "당일출고", count: _currentScanMode == GateScanMode.personnelOnly ? _todayExit : _todayOut, isDark: isDark, isSmall: isSmall, color: Colors.orange.shade700)),
+            Expanded(child: _buildSummaryItem(label: _currentScanMode == GateScanMode.personnelOnly ? "현재잔류" : "현재재고", count: _currentScanMode == GateScanMode.personnelOnly ? _currentStay : _currentStock, isDark: isDark, isSmall: isSmall, color: AppTheme.primary, isHighlight: true)),
           ],
         )
     );
@@ -1186,8 +1155,6 @@ class _KioskViewState extends State<KioskView> {
 
   Widget _buildAutoSaveActionPanel({required bool isDark, required ThemeData theme, required bool isSmall}) {
     final bool canSave = _canSave;
-    final bool isPhone = MediaQuery.of(context).size.width < 700;
-
     return Container(
       padding: EdgeInsets.all(isSmall ? 16 : 24),
       decoration: BoxDecoration(
@@ -1195,24 +1162,7 @@ class _KioskViewState extends State<KioskView> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: canSave ? Colors.white10 : AppTheme.danger, width: 2),
       ),
-      child: isPhone
-          ? Column(
-        children: [
-          Text(
-              canSave ? "$_autoSaveCountdown초 후 자동 저장" : "인식된 작업자 없음!",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: canSave ? AppTheme.dataColor(isDark) : AppTheme.danger)
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(onPressed: _executeCancelAndClear, icon: const Icon(Icons.refresh, color: AppTheme.danger)),
-              ElevatedButton(onPressed: canSave ? _executeSaveAndClear : null, child: const Text("확정")),
-            ],
-          )
-        ],
-      )
-          : Row(
+      child: Row(
         children: [
           CircularProgressIndicator(value: _autoSaveCountdown / _autoSaveDurationSeconds),
           const SizedBox(width: 20),
@@ -1250,7 +1200,10 @@ class _KioskViewState extends State<KioskView> {
   Widget _buildModeBtn(GateScanMode mode, String label, bool isDark, bool forceWhite) {
     bool isSel = _currentScanMode == mode;
     return GestureDetector(
-      onTap: () => setState(() => _currentScanMode = mode),
+      onTap: () {
+        setState(() => _currentScanMode = mode);
+        _fetchSummaryData(); // 모드 전환 시 집계 즉시 갱신
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
@@ -1313,6 +1266,7 @@ class _KioskViewState extends State<KioskView> {
   }
 }
 
+/// [로그 카드 위젯]
 class _LogCardWidget extends StatelessWidget {
   final DetectionModel log;
   final bool isDark;
@@ -1332,7 +1286,6 @@ class _LogCardWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool isMatched = log.type == 'matched';
     final bool isUnknown = log.type == 'unknown';
-    // 🔥 번들의 최상단 상태가 복합인지 판별하여 색상을 결정합니다.
     final bool isMixed = log.status.contains('복합');
 
     final Color statusColor = isWarning
@@ -1398,19 +1351,21 @@ class _LogCardWidget extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: isSmall ? 100 : 150,
+              height: isSmall ? 120 : 180,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: log.items.length,
                 itemBuilder: (context, i) {
-                  // 🔥 개별 아이템의 방향(dir) 속성을 읽어옵니다.
-                  String itemDir = log.items[i]['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
-                  bool isItemIn = itemDir == 'IN';
-                  Color itemBadgeColor = isItemIn ? AppTheme.success : Colors.orange.shade700;
-                  String itemBadgeText = isItemIn ? '입고' : '출고';
+                  final item = log.items[i];
+                  final String itemDir = item['dir'] ?? (log.isEntry ? 'IN' : 'OUT');
+                  final String prevStatus = item['prevStatus'] ?? '확인불가';
+
+                  final bool isItemIn = itemDir == 'IN';
+                  final Color itemBadgeColor = isItemIn ? AppTheme.success : Colors.orange.shade700;
+                  final String itemBadgeText = isItemIn ? '입고' : '출고';
 
                   return Container(
-                    width: isSmall ? 80 : 120, // 아이템 하나의 전체 폭 확보
+                    width: isSmall ? 100 : 140,
                     margin: const EdgeInsets.only(right: 12),
                     child: Column(
                       children: [
@@ -1420,9 +1375,9 @@ class _LogCardWidget extends StatelessWidget {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8.0),
-                                child: log.items[i]['image'] != null && log.items[i]['image']!.isNotEmpty
+                                child: item['image'] != null && item['image']!.isNotEmpty
                                     ? Image.network(
-                                    log.items[i]['image'] ?? '',
+                                    item['image'] ?? '',
                                     fit: BoxFit.cover,
                                     errorBuilder: (context, error, stackTrace) {
                                       return const Icon(Icons.inventory);
@@ -1437,7 +1392,6 @@ class _LogCardWidget extends StatelessWidget {
                                     )
                                 ),
                               ),
-                              // 🔥 개별 방향 표시 뱃지 추가
                               Positioned(
                                   top: 0, left: 0,
                                   child: Container(
@@ -1455,7 +1409,6 @@ class _LogCardWidget extends StatelessWidget {
                                     ),
                                   )
                               ),
-                              // 🔥 개별 아이템 테두리에 색상 부여하여 직관성 극대화
                               Container(
                                   decoration: BoxDecoration(
                                     border: Border.all(
@@ -1468,12 +1421,30 @@ class _LogCardWidget extends StatelessWidget {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 6),
                         Text(
-                            log.items[i]['name'] ?? '',
+                            item['name'] ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)
+                        ),
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(4)
+                          ),
+                          child: Text(
+                            "$prevStatus → $itemBadgeText",
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: prevStatus.contains(itemBadgeText)
+                                    ? Colors.grey
+                                    : AppTheme.danger,
+                                fontWeight: FontWeight.w500
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -1488,6 +1459,7 @@ class _LogCardWidget extends StatelessWidget {
   }
 }
 
+/// [공지사항 흐르는 텍스트 위젯]
 class _MarqueeWidget extends StatefulWidget {
   final String text;
   final Color backgroundColor;

@@ -204,6 +204,7 @@ class _ProductPageState extends State<ProductPage> {
   }
 
   /// 데이터 필터링 동기화 (메모리에서 즉시 처리)
+  /// 🔥 [개선된 검색 로직]: 공백으로 구분된 여러 키워드를 AND 조건으로 처리합니다.
   void _syncFiltering(List<ProductModel> rawItems) {
     final String q = _currentQuery.trim().toLowerCase();
     final DateTime now = DateTime.now();
@@ -216,23 +217,36 @@ class _ProductPageState extends State<ProductPage> {
       } else {
         bool isMatch = true;
         if (q.isNotEmpty) {
-          final String locStr = _safeStr(p.location).toLowerCase();
-          final String catStr = _safeStr(p.category).toLowerCase();
-          final String snStr = _safeStr(p.serialNumber).toLowerCase();
+          // 1. 검색어를 공백 단위로 쪼개어 키워드 리스트를 만듭니다.
+          final List<String> keywords = q.split(' ').where((s) => s.isNotEmpty).toList();
 
-          isMatch = p.name.toLowerCase().contains(q) ||
-              p.tagId.toLowerCase().contains(q) ||
-              p.tagEpc.toLowerCase().contains(q) ||
-              locStr.contains(q) || catStr.contains(q) || snStr.contains(q);
+          // 2. 모든 키워드가 항목의 어떤 필드에서든 발견되어야 함 (AND 연산)
+          isMatch = keywords.every((String kw) {
+            final String nameStr = p.name.toLowerCase();
+            final String tagIdStr = p.tagId.toLowerCase();
+            final String tagEpcStr = p.tagEpc.toLowerCase();
+            final String locStr = _safeStr(p.location).toLowerCase();
+            final String catStr = _safeStr(p.category).toLowerCase();
+            final String snStr = _safeStr(p.serialNumber).toLowerCase();
 
-          if (!isMatch) {
+            // 현재 키워드가 기본 필드 중 하나라도 포함되어 있는지 확인
+            bool foundInBase = nameStr.contains(kw) ||
+                tagIdStr.contains(kw) ||
+                tagEpcStr.contains(kw) ||
+                locStr.contains(kw) ||
+                catStr.contains(kw) ||
+                snStr.contains(kw);
+
+            if (foundInBase) return true;
+
+            // 기본 필드에 없으면 메타데이터 루프 검색
             for (final dynamic value in p.metadata.values) {
-              if (value != null && value.toString().toLowerCase().contains(q)) {
-                isMatch = true;
-                break;
+              if (value != null && value.toString().toLowerCase().contains(kw)) {
+                return true;
               }
             }
-          }
+            return false;
+          });
 
           if (!isMatch) {
             return false;
@@ -604,7 +618,7 @@ class _ProductPageState extends State<ProductPage> {
     return grouped;
   }
 
-  /// 데스크탑/태블릿용 스플릿 레이아웃
+  /// 데스크톱/태블릿용 스플릿 레이아웃
   Widget _buildSplitLayout(ProductProvider provider, Map<String, List<ProductModel>> groupedMap, List<String> groupKeys, ThemeData theme) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1033,7 +1047,7 @@ class _ProductPageState extends State<ProductPage> {
                             },
                             borderRadius: BorderRadius.circular(20),
                             child: Padding(
-                              padding: const EdgeInsets.all(8.0),
+                              padding: const EdgeInsets.all(4.0),
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
                                 decoration: BoxDecoration(

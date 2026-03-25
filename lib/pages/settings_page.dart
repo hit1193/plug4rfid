@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'; // 🔥 플랫폼 판별용 (kIsWeb, defaultTargetPlatform)
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:io';
+// 🚫 [주의] import 'dart:io'; 절대 금지! (웹 컴파일 에러 유발)
 
 // 데스크탑 환경에서 창 이동과 모니터 정보를 가져오기 위한 패키지
 import 'package:window_manager/window_manager.dart';
@@ -18,7 +18,7 @@ import '../providers/theme_provider.dart';
 /// [환경설정 페이지]
 /// 데이터베이스(PocketBase) 서버 IP, ERP 연동 주소, 자동 동기화 주기 등
 /// 앱 구동에 필요한 핵심 로컬 설정값들을 관리하는 화면입니다.
-/// 키오스크 환경(장갑을 낀 상태 등)을 고려하여 큼직하고 직관적인 UI로 구성되었습니다.
+/// 🔥 실행 환경(PC, Web, Mobile)을 감지하여 지원하지 않는 설정은 자동으로 숨깁니다!
 /// ---------------------------------------------------------------------------
 class SettingsPage extends StatefulWidget {
   final bool isMobile;
@@ -40,18 +40,18 @@ class _SettingsPageState extends State<SettingsPage> {
   // ---------------------------------------------------------------------------
   bool _isLoading = true;
 
-  // [1] 데이터베이스 및 서버 설정
+  // 데이터베이스 및 서버 설정
   bool _isOfflineMode = false;
   final TextEditingController _offlineCompanyCodeController = TextEditingController();
   final TextEditingController _dbUrlController = TextEditingController();
 
-  // [2] ERP 연동 설정
+  // ERP 연동 설정
   final TextEditingController _erpReceiveUrlController = TextEditingController();
   final TextEditingController _erpSendUrlController = TextEditingController();
   bool _autoSyncEnabled = false;
   int _syncIntervalMin = 10;
 
-  // [3] 디스플레이 및 화면 동작 설정
+  // 디스플레이 및 화면 동작 설정
   bool _isKioskModeDefault = false;
   final List<Map<String, dynamic>> _themeOptions = [
     {'type': AppThemeType.pureWhite, 'color': Colors.white, 'label': '화이트'},
@@ -64,35 +64,35 @@ class _SettingsPageState extends State<SettingsPage> {
   List<Display> _displays = [];
   String? _selectedDisplayId;
 
-  // [4] 배경 이미지 폴더 설정
+  // 배경 이미지 폴더 설정 (PC 전용)
   final TextEditingController _bgImagePathController = TextEditingController();
 
-  // [5] RFID 발급 옵션 설정
+  // RFID 발급 옵션 설정
   String _tagBitOption = '96bit';
 
-  // [6] AI (Gemini) API Key 입력용
+  // AI (Gemini) API Key 입력용
   final TextEditingController _geminiApiKeyController = TextEditingController();
 
-  // [7] 키보드 에뮬레이션 (Wedge) 설정
+  // 키보드 에뮬레이션 (Wedge) 설정 (PC 전용)
   bool _keyboardWedgeEnabled = false;
 
-  // [8] 카카오톡 알림톡 설정 변수
+  // 카카오톡 알림톡 설정 변수
   bool _kakaoEnabled = false;
   final TextEditingController _kakaoApiKeyController = TextEditingController();
   final TextEditingController _kakaoSenderIdController = TextEditingController();
 
-  // [9] 이메일 발송 (SMTP) 설정 변수
+  // 이메일 발송 (SMTP) 설정 변수
   bool _emailEnabled = false;
   final TextEditingController _smtpHostController = TextEditingController();
   final TextEditingController _smtpPortController = TextEditingController();
   final TextEditingController _smtpUserController = TextEditingController();
   final TextEditingController _smtpPasswordController = TextEditingController();
 
-  // [10] 사용자 정의 웹훅 (Webhook) 설정 변수
+  // 사용자 정의 웹훅 (Webhook) 설정 변수
   bool _webhookEnabled = false;
   final TextEditingController _webhookUrlController = TextEditingController();
 
-  // 🔥 [11] TCP/IP Socket 연동 변수 추가
+  // TCP/IP Socket 연동 변수 (Web에서는 제한됨)
   bool _tcpEnabled = false;
   final TextEditingController _tcpHostController = TextEditingController();
   final TextEditingController _tcpPortController = TextEditingController();
@@ -119,8 +119,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _smtpUserController.dispose();
     _smtpPasswordController.dispose();
     _webhookUrlController.dispose();
-    _tcpHostController.dispose(); // 🔥 해제 추가
-    _tcpPortController.dispose(); // 🔥 해제 추가
+    _tcpHostController.dispose();
+    _tcpPortController.dispose();
     super.dispose();
   }
 
@@ -130,7 +130,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _fetchDisplays() async {
-    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    // 🔥 dart:io의 Platform 대신 defaultTargetPlatform 사용 (웹 호환성)
+    if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux)) {
       try {
         final List<Display> displays = await screenRetriever.getAllDisplays();
         if (mounted) {
@@ -150,7 +151,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
       if (mounted) {
         setState(() {
-          // 기존 1 ~ 10번 설정들 로드
           _isOfflineMode = prefs.getBool('pref_offline_mode') ?? false;
           _offlineCompanyCodeController.text = prefs.getString('pref_offline_company_code') ?? '';
           _dbUrlController.text = prefs.getString('pref_db_url') ?? 'http://127.0.0.1:8090';
@@ -179,7 +179,6 @@ class _SettingsPageState extends State<SettingsPage> {
           _webhookEnabled = prefs.getBool('pref_webhook_enabled') ?? false;
           _webhookUrlController.text = prefs.getString('pref_webhook_url') ?? '';
 
-          // 🔥 TCP/IP 설정 로드
           _tcpEnabled = prefs.getBool('pref_tcp_enabled') ?? false;
           _tcpHostController.text = prefs.getString('pref_tcp_host') ?? '';
           _tcpPortController.text = prefs.getString('pref_tcp_port') ?? '';
@@ -209,7 +208,6 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       final SharedPreferences prefs = await SharedPreferences.getInstance();
 
-      // 기존 1 ~ 10번 설정 저장
       await prefs.setBool('pref_offline_mode', _isOfflineMode);
       await prefs.setString('pref_offline_company_code', _offlineCompanyCodeController.text.trim());
       await prefs.setString('pref_db_url', _dbUrlController.text.trim());
@@ -238,12 +236,11 @@ class _SettingsPageState extends State<SettingsPage> {
       await prefs.setBool('pref_webhook_enabled', _webhookEnabled);
       await prefs.setString('pref_webhook_url', _webhookUrlController.text.trim());
 
-      // 🔥 TCP/IP 설정 저장
       await prefs.setBool('pref_tcp_enabled', _tcpEnabled);
       await prefs.setString('pref_tcp_host', _tcpHostController.text.trim());
       await prefs.setString('pref_tcp_port', _tcpPortController.text.trim());
 
-      if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux)) {
         if (_selectedDisplayId != null && _displays.isNotEmpty) {
           try {
             final Display targetDisplay = _displays.firstWhere((d) => d.id.toString() == _selectedDisplayId);
@@ -288,6 +285,12 @@ class _SettingsPageState extends State<SettingsPage> {
       return Scaffold(backgroundColor: theme.scaffoldBackgroundColor, body: Center(child: CircularProgressIndicator(color: dynamicPrimary)));
     }
 
+    // 🔥 [반응형 분기를 위한 플랫폼 판별 변수 선언]
+    // 데스크탑 운영체제인지 판별 (로컬 파일 접근, 키보드 에뮬레이션 지원)
+    final bool isDesktopOS = !kIsWeb && (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux);
+    // 웹 브라우저 환경인지 판별 (Raw TCP/IP 소켓 미지원)
+    final bool isWebEnv = kIsWeb;
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       body: Column(
@@ -310,21 +313,33 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // --- 기존 섹션 1 ~ 10 ---
+                      // 공통 노출 섹션
                       _buildSection1(theme, dynamicPrimary),
                       const SizedBox(height: 24),
                       _buildSection2(theme, dynamicPrimary, isDark),
                       const SizedBox(height: 24),
                       _buildSection3(theme, dynamicPrimary, isDark),
                       const SizedBox(height: 24),
-                      _buildSection4(theme, dynamicPrimary),
-                      const SizedBox(height: 24),
+
+                      // 🔥 [데스크탑 전용] 키오스크 로컬 배경 이미지 롤링 설정
+                      if (isDesktopOS) ...[
+                        _buildSection4(theme, dynamicPrimary),
+                        const SizedBox(height: 24),
+                      ],
+
+                      // 공통 노출 섹션
                       _buildSection5(theme, dynamicPrimary),
                       const SizedBox(height: 24),
                       _buildSection6(theme),
                       const SizedBox(height: 24),
-                      _buildSection7(theme),
-                      const SizedBox(height: 24),
+
+                      // 🔥 [데스크탑 전용] 키보드 이벤트 발생 설정
+                      if (isDesktopOS) ...[
+                        _buildSection7(theme),
+                        const SizedBox(height: 24),
+                      ],
+
+                      // 공통 노출 섹션
                       _buildSection8(theme),
                       const SizedBox(height: 24),
                       _buildSection9(theme),
@@ -332,76 +347,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       _buildSection10(theme),
                       const SizedBox(height: 24),
 
-                      // 🔥 ----------------------------------------------------------------
-                      // 신규 섹션 11: TCP/IP Socket 연동 설정
-                      // ----------------------------------------------------------------
-                      _buildSectionCard(
-                        title: "11. TCP/IP Socket 전송 설정",
-                        icon: Icons.electrical_services_rounded,
-                        theme: theme,
-                        primaryColor: Colors.redAccent,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              "거래처의 PLC 장비, MES/POP 시스템 포트로 직접 Raw 데이터를 전송(Push)할 때 사용합니다.\nREST API를 지원하지 않는 레거시 장비 및 산업용 PC 연동에 필수적인 기능입니다.",
-                              style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
-                            ),
-                            const SizedBox(height: 20),
-                            Container(
-                              decoration: AppTheme.listItemDecoration(context, isSelected: _tcpEnabled, statusColor: Colors.redAccent),
-                              child: SwitchListTile(
-                                title: const Text("TCP/IP 소켓 데이터 전송 활성화", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
-                                subtitle: const Text("이벤트 발생 시 지정된 IP 주소와 포트로 문자열 패킷을 밀어넣습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
-                                value: _tcpEnabled,
-                                activeThumbColor: Colors.redAccent,
-                                activeTrackColor: Colors.redAccent.withValues(alpha: 0.4),
-                                onChanged: (bool value) => setState(() => _tcpEnabled = value),
-                              ),
-                            ),
-                            AnimatedSize(
-                              duration: const Duration(milliseconds: 300),
-                              child: _tcpEnabled
-                                  ? Padding(
-                                padding: const EdgeInsets.only(top: 16.0),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 2,
-                                      child: TextField(
-                                        controller: _tcpHostController,
-                                        style: AppTheme.itemValueStyle(context).copyWith(fontSize: 16),
-                                        decoration: AppTheme.inputDecoration(
-                                            label: "수신측 IP 주소 (예: 192.168.0.50)",
-                                            context: context,
-                                            prefixIcon: Icons.computer_rounded
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 1,
-                                      child: TextField(
-                                        controller: _tcpPortController,
-                                        keyboardType: TextInputType.number,
-                                        style: AppTheme.itemValueStyle(context).copyWith(fontSize: 16),
-                                        decoration: AppTheme.inputDecoration(
-                                            label: "포트 (예: 5000)",
-                                            context: context,
-                                            prefixIcon: Icons.settings_ethernet_rounded
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                                  : const SizedBox.shrink(),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 60),
+                      // 🔥 [웹 환경 제외] TCP/IP Socket 전송 (웹은 Raw Socket 미지원)
+                      if (!isWebEnv) ...[
+                        _buildSection11(theme),
+                        const SizedBox(height: 60),
+                      ],
                     ],
                   ),
                 ),
@@ -414,12 +364,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // =========================================================================
-  // 이하 기존 섹션 UI 모듈화 분리 (위젯 트리가 길어지는 것을 방지)
+  // 이하 기존 섹션 UI 모듈화 분리
+  // (미니멀리즘 디자인 적용: 동적 숨김 시 번호가 이빨 빠진 것처럼 보이지 않도록 타이틀의 숫자를 제거했습니다)
   // =========================================================================
 
   Widget _buildSection1(ThemeData theme, Color dynamicPrimary) {
     return _buildSectionCard(
-      title: "1. 메인 데이터베이스 및 동작 모드",
+      title: "메인 데이터베이스 및 동작 환경",
       icon: Icons.dns_rounded,
       theme: theme,
       primaryColor: dynamicPrimary,
@@ -491,7 +442,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection2(ThemeData theme, Color dynamicPrimary, bool isDark) {
     return _buildSectionCard(
-      title: "2. 외부 ERP 시스템 통신 설정",
+      title: "외부 ERP 시스템 통신 설정",
       icon: Icons.sync_alt_rounded,
       theme: theme,
       primaryColor: dynamicPrimary,
@@ -537,7 +488,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection3(ThemeData theme, Color dynamicPrimary, bool isDark) {
     return _buildSectionCard(
-      title: "3. 화면 표시 및 동작 설정",
+      title: "화면 표시 및 테마 설정",
       icon: Icons.desktop_windows_rounded,
       theme: theme,
       primaryColor: dynamicPrimary,
@@ -597,7 +548,9 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 32),
           Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
           const SizedBox(height: 24),
-          if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) ...[
+
+          // 🔥 [웹 호환성] 데스크탑 환경에서만 모니터 선택 드롭다운을 그립니다.
+          if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux)) ...[
             const Text("기본 표시 모니터 설정", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 8),
             const Text("다중 모니터 환경인 경우, 앱이 구동될 모니터를 지정할 수 있습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
@@ -619,6 +572,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Divider(color: theme.dividerTheme.color?.withValues(alpha: 0.5)),
             const SizedBox(height: 24),
           ],
+
           Container(
             decoration: AppTheme.listItemDecoration(context, isSelected: false, statusColor: Colors.grey),
             child: SwitchListTile(
@@ -637,7 +591,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection4(ThemeData theme, Color dynamicPrimary) {
     return _buildSectionCard(
-      title: "4. 키오스크 배경 이미지 롤링 설정",
+      title: "키오스크 배경 이미지 롤링 설정",
       icon: Icons.wallpaper_rounded,
       theme: theme,
       primaryColor: dynamicPrimary,
@@ -678,7 +632,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection5(ThemeData theme, Color dynamicPrimary) {
     return _buildSectionCard(
-      title: "5. RFID 태그 발급(인코딩) 옵션",
+      title: "RFID 태그 발급(인코딩) 옵션",
       icon: Icons.nfc_rounded,
       theme: theme,
       primaryColor: dynamicPrimary,
@@ -704,7 +658,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection6(ThemeData theme) {
     return _buildSectionCard(
-      title: "6. AI 스마트 검색 (Gemini API) 설정",
+      title: "AI 스마트 검색 (Gemini API) 설정",
       icon: Icons.auto_awesome_rounded,
       theme: theme,
       primaryColor: Colors.deepPurpleAccent,
@@ -723,7 +677,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection7(ThemeData theme) {
     return _buildSectionCard(
-      title: "7. 키보드 이벤트 발생 (Wedge Mode)",
+      title: "키보드 이벤트 발생 (Wedge Mode)",
       icon: Icons.keyboard_alt_rounded,
       theme: theme,
       primaryColor: Colors.orangeAccent,
@@ -750,7 +704,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection8(ThemeData theme) {
     return _buildSectionCard(
-      title: "8. 카카오톡 알림톡 설정",
+      title: "카카오톡 알림톡 설정",
       icon: Icons.chat_bubble_rounded,
       theme: theme,
       primaryColor: const Color(0xFFFEE500),
@@ -792,7 +746,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection9(ThemeData theme) {
     return _buildSectionCard(
-      title: "9. 이메일 (SMTP) 자동 발송 설정",
+      title: "이메일 (SMTP) 자동 발송 설정",
       icon: Icons.email_rounded,
       theme: theme,
       primaryColor: Colors.blueAccent,
@@ -842,7 +796,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _buildSection10(ThemeData theme) {
     return _buildSectionCard(
-      title: "10. 사용자 정의 웹훅 (Webhook) 전송 설정",
+      title: "사용자 정의 웹훅 (Webhook) 전송 설정",
       icon: Icons.webhook_rounded,
       theme: theme,
       primaryColor: Colors.teal,
@@ -871,6 +825,74 @@ class _SettingsPageState extends State<SettingsPage> {
                 controller: _webhookUrlController,
                 style: AppTheme.itemValueStyle(context).copyWith(fontSize: 16),
                 decoration: AppTheme.inputDecoration(label: "웹훅 수신 API 주소 (예: https://client.com/myservice.php)", context: context, prefixIcon: Icons.link_rounded),
+              ),
+            )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSection11(ThemeData theme) {
+    return _buildSectionCard(
+      title: "TCP/IP Socket 전송 설정",
+      icon: Icons.electrical_services_rounded,
+      theme: theme,
+      primaryColor: Colors.redAccent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "거래처의 PLC 장비, MES/POP 시스템 포트로 직접 Raw 데이터를 전송(Push)할 때 사용합니다.\nREST API를 지원하지 않는 레거시 장비 및 산업용 PC 연동에 필수적인 기능입니다.",
+            style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, height: 1.5),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            decoration: AppTheme.listItemDecoration(context, isSelected: _tcpEnabled, statusColor: Colors.redAccent),
+            child: SwitchListTile(
+              title: const Text("TCP/IP 소켓 데이터 전송 활성화", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
+              subtitle: const Text("이벤트 발생 시 지정된 IP 주소와 포트로 문자열 패킷을 밀어넣습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.grey)),
+              value: _tcpEnabled,
+              activeThumbColor: Colors.redAccent,
+              activeTrackColor: Colors.redAccent.withValues(alpha: 0.4),
+              onChanged: (bool value) => setState(() => _tcpEnabled = value),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            child: _tcpEnabled
+                ? Padding(
+              padding: const EdgeInsets.only(top: 16.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _tcpHostController,
+                      style: AppTheme.itemValueStyle(context).copyWith(fontSize: 16),
+                      decoration: AppTheme.inputDecoration(
+                          label: "수신측 IP 주소 (예: 192.168.0.50)",
+                          context: context,
+                          prefixIcon: Icons.computer_rounded
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _tcpPortController,
+                      keyboardType: TextInputType.number,
+                      style: AppTheme.itemValueStyle(context).copyWith(fontSize: 16),
+                      decoration: AppTheme.inputDecoration(
+                          label: "포트 (예: 5000)",
+                          context: context,
+                          prefixIcon: Icons.settings_ethernet_rounded
+                      ),
+                    ),
+                  ),
+                ],
               ),
             )
                 : const SizedBox.shrink(),

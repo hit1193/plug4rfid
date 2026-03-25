@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+// 🔥 [핵심] 웹, 모바일, PC 기기를 판별하기 위한 플러터 순정 상수 라이브러리입니다.
 import 'package:flutter/foundation.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -6,7 +7,7 @@ import 'package:system_tray/system_tray.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:screen_retriever/screen_retriever.dart';
-import 'dart:io';
+// 🔥 [주의] 이곳에 절대 import 'dart:io'; 가 들어오면 안 됩니다! IDE 자동완성을 주의하세요!
 
 import '../core/pocketbase_client.dart';
 import '../theme/app_theme.dart';
@@ -55,22 +56,28 @@ class _MainPageState extends State<MainPage> with WindowListener {
   SystemTray? _systemTray;
   AppWindow? _appWindow;
 
-  // 🔥 [수정] 원본 메뉴 리스트를 따로 보관합니다.
+  // ---------------------------------------------------------------------------
+  // [메뉴 원본 리스트]
+  // 모든 플랫폼에 존재하는 전체 메뉴 마스터 목록입니다.
+  // ---------------------------------------------------------------------------
   final List<Map<String, dynamic>> _allMenuItems = [
-    {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},        // Index 0
-    {'title': '장치 관리', 'icon': FontAwesomeIcons.microchip},            // Index 1
-    {'title': '인원 관리', 'icon': FontAwesomeIcons.users},                // Index 2
-    {'title': '물품 관리', 'icon': FontAwesomeIcons.boxesStacked},         // Index 3
-    {'title': '출입 기록', 'icon': FontAwesomeIcons.clockRotateLeft},      // Index 4
-    {'title': '공지사항', 'icon': FontAwesomeIcons.bullhorn},              // Index 5
-    {'title': '환경 설정', 'icon': FontAwesomeIcons.gears},                // Index 6
+    {'title': '종합 관제 상황판', 'icon': FontAwesomeIcons.chartPie},
+    {'title': '장치 관리', 'icon': FontAwesomeIcons.microchip},            // <- 하드웨어 제어 메뉴
+    {'title': '인원 관리', 'icon': FontAwesomeIcons.users},
+    {'title': '물품 관리', 'icon': FontAwesomeIcons.boxesStacked},
+    {'title': '출입 기록', 'icon': FontAwesomeIcons.clockRotateLeft},
+    {'title': '공지사항', 'icon': FontAwesomeIcons.bullhorn},
+    {'title': '환경 설정', 'icon': FontAwesomeIcons.gears},
   ];
 
-  // 🔥 [추가] 플랫폼을 스스로 감지하여 웹/모바일 환경에서는 '장치 관리' 메뉴를 아예 노출하지 않게 차단합니다.
+  // 🔥 [웹/모바일 메뉴 숨김 로직]
+  // 실행 환경을 스스로 감지하여, 하드웨어 제어가 불가능한 웹이나 모바일에서는
+  // '장치 관리' 메뉴를 아예 리스트에서 제외하여 사용자에게 노출하지 않습니다!
   List<Map<String, dynamic>> get _menuItems {
-    if (kIsWeb || (!kIsWeb && (Platform.isAndroid || Platform.isIOS))) {
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) {
       return _allMenuItems.where((item) => item['title'] != '장치 관리').toList();
     }
+    // PC(윈도우 등 데스크탑) 환경에서는 모든 메뉴를 정상적으로 렌더링합니다.
     return _allMenuItems;
   }
 
@@ -97,10 +104,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [창 초기 위치/크기 보정 함수] (윈도우/맥/리눅스 전용)
+  /// [창 초기 위치/크기 보정 함수]
   /// ---------------------------------------------------------------------------
   Future<void> _initWindowPosition() async {
-    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    // 🔥 [웹 호환성 대응] dart:io의 Platform 대신 defaultTargetPlatform 사용
+    if (!kIsWeb && (defaultTargetPlatform == TargetPlatform.windows || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.linux)) {
       try {
         bool isFull = await windowManager.isFullScreen();
         if (!isFull) {
@@ -113,11 +121,11 @@ class _MainPageState extends State<MainPage> with WindowListener {
   }
 
   /// ---------------------------------------------------------------------------
-  /// [시스템 트레이(작업 표시줄 아이콘) 초기화 함수] (윈도우 전용)
+  /// [시스템 트레이(작업 표시줄 아이콘) 초기화 함수]
   /// ---------------------------------------------------------------------------
   Future<void> _initSystemTray() async {
     // 윈도우 환경임이 확실할 때만 객체를 실제로 생성(메모리 할당)합니다.
-    if (!kIsWeb && Platform.isWindows) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
       _systemTray = SystemTray();
       _appWindow = AppWindow();
 
@@ -159,7 +167,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
 
   @override
   void onWindowRestore() async {
-    if (!kIsWeb && Platform.isWindows) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
       bool isFull = await windowManager.isFullScreen();
       if (!isFull) {
         await windowManager.setFullScreen(true);
@@ -337,10 +345,12 @@ class _MainPageState extends State<MainPage> with WindowListener {
 
   /// ---------------------------------------------------------------------------
   /// [UI 조각] 글로벌 Top Bar (메뉴 타이틀 + 아이콘 & 사용자 프로필 칩)
-  /// 🔥 [수정됨] 화면이 좁을 때 글씨가 삐져나오는(Overflow) 현상을 막기 위해
-  /// Expanded와 Flexible 위젯을 적용하여 가로 길이를 안전하게 제어합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildGlobalTopBar(ThemeData theme, AuthProvider auth, bool isMobile) {
+    // 🔥 인덱스가 범위를 벗어나는 것을 방지하는 안전장치입니다. (메뉴가 숨겨지면서 길이가 줄어들 때 발생 방지)
+    if (_selectedIndex >= _menuItems.length) {
+      _selectedIndex = 0;
+    }
     final String currentTitle = _menuItems[_selectedIndex]['title'];
     final dynamic currentIcon = _menuItems[_selectedIndex]['icon'];
     final bool isDarkMode = theme.brightness == Brightness.dark;
@@ -384,7 +394,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
           ),
           const SizedBox(width: 16),
 
-          // 🔥 [에러 조치 1] 타이틀 텍스트가 화면을 넘어가면 말줄임표(...) 처리되도록 Expanded로 감쌉니다.
+          // 오버플로우 방지 처리
           Expanded(
             child: Text(
               currentTitle,
@@ -400,7 +410,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
             ),
           ),
 
-          const SizedBox(width: 8), // Spacer 대신 최소 여유 공간만 줍니다.
+          const SizedBox(width: 8),
 
           // 우측 상단 사용자 정보 표시
           _buildLoginUserInfo(auth, theme, isMobile),
@@ -419,7 +429,6 @@ class _MainPageState extends State<MainPage> with WindowListener {
     final bool isManagerLevel = auth.isAdmin || role.contains('관리자') || role.toLowerCase().contains('admin');
 
     return Container(
-      // 부모 영역이 줄어들면 같이 유연하게 줄어들도록 ConstrainedBox로 최대/최소 크기 제약을 줍니다.
       constraints: BoxConstraints(maxWidth: isMobile ? 120 : 250),
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 16, vertical: 8),
       decoration: BoxDecoration(
@@ -438,10 +447,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
             color: isManagerLevel ? Colors.indigo : theme.colorScheme.primary,
             size: 20,
           ),
-          // 모바일 화면에서는 공간 확보를 위해 이름 텍스트를 아예 숨기거나 간소화합니다.
           if (!isMobile) ...[
             const SizedBox(width: 10),
-            // 🔥 [에러 조치 2] 사용자 이름이 너무 길어질 때를 대비해 Flexible로 방어합니다.
             Flexible(
               child: Text(
                 '$userName 님',
@@ -546,7 +553,8 @@ class _MainPageState extends State<MainPage> with WindowListener {
                     pb.authStore.clear();
                   },
                 ),
-                if (!kIsWeb && Platform.isWindows) ...[
+                // 🔥 [웹 컴파일 대응 완료] 윈도우 한정 트레이 기능 노출
+                if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) ...[
                   const SizedBox(height: 4),
                   _buildMenuItem(
                     title: "트레이로 숨기기",
@@ -644,7 +652,7 @@ class _MainPageState extends State<MainPage> with WindowListener {
     );
   }
 
-  /// 개별 메뉴 항목 버튼 생성 (아이콘 + 텍스트)
+  /// 개별 메뉴 항목 버튼 생성
   Widget _buildMenuItem({
     required String title,
     required dynamic icon,
@@ -724,13 +732,18 @@ class _MainPageState extends State<MainPage> with WindowListener {
   /// [라우팅 핵심 로직] 선택된 메뉴(Index)에 따라 우측 본문 화면을 동적으로 반환합니다.
   /// ---------------------------------------------------------------------------
   Widget _buildBody(bool isMobile) {
-    // 🔥 [에러 원천 차단] 메뉴가 동적으로 숨겨질 수 있으므로 인덱스 대신 '타이틀명'으로 화면을 분기합니다.
+    // 안전장치: 인덱스가 범위를 벗어난 경우 기본값 0으로 보정
+    if (_selectedIndex >= _menuItems.length) {
+      _selectedIndex = 0;
+    }
+
+    // 인덱스 대신 '타이틀명'으로 화면을 분기하여 메뉴가 동적으로 숨겨지더라도 안전하게 동작합니다.
     final String currentTitle = _menuItems[_selectedIndex]['title'];
 
     switch (currentTitle) {
       case '종합 관제 상황판':
         return DeviceMapPage(baseUrl: _pbBaseUrl);
-      case '장치 관리':
+      case '장치 관리': // PC에서만 노출됨
         return DevicePage(searchQuery: "", isMobile: isMobile, baseUrl: _pbBaseUrl);
       case '인원 관리':
         return UserPage(searchQuery: "", filter: '전체', isMobile: isMobile, baseUrl: _pbBaseUrl);

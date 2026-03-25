@@ -162,8 +162,7 @@ class _DevicePageState extends State<DevicePage> {
           tid = tidMatch.group(1)!;
         }
         rawString = "EPC Data Received";
-      }
-      else {
+      } else {
         // 일반 시스템 로그나 RAW 데이터 판별
         if (rawString.contains('[SYS]')) {
           type = 'SYS';
@@ -389,7 +388,6 @@ class _DevicePageState extends State<DevicePage> {
                     _buildActionIconButton(Icons.delete_sweep_outlined, "전체 초기화", () {
                       _showResetConfirmationDialog(provider, theme);
                     }, theme, color: AppTheme.danger),
-
                     _buildActionIconButton(Icons.add_to_queue_rounded, "신규 장치 등록", () {
                       _showForm(context, provider, null);
                     }, theme, color: theme.colorScheme.primary),
@@ -443,14 +441,14 @@ class _DevicePageState extends State<DevicePage> {
   Widget _buildListView(List<DeviceModel> list, DeviceProvider provider, ThemeData theme) {
     if (list.isEmpty) {
       return Center(
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.router_outlined, size: 80, color: Colors.black12),
-                const SizedBox(height: 16),
-                const Text("등록된 장치가 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18))
-              ]
-          )
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.router_outlined, size: 80, color: Colors.black12),
+            const SizedBox(height: 16),
+            const Text("등록된 장치가 없습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 18))
+          ],
+        ),
       );
     }
 
@@ -654,7 +652,8 @@ class _DevicePageState extends State<DevicePage> {
               ),
               const SizedBox(height: 10),
               Wrap(
-                spacing: 20, runSpacing: 8,
+                spacing: 20,
+                runSpacing: 8,
                 children: [
                   _buildKeyValue("모델 (제조사)", item.model, context),
                   _buildKeyValue("IP 주소/포트명", item.ipAddress, context),
@@ -674,12 +673,10 @@ class _DevicePageState extends State<DevicePage> {
                 _showTerminalDialog(context, item.id, provider, item);
               }),
               const SizedBox(width: 12),
-
               _buildCircleAction(Icons.science, Colors.deepPurpleAccent, "장치 동작 테스트 (읽기/쓰기)", () {
                 _showDeviceTestDialog(context, provider, item);
               }),
               const SizedBox(width: 12),
-
               if (isOnline) ...[
                 _buildCircleAction(Icons.tune, Colors.blueAccent, "출력(파워) 제어", () {
                   _showPowerControlDialog(context, provider, item);
@@ -701,8 +698,7 @@ class _DevicePageState extends State<DevicePage> {
                   style: OutlinedButton.styleFrom(
                       foregroundColor: AppTheme.danger,
                       side: const BorderSide(color: AppTheme.danger),
-                      padding: const EdgeInsets.symmetric(vertical: 12)
-                  ),
+                      padding: const EdgeInsets.symmetric(vertical: 12)),
                   child: const Text("연결 해제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                 )
                     : ElevatedButton(
@@ -712,8 +708,7 @@ class _DevicePageState extends State<DevicePage> {
                   style: ElevatedButton.styleFrom(
                       backgroundColor: theme.colorScheme.primary,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12)
-                  ),
+                      padding: const EdgeInsets.symmetric(vertical: 12)),
                   child: const Text("장치 연결", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -748,10 +743,11 @@ class _DevicePageState extends State<DevicePage> {
                   Row(
                     children: [
                       Flexible(
-                          child: Text(item.name,
-                            style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
-                            overflow: TextOverflow.ellipsis,
-                          )
+                        child: Text(
+                          item.name,
+                          style: AppTheme.itemValueStyle(context).copyWith(fontSize: 19),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       _buildStatusBadge(item.status, statusColor),
@@ -766,7 +762,8 @@ class _DevicePageState extends State<DevicePage> {
         ),
         const SizedBox(height: 12),
         Wrap(
-          spacing: 16, runSpacing: 8,
+          spacing: 16,
+          runSpacing: 8,
           children: [
             _buildKeyValue("IP 주소/포트명", item.ipAddress, context),
             _buildKeyValue("연결 포트/속도", item.port.toString(), context),
@@ -782,17 +779,14 @@ class _DevicePageState extends State<DevicePage> {
             _buildCircleAction(Icons.terminal, Colors.teal, "로그 보기", () {
               _showTerminalDialog(context, item.id, provider, item);
             }),
-
             _buildCircleAction(Icons.science, Colors.deepPurpleAccent, "장치 테스트", () {
               _showDeviceTestDialog(context, provider, item);
             }),
-
             if (isOnline) ...[
               _buildCircleAction(Icons.tune, Colors.blueAccent, "출력 제어", () {
                 _showPowerControlDialog(context, provider, item);
               }),
             ],
-
             Expanded(
               child: isOnline
                   ? OutlinedButton(
@@ -805,8 +799,7 @@ class _DevicePageState extends State<DevicePage> {
                 style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.danger,
                     side: const BorderSide(color: AppTheme.danger),
-                    padding: const EdgeInsets.symmetric(vertical: 12)
-                ),
+                    padding: const EdgeInsets.symmetric(vertical: 12)),
                 child: const Text("연결 해제", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
               )
                   : ElevatedButton(
@@ -816,8 +809,7 @@ class _DevicePageState extends State<DevicePage> {
                 style: ElevatedButton.styleFrom(
                     backgroundColor: theme.colorScheme.primary,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12)
-                ),
+                    padding: const EdgeInsets.symmetric(vertical: 12)),
                 child: const Text("장치 연결", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
               ),
             ),
@@ -844,319 +836,319 @@ class _DevicePageState extends State<DevicePage> {
     bool isReading = false; // [추가] 현재 읽기(스캔)가 진행 중인지 상태를 추적합니다.
 
     showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          // Provider의 변경사항을 다이얼로그 내부에서도 즉시 감지하기 위해 다시 주입
-          return ChangeNotifierProvider<DeviceProvider>.value(
-            value: provider,
-            child: StatefulBuilder(
-                builder: (BuildContext context, StateSetter setDialogState) {
-                  // 최신 장치 상태 추적
-                  DeviceModel currentDevice = provider.list.firstWhere((element) {
-                    return element.id == d.id;
-                  }, orElse: () {
-                    return d;
-                  });
-                  bool isOnline = currentDevice.status.toLowerCase() == 'online';
+      context: context,
+      builder: (BuildContext ctx) {
+        // Provider의 변경사항을 다이얼로그 내부에서도 즉시 감지하기 위해 다시 주입
+        return ChangeNotifierProvider<DeviceProvider>.value(
+          value: provider,
+          child: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setDialogState) {
+              // 최신 장치 상태 추적
+              DeviceModel currentDevice = provider.list.firstWhere((element) {
+                return element.id == d.id;
+              }, orElse: () {
+                return d;
+              });
+              bool isOnline = currentDevice.status.toLowerCase() == 'online';
 
-                  return AlertDialog(
-                      title: AppTheme.dialogTitle('${currentDevice.name} 동작 제어', Icons.science, color: Colors.deepPurpleAccent),
-                      content: SizedBox(
-                          width: 800,
-                          child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
+              return AlertDialog(
+                title: AppTheme.dialogTitle('${currentDevice.name} 동작 제어', Icons.science, color: Colors.deepPurpleAccent),
+                content: SizedBox(
+                  width: 800,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 연결 상태 패널
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isOnline ? AppTheme.success.withValues(alpha: 0.1) : AppTheme.danger.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: isOnline ? AppTheme.success.withValues(alpha: 0.3) : AppTheme.danger.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
                               children: [
-                                // 연결 상태 패널
-                                Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                        color: isOnline ? AppTheme.success.withValues(alpha: 0.1) : AppTheme.danger.withValues(alpha: 0.1),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: isOnline ? AppTheme.success.withValues(alpha: 0.3) : AppTheme.danger.withValues(alpha: 0.3))
-                                    ),
-                                    child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Row(
-                                              children: [
-                                                Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: isOnline ? AppTheme.success : AppTheme.danger),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                    isOnline ? "장치가 온라인 상태입니다 (명령 전송 가능)" : "장치가 오프라인입니다. 먼저 연결하세요.",
-                                                    style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: isOnline ? AppTheme.success : AppTheme.danger)
-                                                ),
-                                              ]
-                                          ),
-                                          ElevatedButton(
-                                            onPressed: () async {
-                                              if (isOnline) {
-                                                // [OS 예외 방어 코드]
-                                                if (isReading) {
-                                                  setDialogState(() { isReading = false; });
-                                                  try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
-                                                  await Future.delayed(const Duration(milliseconds: 300));
-                                                }
-                                                provider.disconnectDevice(currentDevice.id);
-                                              } else {
-                                                provider.connectDevice(currentDevice);
-                                              }
-
-                                              Future.delayed(const Duration(milliseconds: 1000), () {
-                                                if (ctx.mounted) {
-                                                  setDialogState(() {});
-                                                }
-                                              });
-                                            },
-                                            style: ElevatedButton.styleFrom(backgroundColor: isOnline ? AppTheme.danger : AppTheme.primary, foregroundColor: Colors.white),
-                                            child: Text(isOnline ? "통신 끊기" : "장치 연결 시도", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                                          )
-                                        ]
-                                    )
+                                Icon(isOnline ? Icons.wifi : Icons.wifi_off, color: isOnline ? AppTheme.success : AppTheme.danger),
+                                const SizedBox(width: 8),
+                                Text(
+                                  isOnline ? "장치가 온라인 상태입니다 (명령 전송 가능)" : "장치가 오프라인입니다. 먼저 연결하세요.",
+                                  style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: isOnline ? AppTheme.success : AppTheme.danger),
                                 ),
-                                const SizedBox(height: 24),
+                              ],
+                            ),
+                            ElevatedButton(
+                              onPressed: () async {
+                                if (isOnline) {
+                                  // [OS 예외 방어 코드]
+                                  if (isReading) {
+                                    setDialogState(() { isReading = false; });
+                                    try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
+                                    await Future.delayed(const Duration(milliseconds: 300));
+                                  }
+                                  provider.disconnectDevice(currentDevice.id);
+                                } else {
+                                  provider.connectDevice(currentDevice);
+                                }
 
-                                // [쓰기 영역] 태그 Write
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    const Text("📝 데이터 기록 (Tag Write)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
-                                    ToggleButtons(
-                                      constraints: const BoxConstraints(minHeight: 32, minWidth: 100),
-                                      borderRadius: BorderRadius.circular(8),
-                                      isSelected: [!isHexMode, isHexMode],
-                                      onPressed: (int index) {
-                                        setDialogState(() {
-                                          isHexMode = index == 1;
-                                        });
-                                      },
-                                      children: const [
-                                        Text("일반 문자(ASCII)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                        Text("헥사값(HEX)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                  ],
+                                Future.delayed(const Duration(milliseconds: 1000), () {
+                                  if (ctx.mounted) {
+                                    setDialogState(() {});
+                                  }
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(backgroundColor: isOnline ? AppTheme.danger : AppTheme.primary, foregroundColor: Colors.white),
+                              child: Text(isOnline ? "통신 끊기" : "장치 연결 시도", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // [쓰기 영역] 태그 Write
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text("📝 데이터 기록 (Tag Write)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
+                          ToggleButtons(
+                            constraints: const BoxConstraints(minHeight: 32, minWidth: 100),
+                            borderRadius: BorderRadius.circular(8),
+                            isSelected: [!isHexMode, isHexMode],
+                            onPressed: (int index) {
+                              setDialogState(() {
+                                isHexMode = index == 1;
+                              });
+                            },
+                            children: const [
+                              Text("일반 문자(ASCII)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text("헥사값(HEX)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: writeCtrl,
+                              enabled: isOnline && !isWriting,
+                              // 🔥 연결 전(Disabled)과 후(Enabled) 모두 예쁜 둥근 테두리를 유지하도록 스타일링 적용!
+                              decoration: InputDecoration(
+                                labelText: isHexMode ? "헥사값 입력 (예: 313233...)" : "일반 문자 입력 (예: ITEM01...)",
+                                labelStyle: TextStyle(
+                                  fontFamily: AppTheme.fontPretendard,
+                                  fontWeight: FontWeight.bold,
+                                  color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
                                 ),
-                                const SizedBox(height: 12),
-                                Row(
+                                prefixIcon: Icon(
+                                  isHexMode ? Icons.code : Icons.text_fields,
+                                  color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
+                                ),
+                                filled: true,
+                                fillColor: isOnline
+                                    ? Colors.deepPurpleAccent.withValues(alpha: 0.05)
+                                    : Colors.grey.withValues(alpha: 0.05),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: Colors.deepPurpleAccent.withValues(alpha: 0.3), width: 1.5),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2),
+                                ),
+                                disabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: Colors.grey.withValues(alpha: 0.3), width: 1.5),
+                                ),
+                              ),
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontWeight: FontWeight.bold,
+                                color: isOnline ? AppTheme.dataColor(theme.brightness == Brightness.dark) : Colors.grey,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            height: 56,
+                            child: ElevatedButton.icon(
+                              onPressed: (!isOnline || isWriting) ? null : () async {
+                                if (writeCtrl.text.isEmpty) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("기록할 데이터를 입력해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard))));
+                                  return;
+                                }
+
+                                setDialogState(() {
+                                  isWriting = true;
+                                });
+
+                                bool ok = await provider.writeTagData(
+                                    currentDevice.id,
+                                    writeCtrl.text.trim(),
+                                    isHexMode: isHexMode
+                                );
+
+                                if (!ctx.mounted) return;
+
+                                setDialogState(() {
+                                  isWriting = false;
+                                });
+                                ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(ok ? "기록 명령 전송 성공!" : "기록 실패 (로그 참조)", style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
+                              },
+                              icon: isWriting
+                                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                                  : const Icon(Icons.nfc),
+                              label: const Text("태그에 쓰기 발사", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+
+                      // [읽기 영역] 미니 터미널
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text("🔍 실시간 읽기 로그 (Mini Terminal)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
+                          Row(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: !isOnline ? null : () async {
+                                  if (isReading) {
+                                    setDialogState(() { isReading = false; });
+                                    try {
+                                      provider.stopDeviceRead(currentDevice.id);
+                                    } catch (e) {
+                                      debugPrint("읽기 중단 에러: $e");
+                                    }
+                                  } else {
+                                    setDialogState(() { isReading = true; });
+                                    try {
+                                      provider.triggerDeviceRead(currentDevice.id);
+                                    } catch (e) {
+                                      debugPrint("읽기 시작 에러: $e");
+                                    }
+                                  }
+                                },
+                                icon: Icon(isReading ? Icons.stop_circle : Icons.sensors, size: 16),
+                                label: Text(isReading ? "읽기 중단 (Stop)" : "연속 읽기 (Scan)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                                style: ElevatedButton.styleFrom(
+                                    backgroundColor: isReading ? AppTheme.warning : Colors.teal,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton.icon(
+                                onPressed: () {
+                                  provider.clearLogs(currentDevice.id);
+                                },
+                                icon: const Icon(Icons.delete_outline, size: 16),
+                                label: const Text("로그 지우기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 12)),
+                                style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+
+                      // 콘솔 느낌의 로그 뷰어
+                      Container(
+                        height: 220,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1E1E),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.black87, width: 2),
+                        ),
+                        child: Consumer<DeviceProvider>(
+                          builder: (BuildContext consumerCtx, DeviceProvider dynamicProvider, Widget? child) {
+                            final logs = dynamicProvider.getLogs(currentDevice.id).reversed.toList();
+
+                            if (logs.isEmpty) {
+                              return const Center(child: Text("수신 대기 중... (패킷 없음)", style: TextStyle(color: Colors.white38, fontFamily: AppTheme.fontPretendard)));
+                            }
+
+                            return ListView.separated(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              itemCount: logs.length,
+                              separatorBuilder: (BuildContext context, int index) {
+                                return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
+                              },
+                              itemBuilder: (BuildContext context, int idx) {
+                                final Map<String, String> parsed = _parseLogData(logs[idx]);
+
+                                Color typeColor = Colors.grey;
+                                if (parsed['type'] == 'TAG') {
+                                  typeColor = Colors.cyanAccent;
+                                } else if (parsed['type'] == 'RAW') {
+                                  typeColor = Colors.amberAccent;
+                                } else if (parsed['type'] == 'SYS') {
+                                  typeColor = Colors.pinkAccent;
+                                } else if (parsed['type'] == 'DIR') {
+                                  typeColor = Colors.greenAccent;
+                                }
+
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Expanded(
-                                          child: TextField(
-                                            controller: writeCtrl,
-                                            enabled: isOnline && !isWriting,
-                                            // 🔥 연결 전(Disabled)과 후(Enabled) 모두 예쁜 둥근 테두리를 유지하도록 스타일링 적용!
-                                            decoration: InputDecoration(
-                                              labelText: isHexMode ? "헥사값 입력 (예: 313233...)" : "일반 문자 입력 (예: ITEM01...)",
-                                              labelStyle: TextStyle(
-                                                fontFamily: AppTheme.fontPretendard,
-                                                fontWeight: FontWeight.bold,
-                                                color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
-                                              ),
-                                              prefixIcon: Icon(
-                                                isHexMode ? Icons.code : Icons.text_fields,
-                                                color: isOnline ? Colors.deepPurpleAccent : Colors.grey,
-                                              ),
-                                              filled: true,
-                                              fillColor: isOnline
-                                                  ? Colors.deepPurpleAccent.withValues(alpha: 0.05)
-                                                  : Colors.grey.withValues(alpha: 0.05),
-                                              enabledBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(10),
-                                                borderSide: BorderSide(color: Colors.deepPurpleAccent.withValues(alpha: 0.3), width: 1.5),
-                                              ),
-                                              focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(10),
-                                                borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2),
-                                              ),
-                                              disabledBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(10),
-                                                borderSide: BorderSide(color: Colors.grey.withValues(alpha: 0.3), width: 1.5),
-                                              ),
-                                            ),
-                                            style: TextStyle(
-                                              fontFamily: 'monospace',
-                                              fontWeight: FontWeight.bold,
-                                              color: isOnline ? AppTheme.dataColor(theme.brightness == Brightness.dark) : Colors.grey,
-                                            ),
-                                          )
+                                      SizedBox(width: 60, child: Text(parsed['time']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white60, fontSize: 11))),
+                                      SizedBox(
+                                        width: 40,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                                          decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                          child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: typeColor, fontSize: 9, fontWeight: FontWeight.bold)),
+                                        ),
                                       ),
                                       const SizedBox(width: 12),
-                                      SizedBox(
-                                          height: 56,
-                                          child: ElevatedButton.icon(
-                                            onPressed: (!isOnline || isWriting) ? null : () async {
-                                              if (writeCtrl.text.isEmpty) {
-                                                ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("기록할 데이터를 입력해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard))));
-                                                return;
-                                              }
-
-                                              setDialogState(() {
-                                                isWriting = true;
-                                              });
-
-                                              bool ok = await provider.writeTagData(
-                                                  currentDevice.id,
-                                                  writeCtrl.text.trim(),
-                                                  isHexMode: isHexMode
-                                              );
-
-                                              if (!ctx.mounted) return;
-
-                                              setDialogState(() {
-                                                isWriting = false;
-                                              });
-                                              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(ok ? "기록 명령 전송 성공!" : "기록 실패 (로그 참조)", style: const TextStyle(fontFamily: AppTheme.fontPretendard))));
-                                            },
-                                            icon: isWriting
-                                                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                                                : const Icon(Icons.nfc),
-                                            label: const Text("태그에 쓰기 발사", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurpleAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                                          )
-                                      )
-                                    ]
-                                ),
-                                const SizedBox(height: 24),
-
-                                // [읽기 영역] 미니 터미널
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    const Text("🔍 실시간 읽기 로그 (Mini Terminal)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 16)),
-                                    Row(
-                                      children: [
-                                        ElevatedButton.icon(
-                                          onPressed: !isOnline ? null : () async {
-                                            if (isReading) {
-                                              setDialogState(() { isReading = false; });
-                                              try {
-                                                provider.stopDeviceRead(currentDevice.id);
-                                              } catch (e) {
-                                                debugPrint("읽기 중단 에러: $e");
-                                              }
-                                            } else {
-                                              setDialogState(() { isReading = true; });
-                                              try {
-                                                provider.triggerDeviceRead(currentDevice.id);
-                                              } catch (e) {
-                                                debugPrint("읽기 시작 에러: $e");
-                                              }
-                                            }
-                                          },
-                                          icon: Icon(isReading ? Icons.stop_circle : Icons.sensors, size: 16),
-                                          label: Text(isReading ? "읽기 중단 (Stop)" : "연속 읽기 (Scan)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                                          style: ElevatedButton.styleFrom(
-                                              backgroundColor: isReading ? AppTheme.warning : Colors.teal,
-                                              foregroundColor: Colors.white,
-                                              elevation: 0
+                                      Expanded(
+                                        child: Text(
+                                          parsed['type'] == 'TAG' ? "EPC: ${parsed['epc']} (Ant: ${parsed['ant']})" : parsed['raw']!,
+                                          style: TextStyle(
+                                            fontFamily: AppTheme.fontPretendard,
+                                            color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'TAG' ? Colors.white : Colors.white70),
+                                            fontSize: 12,
+                                            fontWeight: parsed['type'] == 'TAG' ? FontWeight.bold : FontWeight.normal,
                                           ),
                                         ),
-                                        const SizedBox(width: 8),
-                                        TextButton.icon(
-                                          onPressed: () {
-                                            provider.clearLogs(currentDevice.id);
-                                          },
-                                          icon: const Icon(Icons.delete_outline, size: 16),
-                                          label: const Text("로그 지우기", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 12)),
-                                          style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
-                                        ),
-                                      ],
-                                    )
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-
-                                // 콘솔 느낌의 로그 뷰어
-                                Container(
-                                    height: 220,
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF1E1E1E),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(color: Colors.black87, width: 2),
-                                    ),
-                                    child: Consumer<DeviceProvider>(
-                                        builder: (BuildContext consumerCtx, DeviceProvider dynamicProvider, Widget? child) {
-                                          final logs = dynamicProvider.getLogs(currentDevice.id).reversed.toList();
-
-                                          if (logs.isEmpty) {
-                                            return const Center(child: Text("수신 대기 중... (패킷 없음)", style: TextStyle(color: Colors.white38, fontFamily: AppTheme.fontPretendard)));
-                                          }
-
-                                          return ListView.separated(
-                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                              itemCount: logs.length,
-                                              separatorBuilder: (BuildContext context, int index) {
-                                                return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
-                                              },
-                                              itemBuilder: (BuildContext context, int idx) {
-                                                final Map<String, String> parsed = _parseLogData(logs[idx]);
-
-                                                Color typeColor = Colors.grey;
-                                                if (parsed['type'] == 'TAG') {
-                                                  typeColor = Colors.cyanAccent;
-                                                } else if (parsed['type'] == 'RAW') {
-                                                  typeColor = Colors.amberAccent;
-                                                } else if (parsed['type'] == 'SYS') {
-                                                  typeColor = Colors.pinkAccent;
-                                                } else if (parsed['type'] == 'DIR') {
-                                                  typeColor = Colors.greenAccent;
-                                                }
-
-                                                return Padding(
-                                                  padding: const EdgeInsets.symmetric(vertical: 4),
-                                                  child: Row(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    children: [
-                                                      SizedBox(width: 60, child: Text(parsed['time']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white60, fontSize: 11))),
-                                                      SizedBox(
-                                                          width: 40,
-                                                          child: Container(
-                                                            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                                                            decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                                            child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: typeColor, fontSize: 9, fontWeight: FontWeight.bold)),
-                                                          )
-                                                      ),
-                                                      const SizedBox(width: 12),
-                                                      Expanded(
-                                                          child: Text(
-                                                              parsed['type'] == 'TAG' ? "EPC: ${parsed['epc']} (Ant: ${parsed['ant']})" : parsed['raw']!,
-                                                              style: TextStyle(
-                                                                  fontFamily: AppTheme.fontPretendard,
-                                                                  color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'TAG' ? Colors.white : Colors.white70),
-                                                                  fontSize: 12,
-                                                                  fontWeight: parsed['type'] == 'TAG' ? FontWeight.bold : FontWeight.normal
-                                                              )
-                                                          )
-                                                      ),
-                                                    ],
-                                                  ),
-                                                );
-                                              }
-                                          );
-                                        }
-                                    )
-                                )
-                              ]
-                          )
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
-                      actions: [
-                        AppTheme.actionButton(
-                            label: "닫기",
-                            color: Colors.transparent,
-                            textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                            onPressed: () {
-                              if (isReading) {
-                                try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
-                              }
-                              Navigator.pop(ctx);
-                            }
-                        )
-                      ]
-                  );
-                }
-            ),
-          );
-        }
+                    ],
+                  ),
+                ),
+                actions: [
+                  AppTheme.actionButton(
+                    label: "닫기",
+                    color: Colors.transparent,
+                    textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    onPressed: () {
+                      if (isReading) {
+                        try { provider.stopDeviceRead(currentDevice.id); } catch(_) {}
+                      }
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1168,199 +1160,199 @@ class _DevicePageState extends State<DevicePage> {
     final theme = Theme.of(context);
 
     showDialog(
-        context: context,
-        builder: (BuildContext dialogContext) {
-          return ChangeNotifierProvider<DeviceProvider>.value(
-            value: provider,
-            child: AlertDialog(
-              title: AppTheme.dialogTitle('${d.name} 실시간 패킷 터미널', Icons.terminal, color: Colors.teal),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-              content: SizedBox(
-                width: 1200,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return ChangeNotifierProvider<DeviceProvider>.value(
+          value: provider,
+          child: AlertDialog(
+            title: AppTheme.dialogTitle('${d.name} 실시간 패킷 터미널', Icons.terminal, color: Colors.teal),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            content: SizedBox(
+              width: 1200,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "실시간 수신 데이터 파싱 결과 (최대 100건)",
+                        style: TextStyle(
+                            fontFamily: AppTheme.fontPretendard,
+                            fontWeight: AppTheme.weightMenu,
+                            color: Colors.blueGrey,
+                            fontSize: 14
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: () {
+                          provider.clearLogs(deviceId);
+                        },
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text("터미널 창 비우기", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                        style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+                      )
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  Container(
+                    height: 350,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.black87, width: 2),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Text(
-                          "실시간 수신 데이터 파싱 결과 (최대 100건)",
-                          style: TextStyle(
-                              fontFamily: AppTheme.fontPretendard,
-                              fontWeight: AppTheme.weightMenu,
-                              color: Colors.blueGrey,
-                              fontSize: 14
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF2D2D2D),
+                            borderRadius: BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14)),
+                          ),
+                          child: const Row(
+                            children: [
+                              SizedBox(width: 70, child: Text("TIME", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              SizedBox(width: 45, child: Text("TYPE", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              Expanded(flex: 3, child: Text("EPC", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              Expanded(flex: 2, child: Text("TID", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                              SizedBox(width: 16),
+                              Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
+                            ],
                           ),
                         ),
-                        TextButton.icon(
-                          onPressed: () {
-                            provider.clearLogs(deviceId);
-                          },
-                          icon: const Icon(Icons.delete_outline, size: 18),
-                          label: const Text("터미널 창 비우기", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-                          style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 8),
 
-                    Container(
-                      height: 350,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E1E1E),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.black87, width: 2),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF2D2D2D),
-                              borderRadius: BorderRadius.only(topLeft: Radius.circular(14), topRight: Radius.circular(14)),
-                            ),
-                            child: const Row(
-                                children: [
-                                  SizedBox(width: 70, child: Text("TIME", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 45, child: Text("TYPE", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 40, child: Text("ANT", textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  Expanded(flex: 3, child: Text("EPC", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  Expanded(flex: 2, child: Text("TID", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 50, child: Text("RSSI", textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                  SizedBox(width: 16),
-                                  Expanded(flex: 5, child: Text("RAW DATA (원본/메시지)", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold))),
-                                ]
-                            ),
-                          ),
+                        Expanded(
+                          child: Consumer<DeviceProvider>(
+                            builder: (BuildContext ctx, DeviceProvider dynamicProvider, Widget? child) {
+                              final List<String> logs = dynamicProvider.getLogs(deviceId).reversed.toList();
 
-                          Expanded(
-                            child: Consumer<DeviceProvider>(
-                              builder: (BuildContext ctx, DeviceProvider dynamicProvider, Widget? child) {
-                                final List<String> logs = dynamicProvider.getLogs(deviceId).reversed.toList();
+                              if (logs.isEmpty) {
+                                return const Center(
+                                  child: Text(
+                                      "수신 대기 중... (패킷 없음)",
+                                      style: TextStyle(
+                                          color: Colors.white38,
+                                          fontSize: 14,
+                                          fontFamily: AppTheme.fontPretendard
+                                      )
+                                  ),
+                                );
+                              }
 
-                                if (logs.isEmpty) {
-                                  return const Center(
-                                    child: Text(
-                                        "수신 대기 중... (패킷 없음)",
-                                        style: TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 14,
-                                            fontFamily: AppTheme.fontPretendard
-                                        )
+                              return ListView.separated(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                itemCount: logs.length,
+                                separatorBuilder: (BuildContext context, int idx) {
+                                  return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
+                                },
+                                itemBuilder: (BuildContext ctx, int idx) {
+                                  final Map<String, String> parsed = _parseLogData(logs[idx]);
+
+                                  Color typeColor = Colors.grey;
+                                  if (parsed['type'] == 'TAG') {
+                                    typeColor = Colors.cyanAccent;
+                                  } else if (parsed['type'] == 'RAW') {
+                                    typeColor = Colors.amberAccent;
+                                  } else if (parsed['type'] == 'SYS') {
+                                    typeColor = Colors.pinkAccent;
+                                  } else if (parsed['type'] == 'DIR') {
+                                    typeColor = Colors.greenAccent;
+                                  } else if (parsed['type'] == 'INFO') {
+                                    typeColor = Colors.blueAccent;
+                                  }
+
+                                  Color rssiColor = Colors.greenAccent;
+                                  try {
+                                    String rssiNum = parsed['rssi']!.replaceAll(' dBm', '');
+                                    double rVal = double.parse(rssiNum);
+                                    if (rVal < -80) {
+                                      rssiColor = Colors.redAccent;
+                                    } else if (rVal < -70) {
+                                      rssiColor = Colors.orangeAccent;
+                                    }
+                                  } catch (_) {}
+
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white60, fontSize: 12))),
+
+                                        SizedBox(
+                                            width: 45,
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                              decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                              child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                                            )
+                                        ),
+
+                                        SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
+
+                                        Expanded(
+                                            flex: 3,
+                                            child: Padding(
+                                              padding: const EdgeInsets.only(right: 8.0),
+                                              child: Text(parsed['epc']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
+                                            )
+                                        ),
+
+                                        Expanded(
+                                            flex: 2,
+                                            child: Text(parsed['tid']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white70, fontSize: 12, height: 1.3))
+                                        ),
+
+                                        SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
+
+                                        const SizedBox(width: 16),
+
+                                        Expanded(
+                                            flex: 5,
+                                            child: Text(
+                                                parsed['raw']!,
+                                                style: TextStyle(
+                                                    fontFamily: AppTheme.fontPretendard,
+                                                    color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'DIR' ? Colors.greenAccent : Colors.white70),
+                                                    fontSize: 12,
+                                                    height: 1.3
+                                                )
+                                            )
+                                        ),
+                                      ],
                                     ),
                                   );
-                                }
-
-                                return ListView.separated(
-                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  itemCount: logs.length,
-                                  separatorBuilder: (BuildContext context, int idx) {
-                                    return Divider(color: Colors.white.withValues(alpha: 0.05), height: 1);
-                                  },
-                                  itemBuilder: (BuildContext ctx, int idx) {
-                                    final Map<String, String> parsed = _parseLogData(logs[idx]);
-
-                                    Color typeColor = Colors.grey;
-                                    if (parsed['type'] == 'TAG') {
-                                      typeColor = Colors.cyanAccent;
-                                    } else if (parsed['type'] == 'RAW') {
-                                      typeColor = Colors.amberAccent;
-                                    } else if (parsed['type'] == 'SYS') {
-                                      typeColor = Colors.pinkAccent;
-                                    } else if (parsed['type'] == 'DIR') {
-                                      typeColor = Colors.greenAccent;
-                                    } else if (parsed['type'] == 'INFO') {
-                                      typeColor = Colors.blueAccent;
-                                    }
-
-                                    Color rssiColor = Colors.greenAccent;
-                                    try {
-                                      String rssiNum = parsed['rssi']!.replaceAll(' dBm', '');
-                                      double rVal = double.parse(rssiNum);
-                                      if (rVal < -80) {
-                                        rssiColor = Colors.redAccent;
-                                      } else if (rVal < -70) {
-                                        rssiColor = Colors.orangeAccent;
-                                      }
-                                    } catch (_) {}
-
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 8),
-                                      child: Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          SizedBox(width: 70, child: Text(parsed['time']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white60, fontSize: 12))),
-
-                                          SizedBox(
-                                              width: 45,
-                                              child: Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                                decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
-                                                child: Text(parsed['type']!, textAlign: TextAlign.center, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: typeColor, fontSize: 10, fontWeight: FontWeight.bold)),
-                                              )
-                                          ),
-
-                                          SizedBox(width: 40, child: Text(parsed['ant']!, textAlign: TextAlign.center, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.cyanAccent, fontSize: 13, fontWeight: FontWeight.bold))),
-
-                                          Expanded(
-                                              flex: 3,
-                                              child: Padding(
-                                                padding: const EdgeInsets.only(right: 8.0),
-                                                child: Text(parsed['epc']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.3)),
-                                              )
-                                          ),
-
-                                          Expanded(
-                                              flex: 2,
-                                              child: Text(parsed['tid']!, style: const TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.white70, fontSize: 12, height: 1.3))
-                                          ),
-
-                                          SizedBox(width: 50, child: Text(parsed['rssi']!, textAlign: TextAlign.right, style: TextStyle(fontFamily: AppTheme.fontPretendard, color: rssiColor, fontSize: 12, fontWeight: FontWeight.bold))),
-
-                                          const SizedBox(width: 16),
-
-                                          Expanded(
-                                              flex: 5,
-                                              child: Text(
-                                                  parsed['raw']!,
-                                                  style: TextStyle(
-                                                      fontFamily: AppTheme.fontPretendard,
-                                                      color: parsed['type'] == 'RAW' ? Colors.amberAccent : (parsed['type'] == 'DIR' ? Colors.greenAccent : Colors.white70),
-                                                      fontSize: 12,
-                                                      height: 1.3
-                                                  )
-                                              )
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                );
-                              },
-                            ),
+                                },
+                              );
+                            },
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              actions: [
-                AppTheme.actionButton(
-                  label: "닫기",
-                  color: Colors.transparent,
-                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
-                ),
-              ],
             ),
-          );
-        }
+            actions: [
+              AppTheme.actionButton(
+                label: "닫기",
+                color: Colors.transparent,
+                textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                },
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1371,15 +1363,15 @@ class _DevicePageState extends State<DevicePage> {
 
     if (imgUrl == null || imgUrl.isEmpty) {
       return Container(
-          width: size, height: size,
-          padding: const EdgeInsets.all(6.0),
-          decoration: BoxDecoration(
-              color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
-          ),
-          alignment: Alignment.center,
-          child: FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30)
+        width: size,
+        height: size,
+        padding: const EdgeInsets.all(6.0),
+        decoration: BoxDecoration(
+            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)),
+        alignment: Alignment.center,
+        child: FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30),
       );
     }
 
@@ -1387,60 +1379,61 @@ class _DevicePageState extends State<DevicePage> {
     final String fullUrl = "$imgUrl${connector}t=${item.hashCode}"; // 캐시 방지
 
     return Container(
-        width: size, height: size,
-        padding: const EdgeInsets.all(6.0),
-        decoration: BoxDecoration(
-            color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Image.network(
-            fullUrl,
-            fit: BoxFit.contain,
-            errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
-              return FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30);
-            }
-        )
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(6.0),
+      decoration: BoxDecoration(
+          color: isDark ? theme.dividerTheme.color?.withValues(alpha: 0.1) : const Color(0xFFF1F3F5),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 1.5)),
+      clipBehavior: Clip.antiAlias,
+      child: Image.network(
+        fullUrl,
+        fit: BoxFit.contain,
+        errorBuilder: (BuildContext context, Object error, StackTrace? stackTrace) {
+          return FaIcon(_getDeviceIcon(item.model), color: Colors.black26, size: 30);
+        },
+      ),
     );
   }
 
   /// 상태 배지(온라인/오프라인)
   Widget _buildStatusBadge(String status, Color color) {
     return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-        child: Text(status.toUpperCase(), style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900))
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+      child: Text(status.toUpperCase(), style: TextStyle(fontFamily: AppTheme.fontPretendard, color: color, fontSize: 12, fontWeight: FontWeight.w900)),
     );
   }
 
   /// 키:값 텍스트 출력용 위젯
   Widget _buildKeyValue(String label, String value, BuildContext ctx) {
     return SizedBox(
-        width: 140,
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: AppTheme.itemLabelStyle(ctx)),
-              Text(value, style: AppTheme.itemValueStyle(ctx)),
-            ]
-        )
+      width: 140,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: AppTheme.itemLabelStyle(ctx)),
+          Text(value, style: AppTheme.itemValueStyle(ctx)),
+        ],
+      ),
     );
   }
 
   /// 원형 액션 버튼 (테스트/제어용)
   Widget _buildCircleAction(IconData icon, Color color, String tip, VoidCallback onTap) {
     return Tooltip(
-        message: tip,
-        child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(25),
-            child: Container(
-                width: 50, height: 50,
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
-                child: Icon(icon, color: color, size: 24)
-            )
-        )
+      message: tip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(25),
+        child: Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.1), shape: BoxShape.circle),
+          child: Icon(icon, color: color, size: 24),
+        ),
+      ),
     );
   }
 
@@ -1454,106 +1447,104 @@ class _DevicePageState extends State<DevicePage> {
     double currentPower = 300; // 30.0 dBm 기본값
 
     showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return StatefulBuilder(
-              builder: (BuildContext context, StateSetter setDialogState) {
-                return AlertDialog(
-                  title: AppTheme.dialogTitle('${d.name} 출력(RF Power) 설정', Icons.settings_input_antenna, color: Colors.blueAccent),
-                  content: SizedBox(
-                    width: 450,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              title: AppTheme.dialogTitle('${d.name} 출력(RF Power) 설정', Icons.settings_input_antenna, color: Colors.blueAccent),
+              content: SizedBox(
+                width: 450,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("안테나 포트 선택", style: AppTheme.itemLabelStyle(context)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<int>(
+                        showSelectedIcon: false,
+                        segments: const [
+                          ButtonSegment(value: 0, label: Text("전체")),
+                          ButtonSegment(value: 1, label: Text("ANT 1")),
+                          ButtonSegment(value: 2, label: Text("ANT 2")),
+                          ButtonSegment(value: 3, label: Text("ANT 3")),
+                          ButtonSegment(value: 4, label: Text("ANT 4")),
+                        ],
+                        selected: {selectedAntenna},
+                        onSelectionChanged: (Set<int> val) {
+                          setDialogState(() {
+                            selectedAntenna = val.first;
+                          });
+                        },
+                        style: SegmentedButton.styleFrom(
+                            selectedBackgroundColor: Colors.blueAccent,
+                            selectedForegroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                            textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w600, fontSize: 14)),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text("안테나 포트 선택", style: AppTheme.itemLabelStyle(context)),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: SegmentedButton<int>(
-                            showSelectedIcon: false,
-                            segments: const [
-                              ButtonSegment(value: 0, label: Text("전체")),
-                              ButtonSegment(value: 1, label: Text("ANT 1")),
-                              ButtonSegment(value: 2, label: Text("ANT 2")),
-                              ButtonSegment(value: 3, label: Text("ANT 3")),
-                              ButtonSegment(value: 4, label: Text("ANT 4")),
-                            ],
-                            selected: {selectedAntenna},
-                            onSelectionChanged: (Set<int> val) {
-                              setDialogState(() {
-                                selectedAntenna = val.first;
-                              });
-                            },
-                            style: SegmentedButton.styleFrom(
-                                selectedBackgroundColor: Colors.blueAccent,
-                                selectedForegroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.w600, fontSize: 14)
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 32),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text("주파수 출력 파워", style: AppTheme.itemLabelStyle(context)),
-                            Text("${(currentPower / 10).toStringAsFixed(1)} dBm",
-                                style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, fontWeight: FontWeight.w900, color: Colors.blueAccent)
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Slider(
-                          value: currentPower,
-                          min: 50,
-                          max: 310, // 5.0 ~ 31.0 dBm
-                          divisions: 26,
-                          activeColor: Colors.blueAccent,
-                          label: "${(currentPower / 10).toStringAsFixed(1)} dBm",
-                          onChanged: (double val) {
-                            setDialogState(() {
-                              currentPower = val;
-                            });
-                          },
-                        ),
-                        const SizedBox(height: 16),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(color: Colors.blueAccent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-                          child: const Text(
-                              "💡 적용 버튼을 누르면 리더기의 통신이 일시정지되며, 새로운 출력 설정값이 반영된 후 즉시 자동으로 통신이 재개됩니다.",
-                              style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.blueGrey, fontSize: 13, height: 1.4)
-                          ),
-                        ),
+                        Text("주파수 출력 파워", style: AppTheme.itemLabelStyle(context)),
+                        Text("${(currentPower / 10).toStringAsFixed(1)} dBm",
+                            style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 24, fontWeight: FontWeight.w900, color: Colors.blueAccent)),
                       ],
                     ),
-                  ),
-                  actions: [
-                    AppTheme.actionButton(
-                        label: "닫기",
-                        color: Colors.transparent,
-                        textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                        }
+                    const SizedBox(height: 8),
+                    Slider(
+                      value: currentPower,
+                      min: 50,
+                      max: 310, // 5.0 ~ 31.0 dBm
+                      divisions: 26,
+                      activeColor: Colors.blueAccent,
+                      label: "${(currentPower / 10).toStringAsFixed(1)} dBm",
+                      onChanged: (double val) {
+                        setDialogState(() {
+                          currentPower = val;
+                        });
+                      },
                     ),
-                    AppTheme.actionButton(
-                        label: "설정 적용하기",
-                        color: Colors.blueAccent,
-                        onPressed: () {
-                          provider.setDevicePower(d.id, selectedAntenna, currentPower.toInt());
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("안테나 출력 설정 명령이 전송되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
-                          );
-                        }
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.blueAccent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+                      child: const Text(
+                        "💡 적용 버튼을 누르면 리더기의 통신이 일시정지되며, 새로운 출력 설정값이 반영된 후 즉시 자동으로 통신이 재개됩니다.",
+                        style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.blueGrey, fontSize: 13, height: 1.4),
+                      ),
                     ),
                   ],
-                );
-              }
-          );
-        }
+                ),
+              ),
+              actions: [
+                AppTheme.actionButton(
+                  label: "닫기",
+                  color: Colors.transparent,
+                  textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                  },
+                ),
+                AppTheme.actionButton(
+                  label: "설정 적용하기",
+                  color: Colors.blueAccent,
+                  onPressed: () {
+                    provider.setDevicePower(d.id, selectedAntenna, currentPower.toInt());
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("안테나 출력 설정 명령이 전송되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard))),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1634,201 +1625,203 @@ class _DevicePageState extends State<DevicePage> {
     if (!context.mounted) return;
 
     showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (BuildContext ctx) {
-          return ListenableProvider.value(
-            value: provider,
-            child: StatefulBuilder(
-              builder: (BuildContext context, StateSetter setDialogState) {
-                // 화면 너비에 따라 폼을 1단 또는 2단으로 반응형 렌더링
-                bool isWide = MediaQuery.of(context).size.width > 750;
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext ctx) {
+        return ListenableProvider.value(
+          value: provider,
+          child: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setDialogState) {
+              // 화면 너비에 따라 폼을 1단 또는 2단으로 반응형 렌더링
+              bool isWide = MediaQuery.of(context).size.width > 750;
 
-                Widget imagePickerWidget = _buildImagePickerBox(
-                  context, d, imagePreview, isImageDeleted,
-                      (XFile file, Uint8List bytes) {
-                    setDialogState(() {
-                      imageFile = file;
-                      imagePreview = bytes;
-                      isImageDeleted = false;
-                    });
-                  },
-                      () {
-                    setDialogState(() {
-                      imageFile = null;
-                      imagePreview = null;
-                      isImageDeleted = true;
-                    });
-                  },
-                  theme,
-                );
+              Widget imagePickerWidget = _buildImagePickerBox(
+                context, d, imagePreview, isImageDeleted,
+                    (XFile file, Uint8List bytes) {
+                  setDialogState(() {
+                    imageFile = file;
+                    imagePreview = bytes;
+                    isImageDeleted = false;
+                  });
+                },
+                    () {
+                  setDialogState(() {
+                    imageFile = null;
+                    imagePreview = null;
+                    isImageDeleted = true;
+                  });
+                },
+                theme,
+              );
 
-                return AlertDialog(
-                  title: AppTheme.dialogTitle(d == null ? '신규 장치 등록' : '장치 설정 수정', d == null ? Icons.router : Icons.edit),
-                  content: SizedBox(
-                    width: isWide ? 850 : null,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(height: 20),
-                          if (isWide)
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                imagePickerWidget,
-                                const SizedBox(width: 30),
-                                Expanded(
-                                    child: _buildFormFields(
-                                        context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
-                                        modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
-                                        connType, selectedComPort, availablePorts, portLabels,
-                                            (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
-                                          setDialogState(() {
-                                            if (m != null) { modelV = m; }
-                                            if (a != null) { activeV = a; }
-                                            if (ac != null) { autoConnectV = ac; }
-                                            if (uR != null) { usageRoleV = uR; }
-                                            if (dM != null) { dirModeV = dM; }
-                                            if (dO != null) { dirOptionV = dO; }
+              return AlertDialog(
+                title: AppTheme.dialogTitle(d == null ? '신규 장치 등록' : '장치 설정 수정', d == null ? Icons.router : Icons.edit),
+                content: SizedBox(
+                  width: isWide ? 850 : null,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 20),
+                        if (isWide)
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              imagePickerWidget,
+                              const SizedBox(width: 30),
+                              Expanded(
+                                child: _buildFormFields(
+                                  context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                                  modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
+                                  connType, selectedComPort, availablePorts, portLabels,
+                                      (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
+                                    setDialogState(() {
+                                      if (m != null) { modelV = m; }
+                                      if (a != null) { activeV = a; }
+                                      if (ac != null) { autoConnectV = ac; }
+                                      if (uR != null) { usageRoleV = uR; }
+                                      if (dM != null) { dirModeV = dM; }
+                                      if (dO != null) { dirOptionV = dO; }
 
-                                            if (cT != null) {
-                                              connType = cT;
-                                              if (cT == 'TCP') {
-                                                ipC.text = d?.ipAddress.contains('.') == true ? d!.ipAddress : '192.168.0.100';
-                                                portC.text = d?.port.toString() ?? '9090';
-                                              } else if (cT == 'SERIAL') {
-                                                ipC.text = selectedComPort ?? (availablePorts.isNotEmpty ? availablePorts.first : '');
-                                                portC.text = '115200';
-                                              } else if (cT == 'BLUETOOTH') {
-                                                ipC.text = d?.ipAddress.contains(':') == true ? d!.ipAddress : '';
-                                                portC.text = '1';
-                                              }
-                                            }
-
-                                            // 포트 콤보박스 선택 변경 시 처리
-                                            if (sP != null) {
-                                              selectedComPort = sP;
-                                              ipC.text = sP;
-                                            }
-                                          });
-                                        }, theme
-                                    )
-                                ),
-                              ],
-                            )
-                          else ...[
-                            imagePickerWidget,
-                            const SizedBox(height: 20),
-                            _buildFormFields(
-                                context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
-                                modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
-                                connType, selectedComPort, availablePorts, portLabels,
-                                    (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
-                                  setDialogState(() {
-                                    if (m != null) { modelV = m; }
-                                    if (a != null) { activeV = a; }
-                                    if (ac != null) { autoConnectV = ac; }
-                                    if (uR != null) { usageRoleV = uR; }
-                                    if (dM != null) { dirModeV = dM; }
-                                    if (dO != null) { dirOptionV = dO; }
-
-                                    if (cT != null) {
-                                      connType = cT;
-                                      if (cT == 'TCP') {
-                                        ipC.text = d?.ipAddress.contains('.') == true ? d!.ipAddress : '192.168.0.100';
-                                        portC.text = d?.port.toString() ?? '9090';
-                                      } else if (cT == 'SERIAL') {
-                                        ipC.text = selectedComPort ?? (availablePorts.isNotEmpty ? availablePorts.first : '');
-                                        portC.text = '115200';
-                                      } else if (cT == 'BLUETOOTH') {
-                                        ipC.text = d?.ipAddress.contains(':') == true ? d!.ipAddress : '';
-                                        portC.text = '1';
+                                      if (cT != null) {
+                                        connType = cT;
+                                        if (cT == 'TCP') {
+                                          ipC.text = d?.ipAddress.contains('.') == true ? d!.ipAddress : '192.168.0.100';
+                                          portC.text = d?.port.toString() ?? '9090';
+                                        } else if (cT == 'SERIAL') {
+                                          ipC.text = selectedComPort ?? (availablePorts.isNotEmpty ? availablePorts.first : '');
+                                          portC.text = '115200';
+                                        } else if (cT == 'BLUETOOTH') {
+                                          ipC.text = d?.ipAddress.contains(':') == true ? d!.ipAddress : '';
+                                          portC.text = '1';
+                                        }
                                       }
-                                    }
 
-                                    // 포트 콤보박스 선택 변경 시 처리
-                                    if (sP != null) {
-                                      selectedComPort = sP;
-                                      ipC.text = sP;
-                                    }
-                                  });
-                                }, theme
-                            ),
-                          ],
-                          if (provider.isSaving) ...[
-                            const SizedBox(height: 20),
-                            LinearProgressIndicator(color: theme.colorScheme.primary),
-                          ]
+                                      // 포트 콤보박스 선택 변경 시 처리
+                                      if (sP != null) {
+                                        selectedComPort = sP;
+                                        ipC.text = sP;
+                                      }
+                                    });
+                                  },
+                                  theme,
+                                ),
+                              ),
+                            ],
+                          )
+                        else ...[
+                          imagePickerWidget,
+                          const SizedBox(height: 20),
+                          _buildFormFields(
+                            context, provider, d, nameC, ipC, portC, clientIdC, dirOptionC,
+                            modelV, activeV, autoConnectV, usageRoleV, dirModeV, dirOptionV,
+                            connType, selectedComPort, availablePorts, portLabels,
+                                (String? m, bool? a, bool? ac, String? uR, String? dM, String? dO, String? cT, String? sP) {
+                              setDialogState(() {
+                                if (m != null) { modelV = m; }
+                                if (a != null) { activeV = a; }
+                                if (ac != null) { autoConnectV = ac; }
+                                if (uR != null) { usageRoleV = uR; }
+                                if (dM != null) { dirModeV = dM; }
+                                if (dO != null) { dirOptionV = dO; }
+
+                                if (cT != null) {
+                                  connType = cT;
+                                  if (cT == 'TCP') {
+                                    ipC.text = d?.ipAddress.contains('.') == true ? d!.ipAddress : '192.168.0.100';
+                                    portC.text = d?.port.toString() ?? '9090';
+                                  } else if (cT == 'SERIAL') {
+                                    ipC.text = selectedComPort ?? (availablePorts.isNotEmpty ? availablePorts.first : '');
+                                    portC.text = '115200';
+                                  } else if (cT == 'BLUETOOTH') {
+                                    ipC.text = d?.ipAddress.contains(':') == true ? d!.ipAddress : '';
+                                    portC.text = '1';
+                                  }
+                                }
+
+                                // 포트 콤보박스 선택 변경 시 처리
+                                if (sP != null) {
+                                  selectedComPort = sP;
+                                  ipC.text = sP;
+                                }
+                              });
+                            },
+                            theme,
+                          ),
                         ],
-                      ),
+                        if (provider.isSaving) ...[
+                          const SizedBox(height: 20),
+                          LinearProgressIndicator(color: theme.colorScheme.primary),
+                        ]
+                      ],
                     ),
                   ),
-                  actions: [
-                    AppTheme.actionButton(
-                        label: "취소",
-                        color: Colors.transparent,
-                        textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                        onPressed: () {
-                          Navigator.pop(ctx);
-                        }
-                    ),
-                    AppTheme.actionButton(
-                      label: d == null ? "등록하기" : "수정완료",
-                      onPressed: provider.isSaving ? () {} : () async {
-                        // 유효성 검사
-                        if (nameC.text.isEmpty || ipC.text.isEmpty) {
-                          ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("장치 명칭과 주소(포트)는 필수입니다.")));
-                          return;
-                        }
+                ),
+                actions: [
+                  AppTheme.actionButton(
+                    label: "취소",
+                    color: Colors.transparent,
+                    textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                  AppTheme.actionButton(
+                    label: d == null ? "등록하기" : "수정완료",
+                    onPressed: provider.isSaving ? () {} : () async {
+                      // 유효성 검사
+                      if (nameC.text.isEmpty || ipC.text.isEmpty) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text("장치 명칭과 주소(포트)는 필수입니다.")));
+                        return;
+                      }
 
-                        final nav = Navigator.of(ctx);
+                      final nav = Navigator.of(ctx);
 
-                        // [OS 예외 방어 코드] 수정 시 장치가 온라인이라면 먼저 통신을 끊습니다.
-                        if (d != null && d.status.toLowerCase() == 'online') {
-                          try { provider.stopDeviceRead(d.id); } catch(_) {}
-                          await Future.delayed(const Duration(milliseconds: 300));
-                          provider.disconnectDevice(d.id);
-                        }
+                      // [OS 예외 방어 코드] 수정 시 장치가 온라인이라면 먼저 통신을 끊습니다.
+                      if (d != null && d.status.toLowerCase() == 'online') {
+                        try { provider.stopDeviceRead(d.id); } catch(_) {}
+                        await Future.delayed(const Duration(milliseconds: 300));
+                        provider.disconnectDevice(d.id);
+                      }
 
-                        // 저장할 데이터 맵 구성
-                        final Map<String, dynamic> data = {
-                          'name': nameC.text.trim(),
-                          'model': modelV,
-                          'ip_address': ipC.text.trim(),
-                          'port': int.tryParse(portC.text.trim()) ?? 0,
-                          'client_id': clientIdC.text.trim(),
-                          'is_active': activeV,
-                          'is_auto_connect': autoConnectV,
-                          'settings': {
-                            ...(d?.settings ?? {}),
-                            'usage_role': usageRoleV,
-                            'dir_mode': dirModeV,
-                            'dir_option': dirModeV == 'reader_fixed' ? dirOptionV : dirOptionC.text.trim(),
-                          },
-                          if (isImageDeleted) 'image': '',
-                        };
+                      // 저장할 데이터 맵 구성
+                      final Map<String, dynamic> data = {
+                        'name': nameC.text.trim(),
+                        'model': modelV,
+                        'ip_address': ipC.text.trim(),
+                        'port': int.tryParse(portC.text.trim()) ?? 0,
+                        'client_id': clientIdC.text.trim(),
+                        'is_active': activeV,
+                        'is_auto_connect': autoConnectV,
+                        'settings': {
+                          ...(d?.settings ?? {}),
+                          'usage_role': usageRoleV,
+                          'dir_mode': dirModeV,
+                          'dir_option': dirModeV == 'reader_fixed' ? dirOptionV : dirOptionC.text.trim(),
+                        },
+                        if (isImageDeleted) 'image': '',
+                      };
 
-                        // Provider를 통한 백엔드 API 호출 (업데이트/삽입)
-                        bool success = await provider.handleSave(d: d, data: data, imageXFile: imageFile);
+                      // Provider를 통한 백엔드 API 호출 (업데이트/삽입)
+                      bool success = await provider.handleSave(d: d, data: data, imageXFile: imageFile);
 
-                        // 비동기 갭 이후 컨텍스트 사용에 대한 안전망 추가
-                        if (!ctx.mounted) return;
+                      // 비동기 갭 이후 컨텍스트 사용에 대한 안전망 추가
+                      if (!ctx.mounted) return;
 
-                        if (success) {
-                          nav.pop();
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(content: Text("장치 정보가 안전하게 저장되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
-                          );
-                        }
-                      },
-                    ),
-                  ],
-                );
-              },
-            ),
-          );
-        }
+                      if (success) {
+                        nav.pop();
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(content: Text("장치 정보가 안전하게 저장되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard))),
+                        );
+                      }
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1840,7 +1833,7 @@ class _DevicePageState extends State<DevicePage> {
       bool isDeleted,
       Function(XFile, Uint8List) onPicked,
       VoidCallback onDeleted,
-      ThemeData theme
+      ThemeData theme,
       ) {
     final String? imgUrl = d?.getImageUrl(widget.baseUrl, thumb: '200x200');
     final bool isDark = theme.brightness == Brightness.dark;
@@ -1861,18 +1854,20 @@ class _DevicePageState extends State<DevicePage> {
             }
           },
           child: Container(
-            width: 180, height: 210,
+            width: 180,
+            height: 210,
             padding: const EdgeInsets.all(12.0),
             decoration: BoxDecoration(
                 color: theme.cardTheme.color,
                 borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 2)
-            ),
+                border: Border.all(color: isDark ? Colors.grey.shade600 : Colors.grey.shade400, width: 2)),
             child: Center(
               child: preview != null
                   ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(preview, fit: BoxFit.contain))
                   : (hasImage
-                  ? ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.network("$imgUrl?t=${DateTime.now().millisecondsSinceEpoch}", fit: BoxFit.contain))
+                  ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network("$imgUrl?t=${DateTime.now().millisecondsSinceEpoch}", fit: BoxFit.contain))
                   : const Icon(Icons.add_a_photo_outlined, size: 50, color: Colors.grey)),
             ),
           ),
@@ -1896,8 +1891,7 @@ class _DevicePageState extends State<DevicePage> {
                       border: Border.all(color: theme.scaffoldBackgroundColor, width: 2.5),
                       boxShadow: [
                         BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 4, offset: const Offset(0, 2))
-                      ]
-                  ),
+                      ]),
                   child: const Icon(Icons.delete_outline, size: 18, color: Colors.white),
                 ),
               ),
@@ -1909,12 +1903,26 @@ class _DevicePageState extends State<DevicePage> {
 
   /// 폼 내부의 여러 입력 필드들을 생성하는 헬퍼 함수
   Widget _buildFormFields(
-      BuildContext context, DeviceProvider provider, DeviceModel? d,
-      TextEditingController n, TextEditingController i, TextEditingController p, TextEditingController c, TextEditingController dirOptionC,
-      String mV, bool aV, bool acV, String uRV, String dirModeV, String dirOptionV,
-      String connTypeV, String? selectedComPortV, List<String> availablePortsV, Map<String, String> portLabelsV,
+      BuildContext context,
+      DeviceProvider provider,
+      DeviceModel? d,
+      TextEditingController n,
+      TextEditingController i,
+      TextEditingController p,
+      TextEditingController c,
+      TextEditingController dirOptionC,
+      String mV,
+      bool aV,
+      bool acV,
+      String uRV,
+      String dirModeV,
+      String dirOptionV,
+      String connTypeV,
+      String? selectedComPortV,
+      List<String> availablePortsV,
+      Map<String, String> portLabelsV,
       Function(String?, bool?, bool?, String?, String?, String?, String?, String?) onC,
-      ThemeData theme
+      ThemeData theme,
       ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1941,8 +1949,7 @@ class _DevicePageState extends State<DevicePage> {
             style: SegmentedButton.styleFrom(
                 selectedBackgroundColor: Colors.indigo.withValues(alpha: 0.15),
                 selectedForegroundColor: Colors.indigo,
-                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 13)
-            ),
+                textStyle: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 13)),
           ),
         ),
         const SizedBox(height: 16),
@@ -1980,13 +1987,12 @@ class _DevicePageState extends State<DevicePage> {
             return DropdownMenuItem(
                 value: e.key,
                 child: Row(
-                    children: [
-                      Icon(mIcon, size: 18, color: theme.colorScheme.primary.withValues(alpha: 0.8)),
-                      const SizedBox(width: 8),
-                      Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                    ]
-                )
-            );
+                  children: [
+                    Icon(mIcon, size: 18, color: theme.colorScheme.primary.withValues(alpha: 0.8)),
+                    const SizedBox(width: 8),
+                    Text(e.value, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  ],
+                ));
           }).toList(),
           onChanged: (String? v) {
             onC(v, null, null, null, null, null, null, null);
@@ -2013,13 +2019,12 @@ class _DevicePageState extends State<DevicePage> {
             return DropdownMenuItem(
                 value: e,
                 child: Row(
-                    children: [
-                      Icon(uIcon, size: 18, color: uColor.withValues(alpha: 0.8)),
-                      const SizedBox(width: 8),
-                      Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
-                    ]
-                )
-            );
+                  children: [
+                    Icon(uIcon, size: 18, color: uColor.withValues(alpha: 0.8)),
+                    const SizedBox(width: 8),
+                    Text(e, style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold)),
+                  ],
+                ));
           }).toList(),
           onChanged: (String? v) {
             onC(null, null, null, v, null, null, null, null);
@@ -2097,21 +2102,19 @@ class _DevicePageState extends State<DevicePage> {
                   minimumSize: const Size(double.infinity, 60),
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  side: BorderSide(color: Colors.deepPurpleAccent.withValues(alpha: 0.3))
-              ),
+                  side: BorderSide(color: Colors.deepPurpleAccent.withValues(alpha: 0.3))),
               onPressed: () {
                 ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text("💡 IP/포트 등 설정값을 방금 변경하셨다면, 먼저 '수정완료'를 눌러 저장하신 후 다시 창을 열어 테스트해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-                      duration: Duration(seconds: 3),
-                    )
+                  const SnackBar(
+                    content: Text("💡 IP/포트 등 설정값을 방금 변경하셨다면, 먼저 '수정완료'를 눌러 저장하신 후 다시 창을 열어 테스트해주세요.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+                    duration: Duration(seconds: 3),
+                  ),
                 );
                 _showDeviceTestDialog(context, provider, d);
               },
             ),
           ),
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -2124,11 +2127,12 @@ class _DevicePageState extends State<DevicePage> {
                   minimumSize: const Size(double.infinity, 60),
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  side: BorderSide(color: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3))
-              ),
-              onPressed: d.status.toLowerCase() == 'online' ? () {
+                  side: BorderSide(color: d.status.toLowerCase() == 'online' ? Colors.blueAccent.withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3))),
+              onPressed: d.status.toLowerCase() == 'online'
+                  ? () {
                 _showPowerControlDialog(context, provider, d);
-              } : () {
+              }
+                  : () {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("장치가 온라인(연결됨) 상태일 때만 제어할 수 있습니다.")));
               },
             ),
@@ -2142,19 +2146,18 @@ class _DevicePageState extends State<DevicePage> {
           decoration: BoxDecoration(
               color: acV ? Colors.blueAccent.withValues(alpha: 0.05) : Colors.grey.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: acV ? Colors.blueAccent.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.2))
-          ),
+              border: Border.all(color: acV ? Colors.blueAccent.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.2))),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(acV ? "앱 시작 시 자동 연결 (ON)" : "수동으로만 연결 (OFF)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold, color: acV ? Colors.blueAccent : Colors.grey)),
               Switch(
-                  value: acV,
-                  activeThumbColor: Colors.blueAccent,
-                  activeTrackColor: Colors.blueAccent.withValues(alpha: 0.5),
-                  onChanged: (bool v) {
-                    onC(null, null, v, null, null, null, null, null);
-                  }
+                value: acV,
+                activeThumbColor: Colors.blueAccent,
+                activeTrackColor: Colors.blueAccent.withValues(alpha: 0.5),
+                onChanged: (bool v) {
+                  onC(null, null, v, null, null, null, null, null);
+                },
               ),
             ],
           ),
@@ -2166,19 +2169,18 @@ class _DevicePageState extends State<DevicePage> {
           decoration: BoxDecoration(
               color: aV ? AppTheme.success.withValues(alpha: 0.05) : Colors.grey.withValues(alpha: 0.05),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: aV ? AppTheme.success.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.2))
-          ),
+              border: Border.all(color: aV ? AppTheme.success.withValues(alpha: 0.2) : Colors.grey.withValues(alpha: 0.2))),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(aV ? "장치 활성화 상태 (ON)" : "장치 비활성화 상태 (OFF)", style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 14, fontWeight: FontWeight.bold, color: aV ? AppTheme.success : Colors.grey)),
               Switch(
-                  value: aV,
-                  activeThumbColor: AppTheme.success,
-                  activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
-                  onChanged: (bool v) {
-                    onC(null, v, null, null, null, null, null, null);
-                  }
+                value: aV,
+                activeThumbColor: AppTheme.success,
+                activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
+                onChanged: (bool v) {
+                  onC(null, v, null, null, null, null, null, null);
+                },
               ),
             ],
           ),
@@ -2190,19 +2192,24 @@ class _DevicePageState extends State<DevicePage> {
   /// 통신 방식에 따른 입력 필드를 다이나믹하게 전환하여 렌더링
   /// 🔥 윈도우 PC에 연결된 COM 포트를 콤보박스로 예쁘게 보여줍니다.
   Widget _buildConnectionFields(
-      String connType, TextEditingController ipC, TextEditingController portC,
-      String? selectedComPort, List<String> availablePorts, Map<String, String> portLabels,
+      String connType,
+      TextEditingController ipC,
+      TextEditingController portC,
+      String? selectedComPort,
+      List<String> availablePorts,
+      Map<String, String> portLabels,
       Function(String?, bool?, bool?, String?, String?, String?, String?, String?) onC,
-      ThemeData theme, BuildContext context
+      ThemeData theme,
+      BuildContext context,
       ) {
     if (connType == 'TCP') {
       return Row(
-          key: const ValueKey('TCP'),
-          children: [
-            Expanded(flex: 5, child: _buildDialogTextField("IP 주소 (예: 192.168.0.100)", ipC, theme, icon: Icons.lan)),
-            const SizedBox(width: 16),
-            Expanded(flex: 3, child: _buildDialogTextField("포트 번호 (Port)", portC, theme, isNumber: true)),
-          ]
+        key: const ValueKey('TCP'),
+        children: [
+          Expanded(flex: 5, child: _buildDialogTextField("IP 주소 (예: 192.168.0.100)", ipC, theme, icon: Icons.lan)),
+          const SizedBox(width: 16),
+          Expanded(flex: 3, child: _buildDialogTextField("포트 번호 (Port)", portC, theme, isNumber: true)),
+        ],
       );
     } else if (connType == 'SERIAL') {
       String? safeComPort = selectedComPort;
@@ -2212,87 +2219,87 @@ class _DevicePageState extends State<DevicePage> {
       }
 
       return Row(
-          key: const ValueKey('SERIAL'),
-          children: [
-            Expanded(
-                flex: 5,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                        height: 60,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(border: Border.all(color: Colors.grey.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(10), color: theme.cardTheme.color),
-                        child: DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                                isExpanded: true,
-                                value: safeComPort,
-                                hint: const Text("PC에 연결된 가용 COM 포트 없음", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.redAccent)),
-                                items: availablePorts.map((String port) {
-                                  bool isBt = portLabels[port]?.contains('블루투스') == true;
-                                  IconData pIcon = isBt ? Icons.bluetooth_connected : Icons.usb;
-                                  Color pColor = isBt ? Colors.blueAccent : Colors.indigo;
-                                  String pDesc = portLabels[port] ?? "알 수 없는 장치";
+        key: const ValueKey('SERIAL'),
+        children: [
+          Expanded(
+            flex: 5,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: 60,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(border: Border.all(color: Colors.grey.withValues(alpha: 0.5)), borderRadius: BorderRadius.circular(10), color: theme.cardTheme.color),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: safeComPort,
+                      hint: const Text("PC에 연결된 가용 COM 포트 없음", style: TextStyle(fontFamily: AppTheme.fontPretendard, color: Colors.redAccent)),
+                      items: availablePorts.map((String port) {
+                        bool isBt = portLabels[port]?.contains('블루투스') == true;
+                        IconData pIcon = isBt ? Icons.bluetooth_connected : Icons.usb;
+                        Color pColor = isBt ? Colors.blueAccent : Colors.indigo;
+                        String pDesc = portLabels[port] ?? "알 수 없는 장치";
 
-                                  return DropdownMenuItem<String>(
-                                      value: port,
-                                      child: Row(
-                                        children: [
-                                          Icon(pIcon, color: pColor, size: 20),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text("$port ($pDesc)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
-                                          ),
-                                        ],
-                                      )
-                                  );
-                                }).toList(),
-                                onChanged: (String? newVal) {
-                                  if (newVal != null) {
-                                    onC(null, null, null, null, null, null, null, newVal);
-                                  }
-                                }
-                            )
-                        )
+                        return DropdownMenuItem<String>(
+                          value: port,
+                          child: Row(
+                            children: [
+                              Icon(pIcon, color: pColor, size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text("$port ($pDesc)", style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (String? newVal) {
+                        if (newVal != null) {
+                          onC(null, null, null, null, null, null, null, newVal);
+                        }
+                      },
                     ),
-                  ],
-                )
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 16),
-            Expanded(flex: 3, child: _buildDialogTextField("통신 속도 (BaudRate)", portC, theme, isNumber: true)),
-          ]
+          ),
+          const SizedBox(width: 16),
+          Expanded(flex: 3, child: _buildDialogTextField("통신 속도 (BaudRate)", portC, theme, isNumber: true)),
+        ],
       );
     } else {
       return Column(
-          key: const ValueKey('BLUETOOTH'),
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-                children: [
-                  Expanded(flex: 5, child: _buildDialogTextField("장치 MAC 주소 (예: 00:11:22:33:44:55)", ipC, theme, icon: Icons.bluetooth_connected)),
-                  const SizedBox(width: 16),
-                  Expanded(flex: 3, child: _buildDialogTextField("채널/포트 (보통 1)", portC, theme, isNumber: true)),
-                ]
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
-              child: const Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.info_outline, color: Colors.blue, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                        "블루투스는 SPP(Serial Port Profile) 통신을 위해 IP 대신 장치의 12자리 MAC 주소가 필요합니다. 향후 업데이트를 위해 준비된 기능입니다.",
-                        style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.blueGrey, height: 1.4)
-                    ),
+        key: const ValueKey('BLUETOOTH'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(flex: 5, child: _buildDialogTextField("장치 MAC 주소 (예: 00:11:22:33:44:55)", ipC, theme, icon: Icons.bluetooth_connected)),
+              const SizedBox(width: 16),
+              Expanded(flex: 3, child: _buildDialogTextField("채널/포트 (보통 1)", portC, theme, isNumber: true)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: Colors.blue.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "블루투스는 SPP(Serial Port Profile) 통신을 위해 IP 대신 장치의 12자리 MAC 주소가 필요합니다. 향후 업데이트를 위해 준비된 기능입니다.",
+                    style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 13, color: Colors.blueGrey, height: 1.4),
                   ),
-                ],
-              ),
-            )
-          ]
+                ),
+              ],
+            ),
+          ),
+        ],
       );
     }
   }
@@ -2310,42 +2317,45 @@ class _DevicePageState extends State<DevicePage> {
   /// 개별 장치 삭제 확인 창
   void _confirmDelete(BuildContext context, DeviceProvider provider, DeviceModel d) {
     final theme = Theme.of(context);
-    showDialog(context: context, builder: (BuildContext c) {
-      return AlertDialog(
-        title: AppTheme.dialogTitle("장치 삭제", Icons.delete, color: AppTheme.danger),
-        content: Text("[${d.name}] 장치를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-        actions: [
-          AppTheme.actionButton(
+    showDialog(
+      context: context,
+      builder: (BuildContext c) {
+        return AlertDialog(
+          title: AppTheme.dialogTitle("장치 삭제", Icons.delete, color: AppTheme.danger),
+          content: Text("[${d.name}] 장치를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+          actions: [
+            AppTheme.actionButton(
               label: "취소",
               color: Colors.transparent,
               textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
               onPressed: () {
                 Navigator.pop(c);
-              }
-          ),
-          AppTheme.actionButton(
-            label: "삭제 실행",
-            color: AppTheme.danger,
-            onPressed: () async {
-              final nav = Navigator.of(c);
+              },
+            ),
+            AppTheme.actionButton(
+              label: "삭제 실행",
+              color: AppTheme.danger,
+              onPressed: () async {
+                final nav = Navigator.of(c);
 
-              // [OS 예외 방어 코드] 삭제 전에도 안전하게 포트를 닫기 위해 읽기 스레드를 중지합니다.
-              try { provider.stopDeviceRead(d.id); } catch(_) {}
-              await Future.delayed(const Duration(milliseconds: 300));
+                // [OS 예외 방어 코드] 삭제 전에도 안전하게 포트를 닫기 위해 읽기 스레드를 중지합니다.
+                try { provider.stopDeviceRead(d.id); } catch(_) {}
+                await Future.delayed(const Duration(milliseconds: 300));
 
-              provider.disconnectDevice(d.id);
-              bool result = await provider.deleteDevice(d.id);
+                provider.disconnectDevice(d.id);
+                bool result = await provider.deleteDevice(d.id);
 
-              if (!c.mounted) return; // 비동기 간격 안전망
+                if (!c.mounted) return; // 비동기 간격 안전망
 
-              if (result) {
-                nav.pop();
-              }
-            },
-          ),
-        ],
-      );
-    });
+                if (result) {
+                  nav.pop();
+                }
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   /// 다중 선택된 장치들의 통신 일괄 해제
@@ -2373,7 +2383,7 @@ class _DevicePageState extends State<DevicePage> {
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("선택한 장치들의 통신이 일괄 해제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)))
+      const SnackBar(content: Text("선택한 장치들의 통신이 일괄 해제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard))),
     );
   }
 
@@ -2385,76 +2395,85 @@ class _DevicePageState extends State<DevicePage> {
 
     final Color cancelColor = theme.colorScheme.onSurface.withValues(alpha: 0.6);
     showDialog(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("선택 장치 일괄 삭제", Icons.warning, color: AppTheme.danger),
-              content: Text("선택하신 ${_selectedItemIds.length}개의 장치를 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(
-                    label: "취소",
-                    color: Colors.transparent,
-                    textColor: cancelColor,
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                    }
-                ),
-                AppTheme.actionButton(
-                    label: "일괄 삭제",
-                    color: AppTheme.danger,
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _isFullScreenLoading = true;
-                      });
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: AppTheme.dialogTitle("선택 장치 일괄 삭제", Icons.warning, color: AppTheme.danger),
+          content: Text("선택하신 ${_selectedItemIds.length}개의 장치를 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.", style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
+          actions: [
+            AppTheme.actionButton(
+              label: "취소",
+              color: Colors.transparent,
+              textColor: cancelColor,
+              onPressed: () {
+                Navigator.pop(ctx);
+              },
+            ),
+            AppTheme.actionButton(
+              label: "일괄 삭제",
+              color: AppTheme.danger,
+              onPressed: () async {
+                Navigator.pop(ctx);
+                setState(() {
+                  _isFullScreenLoading = true;
+                });
 
-                      // [OS 예외 방어 코드] 삭제 전 일괄 읽기 스레드 중지
-                      for (String id in _selectedItemIds) {
-                        try { provider.stopDeviceRead(id); } catch(_) {}
-                      }
-                      await Future.delayed(const Duration(milliseconds: 300));
+                // [OS 예외 방어 코드] 삭제 전 일괄 읽기 스레드 중지
+                for (String id in _selectedItemIds) {
+                  try { provider.stopDeviceRead(id); } catch(_) {}
+                }
+                await Future.delayed(const Duration(milliseconds: 300));
 
-                      // 통신 끊기 및 삭제 진행
-                      for (String id in _selectedItemIds) {
-                        provider.disconnectDevice(id);
-                        await provider.deleteDevice(id);
-                      }
+                // 통신 끊기 및 삭제 진행
+                for (String id in _selectedItemIds) {
+                  provider.disconnectDevice(id);
+                  await provider.deleteDevice(id);
+                }
 
-                      if (!mounted) return; // 비동기 간격 안전망
+                if (!mounted) return; // 비동기 간격 안전망
 
-                      setState(() {
-                        _selectedItemIds.clear();
-                        _isFullScreenLoading = false;
-                        _isSelectionMode = false;
-                      });
+                setState(() {
+                  _selectedItemIds.clear();
+                  _isFullScreenLoading = false;
+                  _isSelectionMode = false;
+                });
 
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 장치들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
-                    }
-                )
-              ]
-          );
-        }
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("선택한 장치들이 일괄 삭제되었습니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)), elevation: 0));
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
   /// 전체 시스템 초기화(모두 삭제) 다이얼로그
   Future<void> _showResetConfirmationDialog(DeviceProvider provider, ThemeData theme) async {
     final bool? confirm = await showDialog<bool>(
-        context: context,
-        builder: (BuildContext ctx) {
-          return AlertDialog(
-              title: AppTheme.dialogTitle("전체 장치 초기화", Icons.warning, color: AppTheme.danger),
-              content: const Text("시스템에 등록된 모든 장치 정보를 영구 삭제하시겠습니까?\n현재 연결된 모든 통신이 해제됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
-              actions: [
-                AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
-                  Navigator.pop(ctx, false);
-                }),
-                AppTheme.actionButton(label: "전체 삭제 실행", color: AppTheme.danger, onPressed: () {
-                  Navigator.pop(ctx, true);
-                })
-              ]
-          );
-        }
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          title: AppTheme.dialogTitle("전체 장치 초기화", Icons.warning, color: AppTheme.danger),
+          content: const Text("시스템에 등록된 모든 장치 정보를 영구 삭제하시겠습니까?\n현재 연결된 모든 통신이 해제됩니다.", style: TextStyle(fontFamily: AppTheme.fontPretendard)),
+          actions: [
+            AppTheme.actionButton(
+              label: "취소",
+              color: Colors.transparent,
+              textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+              onPressed: () {
+                Navigator.pop(ctx, false);
+              },
+            ),
+            AppTheme.actionButton(
+              label: "전체 삭제 실행",
+              color: AppTheme.danger,
+              onPressed: () {
+                Navigator.pop(ctx, true);
+              },
+            ),
+          ],
+        );
+      },
     );
 
     if (!mounted || confirm != true) {
@@ -2479,7 +2498,6 @@ class _DevicePageState extends State<DevicePage> {
       for (var device in provider.list) {
         await provider.deleteDevice(device.id);
       }
-
     } finally {
       if (mounted) {
         setState(() {
@@ -2491,4 +2509,4 @@ class _DevicePageState extends State<DevicePage> {
       }
     }
   }
-} // 이게 잘 되는 코드야! 딴짓 하지말고 그 입력필드만 바꿔!
+}

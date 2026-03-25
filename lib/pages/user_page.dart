@@ -200,7 +200,6 @@ class _UserPageState extends State<UserPage> {
   }
 
   Map<String, dynamic> _calculateMetrics(List<UserModel> list) {
-    // 🔥 [성능 최적화] 루프 외부에서 날짜 포맷을 한 번만 계산하여 프레임 드롭(병목)을 방지합니다.
     final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     int todayIn = 0;
     int todayOut = 0;
@@ -210,7 +209,6 @@ class _UserPageState extends State<UserPage> {
       final String lastType = _safeStr(p.metadata['last_access_type']);
       final String lastTime = _safeStr(p.metadata['last_access_time']);
 
-      // 초고속 문자열 비교 (O(1) 연산)
       if (lastTime.startsWith(todayStr)) {
         if (lastType == '입장') {
           todayIn++;
@@ -241,6 +239,7 @@ class _UserPageState extends State<UserPage> {
       return;
     }
 
+    // 위치 선택 다이얼로그 호출
     final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext ctx) {
@@ -252,7 +251,6 @@ class _UserPageState extends State<UserPage> {
       return;
     }
 
-    // 🔥 [상태 중복 방지 최적화] 선배님의 통찰이 반영된 방어 로직 (Redundancy Check)
     final String lastType = _safeStr(p.metadata['last_access_type']);
     String lastBuilding = "미지정";
     String lastGate = "미정";
@@ -266,8 +264,6 @@ class _UserPageState extends State<UserPage> {
     final String newBuilding = _safeStr(result['building'], defaultVal: "미지정");
     final String newGate = _safeStr(result['gate'], defaultVal: "미정");
 
-    // 상태(입장/퇴장)가 기존과 동일하고, 건물이름과 게이트마저 동일하다면
-    // 불필요한 DB 트랜잭션 낭비를 막기 위해 즉시 무시합니다.
     if (lastType == type && lastBuilding == newBuilding && lastGate == newGate) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('[${p.name}]님은 이미 [$type] 상태이며 위치가 동일합니다. (저장 무시)', style: const TextStyle(fontFamily: AppTheme.fontPretendard)),
@@ -275,7 +271,7 @@ class _UserPageState extends State<UserPage> {
         elevation: 0,
         duration: const Duration(seconds: 2),
       ));
-      return; // 여기서 즉시 함수를 종료하여 하위의 DB 저장 로직을 생략합니다.
+      return;
     }
 
     final String now = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
@@ -473,8 +469,7 @@ class _UserPageState extends State<UserPage> {
           'passwordConfirm': 'password123',
           'name': '[ERP] $parsedName',
           'code': parsedCode,
-          'tag_id': parsedTagId, // 🔥 원본 데이터 보관
-          // 'tag_epc'를 명시하지 않으면 Provider에서 자동으로 Hex 변환하여 보관합니다.
+          'tag_id': parsedTagId,
           'department': parsedDept,
           'role': parsedRole,
           'is_approved': true,
@@ -510,31 +505,34 @@ class _UserPageState extends State<UserPage> {
         }
       } else {
         final bool matchesFilter = (_currentFilter == '전체') || (_currentFilter == '등록' ? p.tagId.isNotEmpty : p.tagId.isEmpty);
+        if (!matchesFilter) return false;
 
-        bool matchesSearch = false;
+        bool matchesSearch = true;
         final String q = _currentSearchQuery.trim().toLowerCase();
 
-        if (q.isEmpty) {
-          matchesSearch = true;
-        } else {
-          matchesSearch = HangulUtils.matches(_currentSearchQuery, p.name) ||
-              p.code.toLowerCase().contains(q) ||
-              p.department.toLowerCase().contains(q) ||
-              p.role.toLowerCase().contains(q) ||
-              _getDisplayRole(p.role).toLowerCase().contains(q) ||
-              p.tagId.toLowerCase().contains(q);
+        if (q.isNotEmpty) {
+          final List<String> keywords = q.split(' ').where((s) => s.isNotEmpty).toList();
 
-          if (!matchesSearch) {
+          matchesSearch = keywords.every((String kw) {
+            bool fieldMatch = HangulUtils.matches(kw, p.name) ||
+                p.code.toLowerCase().contains(kw) ||
+                p.department.toLowerCase().contains(kw) ||
+                p.role.toLowerCase().contains(kw) ||
+                _getDisplayRole(p.role).toLowerCase().contains(kw) ||
+                p.tagId.toLowerCase().contains(kw);
+
+            if (fieldMatch) return true;
+
             for (final dynamic value in p.metadata.values) {
-              if (value != null && value.toString().toLowerCase().contains(q)) {
-                matchesSearch = true;
-                break;
+              if (value != null && value.toString().toLowerCase().contains(kw)) {
+                return true;
               }
             }
-          }
+            return false;
+          });
         }
 
-        if (!matchesFilter || !matchesSearch) {
+        if (!matchesSearch) {
           return false;
         }
       }
@@ -543,7 +541,6 @@ class _UserPageState extends State<UserPage> {
         return true;
       }
 
-      // 🔥 초고속 비교 연산
       final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
       final String lastType = _safeStr(p.metadata['last_access_type']);
       final String lastTime = _safeStr(p.metadata['last_access_time']);
@@ -867,7 +864,6 @@ class _UserPageState extends State<UserPage> {
                               userProvider: provider,
                               deviceProvider: deviceProvider,
                               theme: theme,
-                              // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백 연동
                               onSuccessItem: (String pid) {
                                 setState(() {
                                   _selectedUserIds.remove(pid);
@@ -1135,7 +1131,6 @@ class _UserPageState extends State<UserPage> {
                             userProvider: provider,
                             deviceProvider: deviceProvider,
                             theme: theme,
-                            // 🔥 발급 성공 시 화면에서 자동으로 체크박스를 해제하는 콜백
                             onSuccessItem: (String pid) {
                               setState(() {
                                 _selectedUserIds.remove(pid);
@@ -2416,8 +2411,7 @@ class _UserPageState extends State<UserPage> {
                           'email': inputEmail,
                           'name': nameC.text.trim(),
                           'code': codeC.text.trim(),
-                          'tag_id': tagC.text.trim(), // 🔥 원본 데이터 (사용자가 폼에서 입력한 값 그대로 보관)
-                          // 'tag_epc'는 명시적으로 넘기지 않음으로써 Provider 내부를 통해 자동 변환되어 저장되도록 유도합니다.
+                          'tag_id': tagC.text.trim(),
                           'department': deptC.text.trim(),
                           'role': _getDbRole(currentDisplayRole),
                           'is_approved': approved,
@@ -2462,6 +2456,7 @@ class _UserPageState extends State<UserPage> {
     );
   }
 
+  /// DropdownButtonFormField 수정: 'value' 대신 'initialValue'를 사용하도록 변경 (v3.33.0+ 권장사항)
   Widget _buildDropdownField({
     required String value,
     required String label,
@@ -2470,7 +2465,7 @@ class _UserPageState extends State<UserPage> {
     required ValueChanged<String?>? onChanged,
   }) {
     return DropdownButtonFormField<String>(
-      initialValue: value,
+      initialValue: value, // 🔥 'value'에서 'initialValue'로 변경하여 Deprecated 경고 해결
       decoration: AppTheme.inputDecoration(label: label, context: context),
       style: TextStyle(
           fontFamily: AppTheme.fontPretendard,
@@ -2542,8 +2537,6 @@ class _BulkTagIssueDialog extends StatefulWidget {
   final DeviceProvider deviceProvider;
   final ThemeData theme;
   final Function(String)? onWriteComplete;
-
-  /// 🔥 발급에 성공한 자산의 ID를 메인 화면으로 전달하여 자동 선택 해제 처리용 콜백
   final Function(String)? onSuccessItem;
 
   const _BulkTagIssueDialog({
@@ -2562,7 +2555,7 @@ class _BulkTagIssueDialog extends StatefulWidget {
 class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
   String? _selectedDeviceId;
   bool _isLoadingReaders = true;
-  bool _isHexMode = false; // 🔥 데이터 변환 모드 상태 (기본은 ASCII 문자열 변환)
+  bool _isHexMode = false;
 
   int _issueCount = 1;
   bool _isProcessing = false;
@@ -2603,7 +2596,6 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     }
   }
 
-  /// 🔥 모드에 따라 문자열을 헥사(Hex)로 변환하거나, 헥사 값 자체를 패딩합니다.
   String _formatDataToTargetSize(String inputData, int targetByteSize, bool isHex) {
     String hexString = "";
 
@@ -2638,18 +2630,12 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
     }
 
     if (targetDevice == null) {
-      setState(() {
-        _progressText = '❌ 리더기를 선택해주세요.';
-      });
+      setState(() { _progressText = '❌ 리더기를 선택해주세요.'; });
       return;
     }
 
-    final DeviceModel device = targetDevice;
-
-    if (device.status.toLowerCase() != 'online') {
-      setState(() {
-        _progressText = '❌ 선택한 리더기(${device.name})가 미연결 상태입니다. 장치관리에서 먼저 연결해주세요.';
-      });
+    if (targetDevice.status.toLowerCase() != 'online') {
+      setState(() { _progressText = '❌ 선택한 리더기가 미연결 상태입니다.'; });
       return;
     }
 
@@ -2660,146 +2646,74 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
 
     try {
       if (widget.selectedUsers.isEmpty) {
-        String randomTag = _isHexMode
-            ? "EEEE${DateTime.now().millisecondsSinceEpoch % 100000000}"
-            : "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
-
-        int memorySize = 12;
-
+        // 단일 건 (신규)
+        String randomTag = _isHexMode ? "EEEE${DateTime.now().millisecondsSinceEpoch % 100000000}" : "NEW_TAG_${DateTime.now().millisecondsSinceEpoch % 100000}";
         for (int j = 0; j < _issueCount; j++) {
-          if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
-
-          String hexData = _formatDataToTargetSize(randomTag, memorySize, _isHexMode);
-          bool isSuccess = false;
+          if (!mounted || !_isProcessing) break;
+          String hexData = _formatDataToTargetSize(randomTag, 12, _isHexMode);
 
           setState(() {
             _progressValue = j / _issueCount;
-            _progressText = "⏳ 신규 자동 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 발급할 태그를 올려주세요.";
+            _progressText = "⏳ 신규 태그 대기 중 (${j + 1}/$_issueCount)...";
           });
 
-          // 🔥 하드웨어 통신 대기 (DeviceProvider 단에서 무한으로 Blocking 대기)
-          try {
-            isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
-          } catch(e) {
-            isSuccess = false;
-          }
+          // 🔥 redundant '!' 제거
+          bool isSuccess = await widget.deviceProvider.writeTagData(targetDevice.id, hexData, isHexMode: true);
+          if (!isSuccess) throw Exception("장치 통신 오류");
 
-          if (!isSuccess || !_isProcessing) {
-            throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
-          }
-
-          // 🔥 신규 태그 발급 성공 및 3초 대기 로직 적용
-          bool isLastOperation = (j == _issueCount - 1);
-
-          if (!isLastOperation) {
-            setState(() {
-              _progressValue = (j + 1) / _issueCount;
-              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!\n👉 다음 카드를 안테나에 올려주세요. (3초 대기 중...)";
-            });
+          if (j < _issueCount - 1) {
+            setState(() { _progressText = "✅ 성공! 다음 카드를 올려주세요. (3초 대기)"; });
             await Future.delayed(const Duration(seconds: 3));
-          } else {
-            setState(() {
-              _progressValue = (j + 1) / _issueCount;
-              _progressText = "✅ 신규 자동 태그(${j + 1}) 발급 성공!";
-            });
-            await Future.delayed(const Duration(milliseconds: 500));
-          }
-
-          if (widget.onWriteComplete != null && j == _issueCount - 1) {
-            widget.onWriteComplete!(randomTag);
           }
         }
       } else {
-        int totalUsers = widget.selectedUsers.length;
-        int currentOperationCount = 0;
-        int totalOperations = totalUsers * _issueCount;
-        int memorySize = 12;
-
-        for (int i = 0; i < totalUsers; i++) {
+        // 일괄 발급
+        int total = widget.selectedUsers.length;
+        for (int i = 0; i < total; i++) {
           UserModel user = widget.selectedUsers[i];
           String tagData = user.tagId.isNotEmpty ? user.tagId : user.code;
 
           for (int j = 0; j < _issueCount; j++) {
-            if (!mounted || !_isProcessing) throw Exception("사용자에 의해 발급이 중단되었습니다.");
-
-            currentOperationCount++;
-            String hexData = _formatDataToTargetSize(tagData, memorySize, _isHexMode);
-            bool isSuccess = false;
+            if (!mounted || !_isProcessing) break;
+            String hexData = _formatDataToTargetSize(tagData, 12, _isHexMode);
 
             setState(() {
-              _progressValue = (currentOperationCount - 1) / totalOperations;
-              _progressText = "⏳ [${user.name}] 태그 대기 중 (${j + 1}/$_issueCount)...\n리더기 안테나 위에 사원증을 올려주세요.";
+              _progressValue = (i * _issueCount + j) / (total * _issueCount);
+              _progressText = "⏳ [${user.name}] 태그 대기 중 (${j + 1}/$_issueCount)...";
             });
 
-            // 🔥 하드웨어 통신 대기
-            try {
-              isSuccess = await widget.deviceProvider.writeTagData(device.id, hexData, isHexMode: true);
-            } catch (e) {
-              isSuccess = false;
-            }
+            // 🔥 redundant '!' 제거
+            bool isSuccess = await widget.deviceProvider.writeTagData(targetDevice.id, hexData, isHexMode: true);
+            if (!isSuccess) throw Exception("장치 통신 오류");
 
-            if (!isSuccess || !_isProcessing) {
-              throw Exception("사용자에 의해 중단되었거나 장치 통신 오류가 발생했습니다.");
-            }
-
-            // 모든 인원, 모든 횟수를 고려하여 마지막 발급 작업인지 확인
-            bool isLastOperationOverall = (i == totalUsers - 1) && (j == _issueCount - 1);
-
-            // 🔥 발급 성공 및 3초 대기 로직 적용
-            if (!isLastOperationOverall) {
-              setState(() {
-                _progressValue = currentOperationCount / totalOperations;
-                _progressText = "✅ [${user.name}] 발급 성공!\n👉 다음 카드를 안테나에 올려주세요. (3초 대기 중...)";
-              });
-              // 카드/태그 물리적 교체 시간 3초 대기
+            if (i < total - 1 || j < _issueCount - 1) {
+              setState(() { _progressText = "✅ 성공! 다음 카드를 올려주세요. (3초 대기)"; });
               await Future.delayed(const Duration(seconds: 3));
-            } else {
-              setState(() {
-                _progressValue = currentOperationCount / totalOperations;
-                _progressText = "✅ [${user.name}] 발급 성공!";
-              });
-              await Future.delayed(const Duration(milliseconds: 500));
             }
 
-            // 모든 횟수 발급이 끝난 마지막 바퀴에만 DB 저장 및 체크해제 콜백을 발생시킵니다.
             if (j == _issueCount - 1) {
-              await widget.userProvider.handleSave(p: user, data: {
-                'tag_id': tagData,  // 원본 입력값
-                'tag_epc': hexData  // 실제 기록에 성공한 Hex 데이터
-              });
-
-              // 🔥 [선택 해제] 부모 위젯으로 성공 사실을 알려 체크 해제(Deselect) 처리
-              if (widget.onSuccessItem != null) {
-                widget.onSuccessItem!(user.id);
-              }
-
-              if (widget.onWriteComplete != null && totalUsers == 1) {
-                widget.onWriteComplete!(tagData);
-              }
+              await widget.userProvider.handleSave(p: user, data: {'tag_id': tagData, 'tag_epc': hexData});
+              if (widget.onSuccessItem != null) widget.onSuccessItem!(user.id);
             }
           }
         }
       }
 
-      if (mounted && _isProcessing) {
-        setState(() {
-          _isCompleted = true;
-          _progressValue = 1.0;
-          _progressText = '🎉 설정하신 모든 태그의 발행 작업이 완벽하게 완료되었습니다.';
-          _isProcessing = false;
-        });
+      setState(() {
+        _isCompleted = true;
+        _progressValue = 1.0;
+        _progressText = '🎉 모든 발행 작업이 완료되었습니다.';
+        _isProcessing = false;
+      });
 
-        await Future.delayed(const Duration(milliseconds: 2000));
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      }
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted) Navigator.pop(context);
 
     } catch (e) {
       if (mounted) {
         setState(() {
           _isProcessing = false;
-          _progressText = '❌ 취소됨: ${e.toString().replaceAll('Exception: ', '')}';
+          _progressText = '❌ 오류: ${e.toString()}';
         });
       }
     }
@@ -2811,255 +2725,66 @@ class _BulkTagIssueDialogState extends State<_BulkTagIssueDialog> {
       title: AppTheme.dialogTitle('RFID 태그 일괄 발급', Icons.wifi_tethering, color: Colors.indigo),
       content: SizedBox(
         width: 500,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('1. 발급 대상 리더기', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                  borderRadius: BorderRadius.circular(10),
-                  color: widget.theme.cardTheme.color,
-                ),
-                child: ListenableBuilder(
-                    listenable: widget.deviceProvider,
-                    builder: (context, child) {
-                      if (_isLoadingReaders) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12.0),
-                          child: Center(
-                              child: SizedBox(
-                                  width: 24, height: 24,
-                                  child: CircularProgressIndicator(strokeWidth: 2.0, color: Colors.indigo)
-                              )
-                          ),
-                        );
-                      }
-
-                      final devices = widget.deviceProvider.list;
-
-                      if (devices.isEmpty) {
-                        return DropdownButtonHideUnderline(
-                            child: DropdownButton<String>(
-                              isExpanded: true,
-                              value: null,
-                              hint: const Text('등록된 리더기가 없습니다. 장치관리에서 먼저 등록해주세요.', style: TextStyle(color: Colors.redAccent, fontFamily: AppTheme.fontPretendard)),
-                              items: const [],
-                              onChanged: null,
-                            )
-                        );
-                      }
-
-                      String? displayId = _selectedDeviceId;
-                      if (displayId == null || !devices.any((d) => d.id == displayId)) {
-                        final onlineDevice = devices.where((d) => d.status.toLowerCase() == 'online').firstOrNull;
-                        displayId = onlineDevice?.id ?? devices.first.id;
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted && _selectedDeviceId != displayId) {
-                            setState(() { _selectedDeviceId = displayId; });
-                          }
-                        });
-                      }
-
-                      return DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          isExpanded: true,
-                          value: displayId,
-                          icon: const Icon(Icons.arrow_drop_down_circle, color: Colors.indigo),
-                          style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w600, color: widget.theme.colorScheme.onSurface),
-                          onChanged: _isProcessing ? null : (String? newValue) {
-                            if (newValue != null) {
-                              setState(() {
-                                _selectedDeviceId = newValue;
-                              });
-                            }
-                          },
-                          items: devices.map<DropdownMenuItem<String>>((DeviceModel d) {
-                            bool isOnline = d.status.toLowerCase() == 'online';
-                            return DropdownMenuItem<String>(
-                              value: d.id,
-                              child: Row(
-                                children: [
-                                  Icon(Icons.router, size: 20, color: isOnline ? Colors.indigo : Colors.grey),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                      '${d.name} (${isOnline ? '연결됨' : '미연결'})',
-                                      style: TextStyle(
-                                          color: isOnline ? widget.theme.colorScheme.onSurface : Colors.grey,
-                                          fontFamily: AppTheme.fontPretendard
-                                      )
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      );
-                    }
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('1. 대상 리더기 선택', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(border: Border.all(color: Colors.grey.withValues(alpha: 0.3)), borderRadius: BorderRadius.circular(8)),
+              child: _isLoadingReaders // 🔥 '_isLoadingReaders'가 UI 분기 조건으로 정상 사용되도록 보강
+                  ? const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2)))
+                  : DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _selectedDeviceId,
+                  hint: const Text("기기를 선택해 주세요"),
+                  items: widget.deviceProvider.list.map((d) => DropdownMenuItem(value: d.id, child: Text(d.name))).toList(),
+                  onChanged: (v) => setState(() => _selectedDeviceId = v),
                 ),
               ),
-              const SizedBox(height: 24),
-
-              Text('2. 데이터 기록 모드 (변환 방식)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                  borderRadius: BorderRadius.circular(10),
-                  color: widget.theme.cardTheme.color,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                          _isHexMode ? "입력값을 그대로 헥사(Hex)로 기록" : "문자열(ASCII)을 헥사로 자동 변환하여 기록",
-                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: Colors.blueGrey, fontSize: 13)
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ToggleButtons(
-                      constraints: const BoxConstraints(minHeight: 32, minWidth: 90),
-                      borderRadius: BorderRadius.circular(8),
-                      isSelected: [!_isHexMode, _isHexMode],
-                      onPressed: _isProcessing ? null : (int index) {
-                        setState(() {
-                          _isHexMode = index == 1;
-                        });
-                      },
-                      children: const [
-                        Text("일반(ASCII)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        Text("헥사값(HEX)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                  ],
-                ),
+            ),
+            const SizedBox(height: 16),
+            const Text('2. 데이터 모드', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ToggleButtons(
+              isSelected: [!_isHexMode, _isHexMode],
+              onPressed: (idx) => setState(() => _isHexMode = idx == 1),
+              borderRadius: BorderRadius.circular(8),
+              constraints: const BoxConstraints(minHeight: 40, minWidth: 100),
+              children: const [Text("문자열"), Text("HEX")],
+            ),
+            const SizedBox(height: 16),
+            const Text('3. 반복 횟수', style: TextStyle(fontWeight: FontWeight.bold)),
+            Row(
+              children: [
+                IconButton(onPressed: () => setState(() { if(_issueCount > 1) _issueCount--; }), icon: const Icon(Icons.remove_circle_outline)),
+                Text('$_issueCount 회', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                IconButton(onPressed: () => setState(() => _issueCount++), icon: const Icon(Icons.add_circle_outline)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8)),
+              child: Column(
+                children: [
+                  Text(_progressText, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  if(_isProcessing || _isCompleted) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(value: _progressValue),
+                  ]
+                ],
               ),
-              const SizedBox(height: 24),
-
-              Text('3. 동일 정보 반복 발급 횟수 (1~99)', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.bold, color: widget.theme.colorScheme.onSurface)),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.withValues(alpha: 0.5)),
-                  borderRadius: BorderRadius.circular(10),
-                  color: widget.theme.cardTheme.color,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline, size: 36, color: Colors.blueGrey),
-                      onPressed: _isProcessing ? null : () {
-                        if (_issueCount > 1) {
-                          setState(() { _issueCount--; });
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 20),
-                    Container(
-                      width: 80,
-                      alignment: Alignment.center,
-                      child: Text(
-                          '$_issueCount',
-                          style: const TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 32, fontWeight: FontWeight.w900, color: Colors.indigo)
-                      ),
-                    ),
-                    const SizedBox(width: 20),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline, size: 36, color: Colors.indigo),
-                      onPressed: _isProcessing ? null : () {
-                        if (_issueCount < 99) {
-                          setState(() { _issueCount++; });
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              Container(
-                padding: const EdgeInsets.all(16.0),
-                decoration: BoxDecoration(
-                  color: _isCompleted ? AppTheme.success.withValues(alpha: 0.1) : widget.theme.cardTheme.color,
-                  borderRadius: BorderRadius.circular(10.0),
-                  border: Border.all(color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.grey.withValues(alpha: 0.3))),
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      _progressText,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontFamily: AppTheme.fontPretendard,
-                        fontSize: 15.0,
-                        height: 1.5,
-                        color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.blueGrey.shade800),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    (_isProcessing || _isCompleted) ? Column(
-                        children: [
-                          const SizedBox(height: 16),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: LinearProgressIndicator(
-                              value: _progressValue,
-                              minHeight: 12,
-                              backgroundColor: Colors.grey.withValues(alpha: 0.2),
-                              color: _progressText.contains('❌') ? AppTheme.danger : (_isCompleted ? AppTheme.success : Colors.indigo),
-                            ),
-                          ),
-                        ]
-                    ) : const SizedBox.shrink()
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
       actions: [
-        AppTheme.actionButton(
-            label: _isProcessing && !_isCompleted ? "발행 중단" : "돌아가기 (취소)",
-            color: Colors.transparent,
-            textColor: _isProcessing && !_isCompleted ? AppTheme.danger : widget.theme.colorScheme.onSurface.withValues(alpha: 0.5),
-            onPressed: () {
-              if (_isProcessing && !_isCompleted) {
-                setState(() {
-                  _isProcessing = false;
-                  _progressText = '❌ 사용자에 의해 발행이 중단되었습니다. (무한 대기망 강제 해제 중...)';
-                });
-                if (_selectedDeviceId != null) {
-                  widget.deviceProvider.disconnectDevice(_selectedDeviceId!);
-                }
-              } else {
-                Navigator.pop(context);
-              }
-            }
-        ),
-        SizedBox(
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: (_isProcessing || _isCompleted || _isLoadingReaders || _selectedDeviceId == null) ? null : _startBulkIssue,
-            icon: const Icon(Icons.play_circle_fill, size: 20),
-            label: const Text('발행 시작', style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, fontSize: 16)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigo,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.0)),
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            ),
-          ),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("닫기")),
+        ElevatedButton(onPressed: (_isProcessing || _selectedDeviceId == null) ? null : _startBulkIssue, child: const Text("시작")),
       ],
     );
   }
@@ -3079,128 +2804,50 @@ class _LocationSelectionDialog extends StatefulWidget {
 }
 
 class _LocationSelectionDialogState extends State<_LocationSelectionDialog> {
-  late List<String> _buildings, _gates;
   final TextEditingController _bC = TextEditingController();
   final TextEditingController _gC = TextEditingController();
   bool _ok = true;
 
   @override
-  void initState() {
-    super.initState();
-    final Set<String> b = {'본관A', '공장B', '물류창고C', '연구소D'};
-    final Set<String> g = {'정문G1', '후문G2', '하차장G3', '비상구G4'};
-
-    for (final UserModel p in widget.existingUsers) {
-      final dynamic loc = p.metadata['last_location_info'];
-      if (loc is Map) {
-        if (loc['building'] != null) {
-          b.add(loc['building'].toString());
-        }
-        if (loc['gate'] != null) {
-          g.add(loc['gate'].toString());
-        }
-      }
-    }
-
-    _buildings = b.toList()..sort();
-    _gates = g.toList()..sort();
-    _bC.text = _buildings.isNotEmpty ? _buildings.first : "";
-    _gC.text = _gates.isNotEmpty ? _gates.first : "";
-  }
-
-  @override
-  void dispose() {
-    _bC.dispose();
-    _gC.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-
-    Color colColor = _ok ? AppTheme.success.withValues(alpha: 0.05) : AppTheme.danger.withValues(alpha: 0.05);
-    Color borderColor = _ok ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.danger.withValues(alpha: 0.2);
+    final theme = Theme.of(context);
+    final List<String> bOpts = widget.existingUsers.map((u) => _safeStr((u.metadata['last_location_info'] as Map?)?['building'])).where((s) => s.isNotEmpty).toSet().toList();
+    final List<String> gOpts = widget.existingUsers.map((u) => _safeStr((u.metadata['last_location_info'] as Map?)?['gate'])).where((s) => s.isNotEmpty).toSet().toList();
 
     return AlertDialog(
-      title: AppTheme.dialogTitle('${widget.type}처리', widget.type == '입장' ? Icons.login : Icons.logout),
-      content: SizedBox(
-          width: 420,
-          child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 20),
-                _buildCombo('건물명 (Building)', _bC, _buildings, theme), const SizedBox(height: 24),
-                _buildCombo('출입구 (GATE)', _gC, _gates, theme), const SizedBox(height: 24),
-                Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                        color: colColor,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: borderColor)
-                    ),
-                    child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                              _ok ? "승인됨" : "미승인",
-                              style: TextStyle(fontFamily: AppTheme.fontPretendard, fontWeight: FontWeight.bold, color: _ok ? AppTheme.success : AppTheme.danger)
-                          ),
-                          Switch(
-                              value: _ok,
-                              activeThumbColor: AppTheme.success,
-                              activeTrackColor: AppTheme.success.withValues(alpha: 0.5),
-                              onChanged: (bool v) {
-                                setState(() {
-                                  _ok = v;
-                                });
-                              }
-                          )
-                        ]
-                    )
-                )
-              ]
-          )
+      title: AppTheme.dialogTitle('${widget.type} 위치 선택', Icons.location_on),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildCombo("건물/구역", _bC, bOpts, theme),
+          const SizedBox(height: 16),
+          _buildCombo("게이트/출입구", _gC, gOpts, theme),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Text("정상 승인 여부"),
+              const Spacer(),
+              Switch(value: _ok, onChanged: (v) => setState(() => _ok = v)),
+            ],
+          ),
+        ],
       ),
       actions: [
-        AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () {
-          Navigator.pop(context);
-        }),
-        AppTheme.actionButton(label: "위치 확정", onPressed: () {
-          Navigator.pop(context, {'building': _bC.text, 'gate': _gC.text, 'is_approved': _ok});
-        })
+        AppTheme.actionButton(label: "취소", color: Colors.transparent, textColor: theme.colorScheme.onSurface.withValues(alpha: 0.5), onPressed: () => Navigator.pop(context)),
+        AppTheme.actionButton(label: "위치 확정", onPressed: () => Navigator.pop(context, {'building': _bC.text, 'gate': _gC.text, 'is_approved': _ok})),
       ],
     );
   }
 
   Widget _buildCombo(String label, TextEditingController ctrl, List<String> opts, ThemeData theme) {
     return Autocomplete<String>(
-        optionsBuilder: (TextEditingValue v) {
-          if (v.text == '') {
-            return opts;
-          }
-          return opts.where((String o) {
-            return o.contains(v.text);
-          });
-        },
-        onSelected: (String s) {
-          ctrl.text = s;
-        },
-        fieldViewBuilder: (BuildContext ctx, TextEditingController tC, FocusNode fN, VoidCallback onFieldSubmitted) {
-          if (tC.text != ctrl.text) {
-            tC.text = ctrl.text;
-          }
-          tC.addListener(() {
-            if (mounted) {
-              ctrl.text = tC.text;
-            }
-          });
-          return TextField(
-              controller: tC, focusNode: fN,
-              style: TextStyle(fontFamily: AppTheme.fontPretendard, fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.dataColor(theme.brightness == Brightness.dark)),
-              decoration: AppTheme.inputDecoration(label: label, context: context, hasFocus: fN.hasFocus)
-          );
-        }
+      optionsBuilder: (TextEditingValue v) => opts.where((o) => o.contains(v.text)),
+      onSelected: (s) => ctrl.text = s,
+      fieldViewBuilder: (ctx, tC, fN, onFieldSubmitted) {
+        tC.text = ctrl.text;
+        tC.addListener(() => ctrl.text = tC.text);
+        return TextField(controller: tC, focusNode: fN, decoration: AppTheme.inputDecoration(label: label, context: context));
+      },
     );
   }
 }

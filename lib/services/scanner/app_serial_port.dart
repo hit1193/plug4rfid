@@ -1,53 +1,12 @@
-import 'dart:typed_data';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
+// ============================================================================
+// [조건부 Export 브릿지]
+// C++의 #ifdef 매크로와 완벽히 동일한 역할을 수행하는 라우터 파일입니다.
+//
+// - 기본적으로는 웹용 가짜 파일(app_serial_port_web.dart)을 내보냅니다.
+// - 하지만 현재 컴파일 환경이 dart.library.io (윈도우, 안드로이드 등 네이티브)를
+//   지원한다면, 진짜 파일(app_serial_port_pc.dart)로 교체해서 내보냅니다.
+//
+// 다른 UI 파일들(device_page.dart 등)은 오직 이 파일 하나만 import 하면 됩니다!
+// ============================================================================
 
-class AppSerialPort {
-  final SerialPort _port;
-
-  AppSerialPort(String name) : _port = SerialPort(name);
-
-  // 실제 PC에 꽂힌 COM 포트를 긁어옵니다.
-  static List<String> get availablePorts {
-    try {
-      return SerialPort.availablePorts;
-    } catch (e) {
-      return [];
-    }
-  }
-
-  String get name => _port.name ?? "";
-  String? get description => _port.description;
-
-  bool get isBluetooth {
-    try {
-      return _port.transport == SerialPortTransport.bluetooth;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  bool get isOpen => _port.isOpen;
-  int get bytesAvailable => _port.bytesAvailable;
-
-  bool openReadWrite() => _port.openReadWrite();
-
-  void configure({required int baudRate}) {
-    final config = _port.config;
-    config.baudRate = baudRate;
-
-    // 🔥 [결정적 픽스] 이 부분이 추가되어야 하드웨어가 깨어납니다!
-    // C++Builder의 TComPort처럼 포트 개방 시 제어 핀을 강제로 High(1)로 켭니다.
-    config.bits = 8;
-    config.stopBits = 1;
-    config.setFlowControl(SerialPortFlowControl.none);
-    config.dtr = 1; // DTR (Data Terminal Ready) 핀 High -> 장비 메인 전원 활성화
-    config.rts = 1; // RTS (Request to Send) 핀 High -> 송수신 채널 활성화
-
-    _port.config = config;
-  }
-
-  Uint8List read(int bytes) => _port.read(bytes);
-  void write(Uint8List data) => _port.write(data);
-  void close() => _port.close();
-  void dispose() => _port.dispose();
-}
+export 'app_serial_port_web.dart' if (dart.library.io) 'app_serial_port_pc.dart';
